@@ -1,31 +1,19 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { Graph, type TreeRow } from "../src/graph.ts";
+import { Graph } from "../src/graph.js";
+import { indexed } from "./indexed.js";
 
-// Syncs test/fixture into a fresh cgr home with the patched checkout, so the
-// tests query the database cgr really writes.
-const here = import.meta.dirname;
-const fixture = join(here, "fixture");
-const home = mkdtempSync(join(tmpdir(), "pli-graph-"));
-execFileSync(
-  "uv",
-  ["run", "--project", join(here, "../../upstream"), "cgr", "-q", "start", "--repo-path", fixture, "--update-graph"],
-  {
-    env: { ...process.env, CGR_HOME: home, GRAPH_BACKEND: "sqlite", CGR_PLI_EXTENSIONLESS_MEMBERS: "true" },
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-const db = new DatabaseSync(join(home, "graph.sqlite"), { readOnly: true });
+/** @typedef {import("../src/graph.js").TreeRow} TreeRow */
+
+const fixture = join(import.meta.dirname, "fixture");
+const db = indexed(fixture);
 const graph = new Graph(db, fixture);
 
-const labels = (rows: TreeRow[]) => rows.map((row) => `${row.kind} ${row.label}${row.repeated ? " (repeated)" : ""}`);
+/** @param {TreeRow[]} rows */
+const labels = (rows) => rows.map((row) => `${row.kind} ${row.label}${row.repeated ? " (repeated)" : ""}`);
 
-test("a call goes to the procedure cgr resolved", () => {
+test("a call goes to the procedure the indexer resolved", () => {
   assert.deepEqual(graph.definitions("shop/main.pli", 3, "helper"), [{ path: "shop/helper.pli", line: 1 }]);
 });
 
@@ -45,7 +33,8 @@ test("unknown names have no definition", () => {
   assert.deepEqual(graph.definitions("shop/main.pli", 4, "nowhere"), []);
 });
 
-const sites = (path: string, line: number, word: string) =>
+/** @param {string} path @param {number} line @param {string} word */
+const sites = (path, line, word) =>
   graph.references(path, line, word).map((s) => `${s.path}:${s.line}`).sort();
 
 test("references of a procedure are its calls, from a call or its definition", () => {
@@ -62,7 +51,7 @@ test("unknown names have no references", () => {
 });
 
 test("dependencies list includes, outside calls and unresolved names", () => {
-  const root = graph.root("shop/main.pli")!;
+  const root = /** @type {TreeRow} */ (graph.root("shop/main.pli"));
   const rows = graph.dependencies(root);
   assert.deepEqual(labels(rows), [
     "include shopdcl.pli",
@@ -70,15 +59,15 @@ test("dependencies list includes, outside calls and unresolved names", () => {
     "call CALL HELPER",
     "unresolved CALL NOWHERE",
   ]);
-  const helper = rows.find((row) => row.kind === "call")!;
+  const helper = /** @type {TreeRow} */ (rows.find((row) => row.kind === "call"));
   assert.deepEqual(helper.target, { path: "shop/helper.pli", line: 1 });
   // helper calls main back, which is already open above it.
   assert.deepEqual(labels(graph.dependencies(helper)), ["call CALL MAIN (repeated)"]);
 });
 
 test("dependents list includers and outside callers", () => {
-  assert.deepEqual(labels(graph.dependents(graph.root("copy/shopdcl.pli")!)), ["includedBy main.pli"]);
-  assert.deepEqual(labels(graph.dependents(graph.root("shop/helper.pli")!)), [
+  assert.deepEqual(labels(graph.dependents(/** @type {TreeRow} */ (graph.root("copy/shopdcl.pli")))), ["includedBy main.pli"]);
+  assert.deepEqual(labels(graph.dependents(/** @type {TreeRow} */ (graph.root("shop/helper.pli")))), [
     "calledBy MAIN → HELPER",
     "calledBy REPORT → HELPER",
   ]);
@@ -92,13 +81,10 @@ test("the graph version is readable", () => {
   assert.ok(Graph.version(db));
 });
 
-test("a folder cgr never synced is refused", () => {
-  assert.throws(() => new Graph(db, join(here, "elsewhere")), /no project/);
-});
-
 test("the whole graph holds modules, procedures and their links for Show Graph", () => {
   const whole = graph.whole();
-  const at = (i: number) => whole.nodes[i];
+  /** @param {number} i */
+  const at = (i) => whole.nodes[i];
   const edges = whole.edges.map(([source, type, target]) => `${at(source).name} ${type} ${at(target).name}`);
   assert.deepEqual(
     whole.nodes.filter((n) => n.kind === "module").map((n) => n.path).sort(),
@@ -108,6 +94,6 @@ test("the whole graph holds modules, procedures and their links for Show Graph",
   assert.ok(edges.includes("main.pli IMPORTS shopdcl.pli"), edges.join("\n"));
   assert.ok(edges.includes("main.pli IMPORTS MISSING"), edges.join("\n"));
   assert.ok(edges.includes("main.pli DEFINES MAIN"), edges.join("\n"));
-  const main = whole.nodes.find((n) => n.name === "MAIN")!;
+  const main = /** @type {import("../src/graph.js").GraphNode} */ (whole.nodes.find((n) => n.name === "MAIN"));
   assert.deepEqual([main.kind, main.path, main.line], ["function", "shop/main.pli", 1]);
 });

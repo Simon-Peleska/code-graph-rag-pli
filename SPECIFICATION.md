@@ -1,10 +1,29 @@
-# PL/I support for code-graph-rag
+# PL/I code graph for VS Code
 
-Goal: make [code-graph-rag](https://github.com/vitali87/code-graph-rag) (cgr)
-index PL/I source, using the tree-sitter grammar from
-[tree-sitter-pli](https://github.com/Simon-Peleska/tree-sitter-pli). The result
-should be a PL/I entry in cgr's support matrix with real procedures, calls and
-includes in the graph, not just files. Ideally it is upstreamable as a PR.
+Goal: Go to Definition, references, completion and dependency trees for an
+IMS / MVS z/OS code base (PL/I, JCL, IMS MFS, Db2 DDL) in VS Code, from a
+code graph of the whole repository, using the tree-sitter grammars from
+[tree-sitter-pli](https://github.com/Simon-Peleska/tree-sitter-pli) and its
+JCL, HLASM and Db2 siblings.
+
+## Decisions (settled with the user, 2026-11-08)
+
+- **No Python.** The extension indexes the sources itself, with
+  web-tree-sitter and the grammars compiled to WebAssembly, in a worker
+  thread. code-graph-rag (cgr) was too big to ship self-contained and too
+  slow (20,000 files: about 3 minutes and 1.2 GB with cgr, about 4 seconds
+  and 300 MB now).
+- **The graph stays in SQLite**, one file per workspace folder, through
+  `node:sqlite`. An MCP server or an LLM retrieval step can later read the
+  same file; nothing for that exists yet.
+- **Plain JavaScript with JSDoc types**, checked by `tsc --noEmit`, bundled
+  by esbuild. One `.vsix` for every platform.
+- **Incremental sync**: changed files are re-read and the references whose
+  targets may have moved are re-linked. Changes that arrive during a sync
+  are synced together when it ends; there is no batching timer.
+
+The rest of this file is the original plan for adding PL/I to cgr, which
+the patch set in `patches/` implements. The grammar notes still hold.
 
 ## The grammar: tree-sitter-pli
 
@@ -54,7 +73,7 @@ includes in the graph, not just files. Ideally it is upstreamable as a PR.
   user should confirm. `EXEC SQL INCLUDE member` is tagged as field `member`
   inside `exec_statement`.
 
-## code-graph-rag: how a language gets added
+## code-graph-rag: how a language gets added (history)
 
 Read these in the cgr repo first:
 
@@ -88,7 +107,7 @@ The mechanics:
 
 Last looked at upstream commit `ed322ab` ("chore: bump version to 0.5.7").
 
-## Decisions (settled with the user, 2026-11-07)
+## Decisions for the cgr patch set (2026-11-07)
 
 - **Local patch set, no fork/PR.** This project holds a patch series that
   applies to an upstream code-graph-rag checkout; the checkout itself is a
@@ -121,7 +140,7 @@ Last looked at upstream commit `ed322ab` ("chore: bump version to 0.5.7").
   in the call pass.
 - **Variables, structure fields, HLASM labels and Db2 columns stay out of the
   graph** (2026-11-07). The VS Code extension reads them from the source when
-  asked (`vscode/src/source.ts`, `symbols.ts`) and takes from the graph only
+  asked (`vscode/src/source.js`, `symbols.js`) and takes from the graph only
   what a file includes (IMPORTS, HLASM `COPY` too), its procedures' line
   ranges and the tables it uses. A graph node per variable would multiply the
   20,000-file graph several times over for names only the editor needs.

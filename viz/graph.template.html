@@ -4,100 +4,79 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__PROJECT__ · code graph</title>
+<script>/*__ELEMENTS__*/</script>
 <style>
-:root {
-  --bg: #f7f7f5; --panel: #ffffff; --line: #e2e2dd; --text: #1d1d1b; --muted: #6b6b66;
-  --node: #ffffff; --node-border: #b9b9b2; --edge: #a3a39c; --accent: #2f6fdb; --accent-soft: #e4edfc;
-  --main: #c2410c; --imports: #8b5cf6; --group: #f0f0ec; --error: #b42318;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #161615; --panel: #1f1f1d; --line: #33332f; --text: #ececea; --muted: #9a9a93;
-    --node: #262624; --node-border: #55554f; --edge: #6c6c65; --accent: #6ea2ff; --accent-soft: #22324f;
-    --main: #fb923c; --imports: #a78bfa; --group: #1b1b1a; --error: #f97066;
-    color-scheme: dark;
-  }
+/* The controls are vscode-elements, which take VS Code's theme from its
+   --vscode-* variables; the graph's own colors come from the same ones. */
+body {
+  --text: var(--vscode-foreground, #cccccc); --muted: var(--vscode-descriptionForeground, #9d9d9d);
+  --bg: var(--vscode-editor-background, #1f1f1f); --panel: var(--vscode-sideBar-background, #181818);
+  --line: var(--vscode-panel-border, #2b2b2b); --node: var(--vscode-editorWidget-background, #202020);
+  --node-border: var(--vscode-editorWidget-border, #454545); --edge: var(--vscode-editorLineNumber-foreground, #6e7681);
+  --accent: var(--vscode-textLink-foreground, #4daafc); --accent-soft: var(--vscode-list-hoverBackground, #2a2d2e);
+  --group: var(--vscode-sideBar-background, #181818); --main: var(--vscode-charts-orange, #d18616);
+  --imports: var(--vscode-charts-purple, #b180d7); --error: var(--vscode-errorForeground, #f85149);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
-  background: var(--bg); color: var(--text);
-  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text); padding: 0;
+  font-family: var(--vscode-font-family, system-ui, sans-serif); font-size: var(--vscode-font-size, 13px); line-height: 1.4;
   display: grid; grid-template-rows: auto 1fr; height: 100vh;
 }
-button, input { font: inherit; color: inherit; }
 header {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
-  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
-header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+header h1 { font-size: 1em; margin: 0; font-weight: 600; }
 .crumbs { display: flex; gap: 6px; align-items: center; color: var(--muted); min-width: 0; flex-wrap: wrap; }
 .crumbs a { color: var(--accent); text-decoration: none; cursor: pointer; }
+.crumbs a:hover { text-decoration: underline; }
 .crumbs .here { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .spacer { flex: 1; }
+.tools { display: flex; gap: 4px; align-items: center; }
 .search { position: relative; width: min(340px, 100%); }
-.search input {
-  width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
-}
+.search vscode-textfield { width: 100%; }
 .results {
-  position: absolute; top: 100%; left: 0; right: 0; z-index: 10; margin-top: 4px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-  max-height: 60vh; overflow: auto; box-shadow: 0 6px 20px rgb(0 0 0 / .15);
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 10; margin-top: 2px; padding: 4px 0;
+  background: var(--vscode-quickInput-background, #222222); color: var(--vscode-quickInput-foreground, inherit);
+  border: 1px solid var(--vscode-widget-border, #313131); border-radius: 6px;
+  max-height: 60vh; overflow: auto; box-shadow: 0 0 8px 2px var(--vscode-widget-shadow, rgb(0 0 0 / .36));
 }
-.results button, .list button {
-  display: block; width: 100%; text-align: left; border: 0; background: none; padding: 5px 10px; cursor: pointer;
+.results div[data-i] { padding: 2px 10px; cursor: pointer; }
+.results div[data-i]:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+.results div.active {
+  background: var(--vscode-quickInputList-focusBackground, var(--vscode-list-activeSelectionBackground, #04395e));
+  color: var(--vscode-quickInputList-focusForeground, var(--vscode-list-activeSelectionForeground, #ffffff));
 }
-.results button:hover, .results button.active, .list button:hover { background: var(--accent-soft); }
-.sub { color: var(--muted); font-size: 12px; }
-.tools { display: flex; gap: 6px; align-items: center; }
-.tools button, .tabs button {
-  border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; cursor: pointer;
-}
-.tools button[aria-pressed="true"], .tabs button[aria-pressed="true"] {
-  background: var(--accent-soft); border-color: var(--accent);
-}
-main { display: grid; grid-template-columns: 260px 1fr 320px; min-height: 0; }
-aside { background: var(--panel); overflow: auto; min-height: 0; }
-aside.left { border-right: 1px solid var(--line); }
-aside.right { border-left: 1px solid var(--line); padding: 14px 16px; }
-.tabs { display: flex; gap: 4px; padding: 10px 10px 6px; flex-wrap: wrap; }
-.filter { padding: 0 10px 8px; }
-.filter input { width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
-.list { padding-bottom: 12px; }
-.list button { display: flex; justify-content: space-between; gap: 8px; }
+.sub { color: var(--muted); font-size: .92em; }
+vscode-split-layout { border: 0; min-height: 0; height: 100%; --separator-border: var(--line); }
+aside { background: var(--panel); overflow: auto; height: 100%; }
+.filter { padding: 6px 10px; }
+.filter vscode-textfield { width: 100%; }
 .list .n { color: var(--muted); font-variant-numeric: tabular-nums; }
-.list .name { overflow-wrap: anywhere; }
-#canvas-wrap { position: relative; min-height: 0; min-width: 0; }
+#canvas-wrap { position: relative; height: 100%; }
 #cy { position: absolute; inset: 0; }
-#status { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: 12px; pointer-events: none; }
+#status { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: .92em; pointer-events: none; }
 #error {
-  position: absolute; left: 12px; right: 12px; top: 12px; padding: 10px 12px; border-radius: 6px;
-  border: 1px solid var(--error); color: var(--error); background: var(--panel);
+  position: absolute; left: 12px; right: 12px; top: 12px; padding: 8px 10px; border-radius: 2px;
+  border: 1px solid var(--vscode-inputValidation-errorBorder, var(--error));
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d); color: var(--text);
 }
-.legend { position: absolute; right: 12px; top: 10px; display: flex; gap: 12px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend { position: absolute; right: 12px; top: 10px; display: flex; gap: 12px; font-size: .92em; color: var(--muted); flex-wrap: wrap; }
 .legend span::before { content: ""; display: inline-block; width: 18px; height: 0; margin-right: 5px; vertical-align: middle; border-top: 2px solid var(--edge); }
 .legend .imp::before { border-top: 2px dashed var(--imports); }
 .legend .def::before { border-top: 2px dotted var(--edge); }
 .legend .mainp::before { width: 10px; height: 10px; border: 2px solid var(--main); border-radius: 3px; }
-.details h2 { font-size: 16px; margin: 4px 0 2px; overflow-wrap: anywhere; }
-.details h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 4px; }
-.details .qn { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.details ul { list-style: none; padding: 0; margin: 0; }
-.details li button { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 0; text-align: left; overflow-wrap: anywhere; }
-.details li { overflow-wrap: anywhere; }
-.badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); margin-right: 4px; }
-.badge.main { background: none; border: 1px solid var(--main); color: var(--main); }
-.open { margin-top: 10px; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 5px 12px; cursor: pointer; }
-.empty { color: var(--muted); }
-@media (max-width: 1000px) {
-  body { height: auto; display: block; }
-  main { display: flex; flex-direction: column; }
-  #canvas-wrap { height: 70vh; order: 1; }
-  aside.right { order: 2; border-left: 0; border-top: 1px solid var(--line); }
-  aside.left { order: 3; border-right: 0; border-top: 1px solid var(--line); max-height: 60vh; }
-}
+.details .head { padding: 10px 14px 8px; }
+.details .head vscode-badge { margin-right: 4px; }
+.details h2 { font-size: 1.1em; margin: 6px 0 2px; overflow-wrap: anywhere; }
+.details .qn { color: var(--muted); font-size: .92em; overflow-wrap: anywhere; }
+.details .head vscode-button { margin-top: 10px; }
+.details .text { padding: 2px 14px 6px 22px; overflow-wrap: anywhere; }
+.details p { margin: 0 0 8px; }
+.empty { color: var(--muted); padding: 2px 14px 6px 22px; }
 </style>
 </head>
 <body>
@@ -107,36 +86,39 @@ aside.right { border-left: 1px solid var(--line); padding: 14px 16px; }
   <div class="spacer"></div>
   <div class="tools" id="depth" hidden>
     <span class="sub">depth</span>
-    <button data-depth="1">1</button><button data-depth="2">2</button><button data-depth="3">3</button>
+    <vscode-button secondary data-depth="1">1</vscode-button><vscode-button secondary data-depth="2">2</vscode-button><vscode-button secondary data-depth="3">3</vscode-button>
   </div>
   <div class="tools" id="isolated-tool" hidden>
-    <button id="isolated" aria-pressed="false">show unconnected</button>
+    <vscode-button secondary id="isolated">Show unconnected</vscode-button>
   </div>
-  <div class="tools" id="reload-tool" hidden><button id="reload">graph changed · reload</button></div>
-  <div class="tools"><button id="fit">fit</button></div>
+  <div class="tools" id="reload-tool" hidden><vscode-button id="reload">Graph changed · reload</vscode-button></div>
+  <div class="tools"><vscode-button secondary id="fit">Fit</vscode-button></div>
   <div class="search">
-    <input id="search" type="search" placeholder="Find procedure or module  ( / )" autocomplete="off">
+    <vscode-textfield id="search" type="search" placeholder="Find procedure or module  ( / )" autocomplete="off"></vscode-textfield>
     <div class="results" id="results" hidden></div>
   </div>
 </header>
-<main>
-  <aside class="left">
-    <div class="tabs" id="tabs">
-      <button data-tab="modules" aria-pressed="true">Modules</button>
-      <button data-tab="entries">Entry points</button>
-      <button data-tab="unresolved">Unresolved</button>
-    </div>
-    <div class="filter"><input id="filter" type="search" placeholder="Filter"></div>
-    <div class="list" id="list"></div>
+<vscode-split-layout id="sides" fixed-pane="start" min-start="120px" min-end="200px">
+  <aside slot="start">
+    <vscode-tabs id="tabs" panel>
+      <vscode-tab-header slot="header">Modules</vscode-tab-header>
+      <vscode-tab-panel><div id="list-pane"><div class="filter"><vscode-textfield id="filter" type="search" placeholder="Filter"></vscode-textfield></div><vscode-tree class="list" id="list"></vscode-tree></div></vscode-tab-panel>
+      <vscode-tab-header slot="header">Entry points</vscode-tab-header>
+      <vscode-tab-panel></vscode-tab-panel>
+      <vscode-tab-header slot="header">Unresolved</vscode-tab-header>
+      <vscode-tab-panel></vscode-tab-panel>
+    </vscode-tabs>
   </aside>
-  <div id="canvas-wrap">
-    <div id="cy"></div>
-    <div id="status"></div>
-    <div class="legend"><span>calls</span><span class="imp">includes</span><span class="def">defines</span><span class="mainp">OPTIONS(MAIN)</span></div>
-    <div id="error" hidden></div>
-  </div>
-  <aside class="right details" id="details"></aside>
-</main>
+  <vscode-split-layout id="details-side" slot="end" fixed-pane="end" min-start="100px" min-end="120px">
+    <div id="canvas-wrap" slot="start">
+      <div id="cy"></div>
+      <div id="status"></div>
+      <div class="legend"><span>calls</span><span class="imp">includes</span><span class="def">defines</span><span class="mainp">OPTIONS(MAIN)</span></div>
+      <div id="error" hidden></div>
+    </div>
+    <aside class="details" id="details" slot="end"></aside>
+  </vscode-split-layout>
+</vscode-split-layout>
 <script>/*__CYTOSCAPE__*/</script>
 <script type="application/json" id="graph-data">__GRAPH_JSON__</script>
 <script>
@@ -240,8 +222,18 @@ function go(changes) {
 const open = id => go({ view: isModule(byId.get(id)) ? "module" : "proc", id });
 
 // ---- cytoscape ------------------------------------------------------------
-// Read from body: the extension maps the palette onto VS Code's theme there.
+// Read from body, where the palette is taken from VS Code's theme.
 const css = name => getComputedStyle(document.body).getPropertyValue(name).trim();
+// Edges are S-curves that leave and enter their nodes vertically: the
+// control points sit level with the middle, above each end. Cytoscape takes
+// them as a weight along the straight line and a distance away from it.
+function sCurve(edge) {
+  const s = edge.source().position(), t = edge.target().position();
+  const dx = t.x - s.x, dy = t.y - s.y, length2 = dx * dx + dy * dy;
+  if (length2 < 1) return { weights: [0.5], distances: [0] };
+  const length = Math.sqrt(length2), bend = dx * dy / 2 / length;
+  return { weights: [dy * dy / 2 / length2, (dx * dx + dy * dy / 2) / length2], distances: [bend, -bend] };
+}
 function cyStyle() {
   return [
     { selector: "node", style: {
@@ -262,14 +254,16 @@ function cyStyle() {
     { selector: "node:selected", style: { "border-color": css("--accent"), "border-width": 3 } },
     { selector: "edge", style: {
       width: "data(width)", "line-color": css("--edge"), "target-arrow-color": css("--edge"),
-      "target-arrow-shape": "triangle", "curve-style": "bezier", "arrow-scale": 0.9 } },
+      "target-arrow-shape": "triangle", "arrow-scale": 0.9, "curve-style": "unbundled-bezier",
+      "control-point-weights": edge => sCurve(edge).weights, "control-point-distances": edge => sCurve(edge).distances } },
+    { selector: "edge:loop", style: { "curve-style": "bezier" } },
     { selector: "edge.imports", style: { "line-style": "dashed", "line-color": css("--imports"), "target-arrow-color": css("--imports") } },
-    // Edges inside one column bend out sideways, further the longer they are,
+    // Edges inside one layer bend out up or down, further the longer they are,
     // so they don't run through the nodes in between.
     { selector: "edge.inner", style: { "curve-style": "unbundled-bezier", "control-point-weights": [0.5],
-      "control-point-distances": edge => 25 + 0.45 * Math.abs(edge.source().position("y") - edge.target().position("y")) } },
+      "control-point-distances": edge => 25 + 0.45 * Math.abs(edge.source().position("x") - edge.target().position("x")) } },
     { selector: "edge.inner.defines", style: {
-      "control-point-distances": edge => -(25 + 0.45 * Math.abs(edge.source().position("y") - edge.target().position("y"))) } },
+      "control-point-distances": edge => -(25 + 0.45 * Math.abs(edge.source().position("x") - edge.target().position("x"))) } },
     { selector: "edge.defines", style: { "line-style": "dotted", "target-arrow-shape": "none" } },
     { selector: "edge:selected", style: { "line-color": css("--accent"), "target-arrow-color": css("--accent") } },
     { selector: ".faded", style: { opacity: 0.15 } },
@@ -280,11 +274,15 @@ const cy = cytoscape({
   container: document.getElementById("cy"), style: cyStyle(), wheelSensitivity: 0.3,
   minZoom: 0.05, maxZoom: 3, boxSelectionEnabled: false,
 });
-new ResizeObserver(() => cy.resize()).observe(document.getElementById("cy"));
+// The panes get their sizes after the first draw, and the sashes move.
+new ResizeObserver(() => { cy.resize(); fit(); }).observe(document.getElementById("cy"));
 cytoscape.use(cytoscapeFcose);
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => cy.style(cyStyle()));
 // VS Code switches themes by changing the body's class.
 new MutationObserver(() => cy.style(cyStyle())).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+// The width nodeData gives the widest of these nodes.
+const widest = (ids, withModule = false) => Math.max(44, ...ids.map(id =>
+  Math.max(label(id).length, withModule && isProc(byId.get(id)) ? short(moduleOf.get(id) || "").length : 0) * 7 + 18));
 
 function nodeData(id, extra = {}) {
   const n = byId.get(id);
@@ -383,29 +381,29 @@ function moduleView(state) {
   const moduleId = state.id;
   const own = procsOf.get(moduleId) || [];
   const ownSet = new Set(own);
-  const side = new Map();  // procedure outside the module -> column
+  const side = new Map();  // procedure outside the module -> layer: -1 callers above, 1 callees below
   for (const id of own) for (const target of callees.get(id) || []) if (!ownSet.has(target)) side.set(target, 1);
   for (const id of own) for (const source of callers.get(id) || []) if (!ownSet.has(source) && !side.has(source)) side.set(source, -1);
 
-  const COLUMN_GAP = 420, ROW_GAP = 64, GROUP_GAP = 96, SIDE_LIMIT = 60;
+  const LAYER_GAP = 170, STEP = widest([...own, ...side.keys()]) + 24, GROUP_GAP = 60, SIDE_LIMIT = 60;
   const elements = [];
-  const y = new Map();
-  const add = (id, parent, column) => elements.push(nodeData(id, {
+  const x = new Map();
+  const add = (id, parent, layer) => elements.push(nodeData(id, {
     classes: parent === moduleId ? [] : ["other"], data: parent ? { parent } : {},
-    position: { x: column * COLUMN_GAP, y: y.get(id) },
+    position: { x: x.get(id), y: layer * LAYER_GAP },
   }));
 
-  // Middle column: the module's own procedures in source order.
+  // Middle layer: the module's own procedures in source order.
   own.sort((a, b) => (byId.get(a).line || 0) - (byId.get(b).line || 0));
-  own.forEach((id, i) => y.set(id, (i - (own.length - 1) / 2) * ROW_GAP));
+  own.forEach((id, i) => x.set(id, (i - (own.length - 1) / 2) * STEP));
   elements.push(nodeData(moduleId, { classes: ["focus"], position: { x: 0, y: 0 } }));
   for (const id of own) add(id, moduleId, 0);
 
-  // Side columns: each outside procedure wants to sit level with the average
-  // height of the procedures it connects to (barycenter), modules ordered by
-  // their members' average; then push down just enough to avoid overlaps.
-  const placeSide = column => {
-    let ids = [...side].filter(([, c]) => c === column).map(([id]) => id);
+  // Outer layers: each outside procedure wants to sit straight above or below
+  // the average of the procedures it connects to (barycenter), modules ordered
+  // by their members' average; then push right just enough to avoid overlaps.
+  const placeSide = layer => {
+    let ids = [...side].filter(([, l]) => l === layer).map(([id]) => id);
     // A widely used module has thousands of callers; draw the most connected.
     const more = Math.max(0, ids.length - SIDE_LIMIT);
     if (more) {
@@ -415,8 +413,8 @@ function moduleView(state) {
       ids = ids.slice(0, SIDE_LIMIT);
     }
     const want = new Map(ids.map(id => {
-      const ys = [...(callees.get(id) || []), ...(callers.get(id) || [])].filter(n => ownSet.has(n)).map(n => y.get(n));
-      return [id, ys.reduce((a, b) => a + b, 0) / ys.length];
+      const xs = [...(callees.get(id) || []), ...(callers.get(id) || [])].filter(n => ownSet.has(n)).map(n => x.get(n));
+      return [id, xs.reduce((a, b) => a + b, 0) / xs.length];
     }));
     const groups = new Map();
     for (const id of ids) push(groups, moduleOf.get(id) || "", id);
@@ -425,21 +423,21 @@ function moduleView(state) {
     let cursor = -Infinity, drift = 0;
     for (const group of order) {
       const members = groups.get(group).sort((a, b) => want.get(a) - want.get(b));
-      const top = Math.max(cursor, mean(members) - (members.length - 1) / 2 * ROW_GAP);
-      members.forEach((id, i) => { y.set(id, top + i * ROW_GAP); drift += want.get(id) - y.get(id); });
-      cursor = top + members.length * ROW_GAP + GROUP_GAP;
+      const left = Math.max(cursor, mean(members) - (members.length - 1) / 2 * STEP);
+      members.forEach((id, i) => { x.set(id, left + i * STEP); drift += want.get(id) - x.get(id); });
+      cursor = left + members.length * STEP + GROUP_GAP;
     }
-    // Overlap pushes columns downward; shift back so they stay centred on their targets.
-    for (const id of ids) y.set(id, y.get(id) + drift / Math.max(1, ids.length));
-    // A module can show up in both side columns, so each column gets its own box.
+    // Overlap pushes layers right; shift back so they stay centred on their targets.
+    for (const id of ids) x.set(id, x.get(id) + drift / Math.max(1, ids.length));
+    // A module can show up in both outer layers, so each layer gets its own box.
     for (const group of order) {
-      const box = group && `${group} @${column}`;
+      const box = group && `${group} @${layer}`;
       if (box) elements.push(nodeData(box, { label: label(group), classes: ["module", "other"], data: { ref: group } }));
-      for (const id of groups.get(group)) add(id, box, column);
+      for (const id of groups.get(group)) add(id, box, layer);
     }
     if (more) elements.push({
-      data: { id: `more:${column}`, label: `… ${more} more`, w: 120, h: 28 }, classes: "more",
-      position: { x: column * COLUMN_GAP, y: Math.max(...ids.map(id => y.get(id))) + ROW_GAP + GROUP_GAP },
+      data: { id: `more:${layer}`, label: `… ${more} more`, w: 120, h: 28 }, classes: "more",
+      position: { x: Math.max(...ids.map(id => x.get(id))) + STEP + GROUP_GAP, y: layer * LAYER_GAP },
     });
     hiddenCount += more;
   };
@@ -461,13 +459,13 @@ function moduleView(state) {
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${own.length} procedures in ${short(moduleId)} · callers left, callees right${hiddenCount ? ` · ${hiddenCount} less connected not drawn, the details list them` : ""} · double-click to follow`,
+    status: `${own.length} procedures in ${short(moduleId)} · callers above, callees below${hiddenCount ? ` · ${hiddenCount} less connected not drawn, the details list them` : ""} · double-click to follow`,
   };
 }
 
 // Barycenter ordering, the core step of a layered (Sugiyama) layout: sort each
-// column by the average row of its neighbours in the other columns, so edges
-// run as level as possible. A few sweeps outward and back let it settle.
+// layer by the average place of its neighbours in the other layers, so edges
+// run as straight as possible. A few sweeps outward and back let it settle.
 function orderColumns(columns, neighbours) {
   const columnOf = new Map(), row = new Map();
   for (const [column, ids] of columns) for (const id of ids) columnOf.set(id, column);
@@ -506,7 +504,7 @@ function procView(state) {
   const columns = new Map();
   for (const [id, column] of level) push(columns, column, id);
   const elements = [];
-  const PER_COLUMN = 60, COLUMN_GAP = 320, ROW_GAP = 72;
+  const PER_COLUMN = 60, LAYER_GAP = 150, STEP = widest([...level.keys()], true) + 24;
   for (const ids of columns.values()) ids.sort(byName);
   orderColumns(columns, id => [...(callees.get(id) || []), ...(callers.get(id) || [])]);
   for (const [column, ids] of columns) {
@@ -514,11 +512,11 @@ function procView(state) {
     const rows = shown.length + (ids.length > PER_COLUMN ? 1 : 0);
     shown.forEach((id, row) => elements.push(nodeData(id, {
       withModule: true, classes: id === focus ? ["focus"] : [],
-      position: { x: column * COLUMN_GAP, y: (row - (rows - 1) / 2) * ROW_GAP },
+      position: { x: (row - (rows - 1) / 2) * STEP, y: column * LAYER_GAP },
     })));
     if (ids.length > PER_COLUMN) elements.push({
       data: { id: `more:${column}`, label: `… ${ids.length - PER_COLUMN} more`, w: 120, h: 28 }, classes: "more",
-      position: { x: column * COLUMN_GAP, y: (rows - 1 - (rows - 1) / 2) * ROW_GAP },
+      position: { x: (rows - 1 - (rows - 1) / 2) * STEP, y: column * LAYER_GAP },
     });
   }
   const shownIds = new Set(elements.map(e => e.data.id));
@@ -529,37 +527,42 @@ function procView(state) {
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${up} callers ← ${byId.get(focus).name} → ${down} callees, depth ${state.depth} · double-click to refocus`,
+    status: `${up} callers above ${byId.get(focus).name}, ${down} callees below, depth ${state.depth} · double-click to refocus`,
   };
 }
 
 // ---- details panel --------------------------------------------------------
 const LIST_LIMIT = 200;
-function linkList(title, ids, empty, home) {
-  return [el("h3", null, `${title} (${ids.length})`),
-    ids.length ? el("ul", null, ids.slice(0, LIST_LIMIT).map(id => el("li", null, el("button", { onclick: () => open(id), title: id }, label(id),
-      isProc(byId.get(id)) && moduleOf.get(id) !== home ? el("span", { class: "sub" }, `  ${short(moduleOf.get(id) || "")}`) : null))),
-                                 ids.length > LIST_LIMIT ? el("li", { class: "sub" }, `… ${ids.length - LIST_LIMIT} more`) : null)
-               : el("div", { class: "empty" }, empty)];
+function section(title, count, ...content) {
+  return el("vscode-collapsible", { heading: title, open: "" },
+    el("vscode-badge", { slot: "decorations", variant: "counter" }, String(count)), ...content);
 }
+function linkList(title, ids, empty, home) {
+  return [section(title, ids.length,
+    ids.length ? el("vscode-tree", null, ids.slice(0, LIST_LIMIT).map(id => el("vscode-tree-item", { onclick: () => open(id), title: id }, label(id),
+      isProc(byId.get(id)) && moduleOf.get(id) !== home ? el("span", { slot: "description" }, short(moduleOf.get(id) || "")) : null)))
+               : el("div", { class: "empty" }, empty),
+    ids.length > LIST_LIMIT ? el("div", { class: "empty" }, `… ${ids.length - LIST_LIMIT} more`) : null)];
+}
+const button = (text, onclick) => el("vscode-button", { onclick }, text);
 
 function showDetails(id) {
   const panel = document.getElementById("details");
   panel.replaceChildren();
   const n = byId.get(id);
   if (!n) {
-    panel.append(el("h2", null, G.project || "Code graph"),
+    panel.append(el("div", { class: "head" }, el("h2", null, G.project || "Code graph"),
       el("p", { class: "sub" }, `${totals.modules} modules · ${totals.procs} procedures · ${totals.calls} calls · ${unresolved.size} unresolved names`),
       el("p", null, "Click a node for details, double-click to open it. Hover to highlight its neighbours."),
-      el("p", { class: "sub" }, "Arrows point from caller to callee and from including to included module."));
+      el("p", { class: "sub" }, "Arrows point from caller to callee and from including to included module.")));
     return;
   }
   const where = n.path ? `${n.path}${n.line ? `:${n.line}–${n.end}` : ""}` : "";
-  panel.append(...[
-    el("div", null, el("span", { class: "badge" }, n.kind), ...(n.mods || []).map(m => el("span", { class: m.toUpperCase() === "MAIN" ? "badge main" : "badge" }, m))),
-    el("h2", null, label(id)), el("div", { class: "qn" }, id), where ? el("div", { class: "sub" }, where) : null,
-    host && n.path ? el("button", { class: "open", onclick: () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 }) }, "Go to source") : null,
-  ].filter(Boolean));
+  panel.append(el("div", { class: "head" },
+    el("div", null, el("vscode-badge", null, n.kind), ...(n.mods || []).map(m => el("vscode-badge", { variant: m.toUpperCase() === "MAIN" ? "activity-bar-counter" : "default" }, m))),
+    el("h2", null, label(id)), isModule(n) ? null : el("div", { class: "qn" }, id), where && where !== label(id) ? el("div", { class: "sub" }, where) : null,
+    host && n.path ? button("Go to source", () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 })) : null));
+  const head = panel.firstChild;
   if (isModule(n)) {
     panel.append(...linkList("Procedures", sortedUnique(procsOf.get(id) || []), "none", id),
       ...linkList("Includes", sortedUnique(imports.get(id) || []), "none"),
@@ -568,9 +571,9 @@ function showDetails(id) {
     const out = sortedUnique(own.flatMap(p => callees.get(p) || []).map(t => moduleOf.get(t)).filter(m => m && m !== id));
     const inc = sortedUnique(own.flatMap(p => callers.get(p) || []).map(s => moduleOf.get(s)).filter(m => m && m !== id));
     panel.append(...linkList("Calls into", out, "none"), ...linkList("Called from", inc, "none"));
-    panel.append(el("h3", null, `Unresolved names (${(n.unresolved || []).length})`),
-      (n.unresolved || []).length ? el("div", { class: "sub" }, n.unresolved.join(", ")) : el("div", { class: "empty" }, "none"));
-    if (route().id !== id || route().view !== "module") panel.append(el("button", { class: "open", onclick: () => open(id) }, "Open module"));
+    panel.append(section("Unresolved names", (n.unresolved || []).length,
+      (n.unresolved || []).length ? el("div", { class: "sub text" }, n.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
+    if (route().id !== id || route().view !== "module") head.append(" ", button("Open module", () => open(id)));
   } else {
     const parent = parentOf.get(id);
     if (parent) panel.append(...linkList("Defined in", [parent], ""));
@@ -578,7 +581,7 @@ function showDetails(id) {
       ...linkList("Calls", sortedUnique(callees.get(id) || []), "calls nothing known"));
     const nested = (childrenOf.get(id) || []).filter(c => isProc(byId.get(c)));
     if (nested.length) panel.append(...linkList("Defines", sortedUnique(nested), "", moduleOf.get(id)));
-    if (isProc(n) && (route().id !== id || route().view !== "proc")) panel.append(el("button", { class: "open", onclick: () => open(id) }, "Show call graph"));
+    if (isProc(n) && (route().id !== id || route().view !== "proc")) head.append(" ", button("Show call graph", () => open(id)));
   }
 }
 
@@ -621,18 +624,19 @@ function renderList() {
   rows = rows.filter(r => !query || r.text.toUpperCase().includes(query)).sort((a, b) => a.text.localeCompare(b.text));
   const list = document.getElementById("list");
   const LIMIT = 500;
-  list.replaceChildren(...[...rows.slice(0, LIMIT).map(r => el("button", {
+  list.replaceChildren(...rows.slice(0, LIMIT).map(r => el("vscode-tree-item", {
       title: r.mods ? `referenced in ${r.mods.map(short).join(", ")}` : r.id,
       onclick: () => open(r.id || r.mods[0]),
-    }, el("span", { class: "name" }, r.text, r.sub ? el("div", { class: "sub" }, r.sub) : null), el("span", { class: "n" }, String(r.count)))),
-    rows.length > LIMIT ? el("div", { class: "sub", style: "padding: 4px 10px" }, `${rows.length - LIMIT} more, refine the filter`) : null,
-    rows.length ? null : el("div", { class: "empty", style: "padding: 4px 10px" }, "nothing here")].filter(Boolean));
+    }, r.text, r.sub ? el("span", { slot: "description" }, r.sub) : null, el("span", { slot: "decoration", class: "n" }, String(r.count)))));
+  document.querySelectorAll("#list ~ .empty").forEach(note => note.remove());
+  if (rows.length > LIMIT) list.after(el("div", { class: "empty" }, `${rows.length - LIMIT} more, refine the filter`));
+  if (!rows.length) list.after(el("div", { class: "empty" }, "nothing here"));
 }
-document.getElementById("tabs").addEventListener("click", event => {
-  const button = event.target.closest("button");
-  if (!button) return;
-  tab = button.dataset.tab;
-  for (const b of document.querySelectorAll("#tabs button")) b.setAttribute("aria-pressed", String(b === button));
+// The tabs share one filter and list, which move into the selected panel.
+document.getElementById("tabs").addEventListener("vsc-tabs-select", event => {
+  const index = event.detail.selectedIndex;
+  tab = ["modules", "entries", "unresolved"][index];
+  document.querySelectorAll("#tabs vscode-tab-panel")[index].append(document.getElementById("list-pane"));
   renderList();
 });
 document.getElementById("filter").addEventListener("input", renderList);
@@ -650,7 +654,7 @@ function renderResults() {
     .map(s => [rank(s), s]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0).slice(0, 50).map(([, s]) => s) : [];
   active = 0;
   results.hidden = !query;
-  results.replaceChildren(...[...hits.map((hit, i) => el("button", { class: i === active ? "active" : "", onclick: () => pick(i) },
+  results.replaceChildren(...[...hits.map((hit, i) => el("div", { "data-i": i, class: i === active ? "active" : "", onclick: () => pick(i) },
     label(hit.id), el("div", { class: "sub" }, `${byId.get(hit.id).kind} · ${short(isModule(byId.get(hit.id)) ? hit.id : moduleOf.get(hit.id) || "")}`))),
     hits.length ? null : el("div", { class: "empty", style: "padding: 6px 10px" }, "no match")].filter(Boolean));
 }
@@ -666,9 +670,9 @@ search.addEventListener("keydown", event => {
     results.children[active]?.scrollIntoView({ block: "nearest" });
   }
 });
-search.addEventListener("blur", () => setTimeout(() => { results.hidden = true; }, 150));
+search.addEventListener("focusout", () => setTimeout(() => { results.hidden = true; }, 150));
 document.addEventListener("keydown", event => {
-  if (event.key === "/" && document.activeElement.tagName !== "INPUT") { event.preventDefault(); search.focus(); }
+  if (event.key === "/" && document.activeElement.tagName !== "VSCODE-TEXTFIELD") { event.preventDefault(); search.focus(); }
 });
 
 function fit() {
@@ -677,7 +681,7 @@ function fit() {
 }
 document.getElementById("fit").addEventListener("click", fit);
 document.getElementById("depth").addEventListener("click", event => {
-  const depth = Number(event.target.dataset.depth);
+  const depth = Number(event.target.closest("[data-depth]")?.dataset.depth);
   if (depth) go({ depth });
 });
 document.getElementById("isolated").addEventListener("click", () => go({ isolated: !route().isolated }));
@@ -709,15 +713,22 @@ function render() {
     showError("VIZ-102", `could not draw the ${state.view} view: ${error.message}`, error);
   }
   document.getElementById("depth").hidden = state.view !== "proc";
-  for (const b of document.querySelectorAll("#depth button")) b.setAttribute("aria-pressed", String(Number(b.dataset.depth) === state.depth));
+  for (const b of document.querySelectorAll("#depth vscode-button")) b.secondary = Number(b.dataset.depth) !== state.depth;
   document.getElementById("isolated-tool").hidden = state.view !== "overview";
-  document.getElementById("isolated").setAttribute("aria-pressed", String(state.isolated));
+  document.getElementById("isolated").secondary = !state.isolated;
   renderCrumbs(state);
   showDetails(state.id);
   if (state.id && cy.getElementById(state.id).nonempty()) cy.getElementById(state.id).select();
   host?.postMessage({ type: "route", hash: location.hash.slice(1), drawMs: Math.round(performance.now() - started), sinceLoadMs: Math.round(performance.now()) });
 }
 
+// The split layouts measure the panel only once it is drawn.
+requestAnimationFrame(() => {
+  const width = document.body.clientWidth;
+  const left = Math.round(Math.min(260, width * 0.25)), right = Math.round(Math.min(320, width * 0.3));
+  document.getElementById("sides").handlePosition = `${left}px`;
+  document.getElementById("details-side").handlePosition = `${width - left - right}px`;
+});
 window.addEventListener("hashchange", render);
 renderList();
 render();

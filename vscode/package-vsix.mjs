@@ -1,20 +1,13 @@
 // Writes pli-graph.vsix without vsce: a zip holding the extension files under
 // `extension/`, an extension.vsixmanifest and a [Content_Types].xml.
-//
-//   node package-vsix.mjs [--bundle <cgr bundle folder>]
-//
-// With --bundle it writes pli-graph-win32-x64.vsix, which carries the Windows
-// cgr bundle in `extension/cgr/`, so the extension needs nothing else.
+// One package serves every platform: the indexer is JavaScript and WebAssembly.
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { extname } from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
 
 const manifest = JSON.parse(readFileSync("package.json", "utf-8"));
-const bundleAt = process.argv.indexOf("--bundle");
-const bundle = bundleAt > 0 ? process.argv[bundleAt + 1] : undefined;
-const target = bundle ? "win32-x64" : undefined;
-const out = target ? `${manifest.name}-${target}.vsix` : `${manifest.name}.vsix`;
+const out = `${manifest.name}.vsix`;
 const files = [
   "package.json",
   "README.md",
@@ -27,14 +20,20 @@ const files = [
   "syntaxes/hlasm.tmLanguage.json",
   "syntaxes/db2.tmLanguage.json",
   "out/extension.cjs",
+  "out/worker.cjs",
   "out/graph.html",
+  "out/screen.html",
+  "out/web-tree-sitter.wasm",
+  ...readdirSync("out")
+    .filter((name) => name.startsWith("tree-sitter-") && (name.endsWith(".wasm") || name.endsWith(".scm")))
+    .map((name) => `out/${name}`),
 ];
 
 const xml = (text) => text.replace(/[<>&"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const vsixManifest = `<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Language="en-US" Id="${manifest.name}" Version="${manifest.version}" Publisher="${manifest.publisher}"${target ? ` TargetPlatform="${target}"` : ""} />
+    <Identity Language="en-US" Id="${manifest.name}" Version="${manifest.version}" Publisher="${manifest.publisher}" />
     <DisplayName>${xml(manifest.displayName)}</DisplayName>
     <Description xml:space="preserve">${xml(manifest.description)}</Description>
     <Tags>${xml(manifest.keywords.join(","))}</Tags>
@@ -61,26 +60,13 @@ const contentTypes = {
   ".html": "text/html",
   ".json": "application/json",
   ".md": "text/markdown",
+  ".scm": "text/plain",
   ".vsixmanifest": "text/xml",
+  ".wasm": "application/wasm",
 };
 for (const file of files) {
   if (!contentTypes[extname(file)]) {
     throw new Error(`[PLG101E] No content type for ${file}.`);
-  }
-}
-
-// The bundle's files are all opaque to VS Code: Python, DLLs, .pyd, data.
-const bundled = [];
-const overrides = [];
-if (bundle) {
-  for (const entry of readdirSync(bundle, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const path = join(entry.parentPath, entry.name);
-    const name = `extension/cgr/${relative(bundle, path).replaceAll("\\", "/")}`;
-    const ext = extname(entry.name).toLowerCase();
-    if (!ext) overrides.push(name);
-    else contentTypes[ext] ??= "application/octet-stream";
-    bundled.push([name, path]);
   }
 }
 
@@ -89,7 +75,6 @@ const contentTypesXml =
   Object.entries(contentTypes)
     .map(([ext, type]) => `<Default Extension="${xml(ext.slice(1))}" ContentType="${type}"/>`)
     .join("") +
-  overrides.map((name) => `<Override PartName="/${xml(encodeURI(name))}" ContentType="application/octet-stream"/>`).join("") +
   `</Types>\n`;
 
 // [name in the zip, contents or a path to read, deflate level]
@@ -97,8 +82,6 @@ const entries = [
   ["extension.vsixmanifest", Buffer.from(vsixManifest), 9],
   ["[Content_Types].xml", Buffer.from(contentTypesXml), 9],
   ...files.map((file) => [`extension/${file}`, file, 9]),
-  // A lower level packs the 270 MB bundle in a fraction of the time, about as small.
-  ...bundled.map(([name, path]) => [name, path, 6]),
 ];
 // This writer has no ZIP64: past these limits the archive would be corrupt.
 if (entries.length > 0xffff) {

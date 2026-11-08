@@ -1,42 +1,39 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { Graph, type TreeRow } from "../src/graph.ts";
-import { Lines } from "../src/source.ts";
-import { type Site, type Symbol, Symbols } from "../src/symbols.ts";
+import { Graph } from "../src/graph.js";
+import { Lines } from "../src/source.js";
+import { Symbols } from "../src/symbols.js";
+import { indexed } from "./indexed.js";
 
-// Syncs test/zos, a small z/OS repository of extensionless members, into a
-// fresh cgr home, so the symbols use the graph cgr really writes.
-const here = import.meta.dirname;
-const fixture = join(here, "zos");
-const home = mkdtempSync(join(tmpdir(), "pli-symbols-"));
-execFileSync(
-  "uv",
-  ["run", "--project", join(here, "../../upstream"), "cgr", "-q", "start", "--repo-path", fixture, "--update-graph"],
-  {
-    env: { ...process.env, CGR_HOME: home, GRAPH_BACKEND: "sqlite", CGR_PLI_EXTENSIONLESS_MEMBERS: "true" },
-    stdio: ["ignore", "ignore", "inherit"],
-  },
-);
-const graph = new Graph(new DatabaseSync(join(home, "graph.sqlite"), { readOnly: true }), fixture);
+/** @typedef {import("../src/graph.js").TreeRow} TreeRow */
+/** @typedef {import("../src/symbols.js").Site} Site */
+/** @typedef {import("../src/symbols.js").Symbol} Symbol */
+
+// test/zos is a small z/OS repository of extensionless members.
+const fixture = join(import.meta.dirname, "zos");
+const graph = new Graph(indexed(fixture), fixture);
 const symbols = new Symbols(graph);
 
-// The offset of the `nth` `word` on `line` (from 1) of `path`.
-const at = (path: string, line: number, word: string, nth = 1) => {
+/**
+ * The offset of the `nth` `word` on `line` (from 1) of `path`.
+ * @param {string} path @param {number} line @param {string} word
+ */
+const at = (path, line, word, nth = 1) => {
   const text = readFileSync(join(fixture, path), "utf-8");
   const start = new Lines(text).offset(line - 1, 0);
   let offset = start - 1;
   for (let i = 0; i < nth; i++) offset = text.indexOf(word, offset + 1);
   return offset;
 };
-const where = (found: (Symbol | Site)[]) => found.map((s) => `${s.path}:${s.line + 1}:${s.col}`).sort();
-const definition = (path: string, line: number, word: string, nth = 1) =>
+/** @param {(Symbol | Site)[]} found */
+const where = (found) => found.map((s) => `${s.path}:${s.line + 1}:${s.col}`).sort();
+/** @param {string} path @param {number} line @param {string} word */
+const definition = (path, line, word, nth = 1) =>
   where(symbols.definitions(path, at(path, line, word, nth)));
-const references = (path: string, line: number, word: string, nth = 1) =>
+/** @param {string} path @param {number} line @param {string} word */
+const references = (path, line, word, nth = 1) =>
   where(symbols.references(path, at(path, line, word, nth)));
 
 test("a variable goes to its declaration, also in an include and a nested include", () => {
@@ -92,7 +89,8 @@ test("HLASM: a field and an equate, also from a COPY member", () => {
   assert.deepEqual(references("ASM/ABF00009", 1, "R1"), ["ASM/ABF00003:3:15"]);
 });
 
-const names = (path: string, offset: number) => {
+/** @param {string} path @param {number} offset */
+const names = (path, offset) => {
   const found = symbols.completions(path, offset);
   return `${found.context}: ${found.symbols.map((s) => s.name).sort().join(" ")}`;
 };
@@ -106,15 +104,16 @@ test("completion: fields after a structure name, columns in SQL, variables elsew
   assert.equal(names("ASM/ABF00003", at("ASM/ABF00003", 3, "R1")), "code: ABF00003 R1 R14 R2");
 });
 
-const labels = (rows: TreeRow[]) => rows.map((row) => `${row.kind} ${row.label}${row.detail ? ` (${row.detail})` : ""}`);
+/** @param {TreeRow[]} rows */
+const labels = (rows) => rows.map((row) => `${row.kind} ${row.label}${row.detail ? ` (${row.detail})` : ""}`);
 
 test("dependencies list the tables a program uses and what it does with them", () => {
-  const rows = graph.dependencies(graph.root("SRC/ABP00001")!);
+  const rows = graph.dependencies(/** @type {TreeRow} */ (graph.root("SRC/ABP00001")));
   assert.deepEqual(labels(rows), ["include ABC00001", "table TABLE CUSTOMER (SELECT)", "table TABLE ORDERS (UPDATE)"]);
 });
 
 test("dependents of a DDL file list the programs using each table and how", () => {
-  assert.deepEqual(labels(graph.dependents(graph.root("DDL/ABT00001")!)), [
+  assert.deepEqual(labels(graph.dependents(/** @type {TreeRow} */ (graph.root("DDL/ABT00001")))), [
     "calledBy ABP00001 → CUSTOMER (SELECT)",
     "calledBy ABP00001 → ORDERS (UPDATE)",
     "calledBy ABP00002 → CUSTOMER (DELETE)",

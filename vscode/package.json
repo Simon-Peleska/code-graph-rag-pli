@@ -1,7 +1,7 @@
 {
   "name": "pli-graph",
-  "displayName": "PL/I Graph (cgr)",
-  "description": "PL/I, JCL, IMS MFS and Db2 highlighting, Go to Definition and dependency trees from the code-graph-rag graph, kept in sync by cgr watch.",
+  "displayName": "PL/I Graph",
+  "description": "PL/I, JCL, IMS MFS and Db2 highlighting, Go to Definition, references and dependency trees from a code graph the extension keeps in sync with your files.",
   "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
@@ -22,7 +22,6 @@
     "pl/i",
     "pl1",
     "mainframe",
-    "cgr",
     "jcl",
     "hlasm",
     "mfs",
@@ -33,6 +32,20 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "configurationDefaults": {
+      "[pli]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "[jcl]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "[hlasm]": {
+        "editor.semanticHighlighting.enabled": true
+      },
+      "[db2]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    },
     "languages": [
       {
         "id": "pli",
@@ -120,8 +133,14 @@
         "icon": "$(type-hierarchy)"
       },
       {
-        "command": "pliGraph.restart",
-        "title": "Restart cgr watch",
+        "command": "pliGraph.showScreen",
+        "title": "Show 3270 Screen",
+        "category": "PL/I Graph",
+        "icon": "$(window)"
+      },
+      {
+        "command": "pliGraph.rebuild",
+        "title": "Rebuild Graph",
         "category": "PL/I Graph",
         "icon": "$(refresh)"
       }
@@ -141,6 +160,19 @@
       ]
     },
     "menus": {
+      "editor/title": [
+        {
+          "command": "pliGraph.showScreen",
+          "when": "editorLangId == hlasm",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "pliGraph.showScreen",
+          "when": "resourceLangId == hlasm"
+        }
+      ],
       "view/title": [
         {
           "command": "pliGraph.show",
@@ -148,7 +180,7 @@
           "group": "navigation"
         },
         {
-          "command": "pliGraph.restart",
+          "command": "pliGraph.rebuild",
           "when": "view == pliGraphDependencies || view == pliGraphDependents",
           "group": "navigation"
         }
@@ -157,32 +189,30 @@
     "configuration": {
       "title": "PL/I Graph",
       "properties": {
-        "pliGraph.command": {
-          "type": "string",
-          "default": "",
-          "scope": "machine-overridable",
-          "markdownDescription": "How to run cgr. Leave it empty to use the cgr the Windows package brings along. Otherwise the path to a `cgr.cmd`, or a command line such as `uv run --project /path/to/upstream cgr`. The extension runs `cgr watch` with it for each workspace folder."
-        },
         "pliGraph.extensionlessMembers": {
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "markdownDescription": "Index files named like z/OS members (`ABMAIN01`, no extension) as PL/I. Sets `CGR_PLI_EXTENSIONLESS_MEMBERS` for cgr."
+          "markdownDescription": "Index files named like z/OS members (`ABMAIN01`, no extension). The member name's third character picks the language: `J` is JCL, `F` is MFS, `T` is Db2, anything else is PL/I."
         }
       }
     }
   },
   "scripts": {
-    "build": "node build-page.mjs && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node18 --external:vscode --outfile=out/extension.cjs",
+    "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
-    "package": "npm run check && npm run build -- --minify && node package-vsix.mjs"
+    "test": "node --test \"test/*.test.*\"",
+    "package": "npm run check && node build.mjs --minify && node package-vsix.mjs"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
     "@types/vscode": "1.85.0",
+    "@vscode-elements/elements": "^2.5.1",
     "@vscode/test-electron": "2.4.1",
     "esbuild": "0.24.2",
     "typescript": "5.7.2"
+  },
+  "dependencies": {
+    "web-tree-sitter": "0.26.11"
   }
 }

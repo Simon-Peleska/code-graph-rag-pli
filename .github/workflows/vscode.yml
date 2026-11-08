@@ -1,0 +1,68 @@
+# Checks, tests and packages the VS Code extension, then opens the package in
+# a real VS Code on a small sample. One package serves every platform: the
+# indexer is JavaScript and WebAssembly.
+name: VS Code extension
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Converted line endings would move every offset the tests check.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check, test and package
+        working-directory: vscode
+        run: |
+          npm ci
+          npm test
+          npm run package
+          ls -l pli-graph.vsix
+
+      - name: Make smoke-test sources
+        run: |
+          mkdir -p sample
+          printf 'main: proc options(main);\n  call helper;\n  fetch dynpgm;\nend main;\n' > sample/ABMAIN01
+          printf 'helper: proc;\nend helper;\n' > sample/ABHELP01
+          printf 'dynpgm: proc;\nend dynpgm;\n' > sample/ABDYNP01
+          printf '//ABJOB01 JOB (ACCT)\n//S1 EXEC PGM=ABMAIN01\n' > sample/ABJOB001
+          printf 'CUSTFMT  FMT\n         FMTEND\nCUSTO    MSG   TYPE=OUTPUT,SOR=(CUSTFMT)\n         MSGEND\n' > sample/ABFCUST1
+          printf 'CREATE TABLE PROD.CUSTOMER (ID INTEGER);\n' > sample/ABTCUST1
+          printf 'show: proc;\n  dcl m char(8) init('"'"'CUSTO   '"'"');\n  exec sql select id into :i from prod.customer;\nend show;\n' > sample/ABSHOW01
+
+      # The unpacked package, as a user installs it, in a VS Code with no settings.
+      - name: Smoke test - VS Code extension
+        timeout-minutes: 10
+        run: |
+          7z x -bso0 -ovsix vscode/pli-graph.vsix
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a node vscode/test/e2e/run.mjs sample vsix/extension
+          else
+            node vscode/test/e2e/run.mjs sample vsix/extension
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: pli-graph-vsix
+          path: vscode/pli-graph.vsix

@@ -4,8 +4,7 @@
 //   node run.mjs <workspace> [<extension folder>]
 //
 // The extension folder defaults to this checkout; pass an unpacked .vsix
-// (its `extension/` folder) to test the package itself. Without a cgr in the
-// package, the workspace's .vscode/settings.json must set pliGraph.command.
+// (its `extension/` folder) to test the package itself.
 import { resolve } from "node:path";
 import { runTests } from "@vscode/test-electron";
 

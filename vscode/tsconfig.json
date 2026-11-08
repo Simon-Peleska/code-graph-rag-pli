@@ -5,9 +5,10 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": true,
     "skipLibCheck": true,
     "types": ["node", "vscode"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/*.js", "test/*.js"]
 }

@@ -9,9 +9,10 @@ import {
   pliDeclarations,
   pliUses,
   sqlOperation,
-} from "../src/source.ts";
+} from "../src/source.js";
 
-const fields = (code: string) =>
+/** @param {string} code */
+const fields = (code) =>
   pliDeclarations(pliCode(code)).map((d) => `${d.parent ? `${d.parent.name}.` : ""}${d.name}:${d.level} ${d.attributes}`);
 
 test("members get their language by the third character, files by extension", () => {

@@ -3,19 +3,25 @@
 // the SQL a PL/I program runs. Works on offsets into the text as given, so
 // every name maps back to its place in the file. Knows nothing about VS Code.
 
-export type Language = "pli" | "jcl" | "hlasm" | "db2";
+/** @typedef {"pli" | "jcl" | "hlasm" | "db2"} Language */
 
-const EXTENSIONS: Record<string, Language> = {
+/** @type {Record<string, Language>} */
+const EXTENSIONS = {
   ".pli": "pli", ".pl1": "pli", ".pco": "pli", ".inc": "pli",
   ".jcl": "jcl", ".cntl": "jcl",
   ".mfs": "hlasm", ".asm": "hlasm", ".hlasm": "hlasm", ".mlc": "hlasm",
   ".ddl": "db2", ".db2": "db2",
 };
-const MEMBER_LANGUAGES: Record<string, Language> = { J: "jcl", F: "hlasm", T: "db2" };
+/** @type {Record<string, Language>} */
+const MEMBER_LANGUAGES = { J: "jcl", F: "hlasm", T: "db2" };
 
-// cgr's rule: the extension decides, and an extensionless z/OS member whose
-// third character is J, F or T is JCL, MFS or Db2; any other member is PL/I.
-export function languageOf(path: string): Language | undefined {
+// The extension decides, and an extensionless z/OS member whose third
+// character is J, F or T is JCL, MFS or Db2; any other member is PL/I.
+/**
+ * @param {string} path
+ * @returns {Language | undefined}
+ */
+export function languageOf(path) {
   const file = path.split("/").pop() ?? "";
   const dot = file.lastIndexOf(".");
   if (dot > 0) {
@@ -24,55 +30,58 @@ export function languageOf(path: string): Language | undefined {
   return MEMBER_LANGUAGES[file.charAt(2).toUpperCase()] ?? "pli";
 }
 
-// A name in the text, upper-cased, and where it is.
-export interface Name {
-  name: string;
-  start: number;
-  end: number;
-}
+/**
+ * A name in the text, upper-cased, and where it is.
+ * @typedef {object} Name
+ * @property {string} name
+ * @property {number} start
+ * @property {number} end
+ */
 
-// A name a program uses. `qualifiers` are the structure names written before
-// it, outermost first (`A.B.C` gives C the qualifiers A, B). `sql` is the
-// EXEC SQL statement it is in, and `host` marks a `:NAME` host variable.
-export interface Use extends Name {
-  qualifiers: string[];
-  sql?: SqlStatement;
-  host: boolean;
-}
+/**
+ * A name a program uses. `qualifiers` are the structure names written before
+ * it, outermost first (`A.B.C` gives C the qualifiers A, B). `sql` is the
+ * EXEC SQL statement it is in, and `host` marks a `:NAME` host variable.
+ * @typedef {Name & { qualifiers: string[], sql?: SqlStatement, host: boolean }} Use
+ */
 
-// A declared name: a PL/I variable or structure field, an HLASM label, or a
-// Db2 column. `parent` is the structure a field belongs to.
-export interface Declaration extends Name {
-  level: number;
-  parent?: Declaration;
-  attributes: string;
-}
+/**
+ * A declared name: a PL/I variable or structure field, an HLASM label, or a
+ * Db2 column. `parent` is the structure a field belongs to.
+ * @typedef {Name & { level: number, parent?: Declaration, attributes: string }} Declaration
+ */
 
-export interface SqlStatement {
-  start: number;
-  end: number;
-}
+/**
+ * @typedef {object} SqlStatement
+ * @property {number} start
+ * @property {number} end
+ */
 
-export interface Table extends Name {
-  qualified: string;
-  columns: Declaration[];
-}
+/** @typedef {Name & { qualified: string, columns: Declaration[] }} Table */
 
 const IDENTIFIER = /[A-Za-z@#$_][A-Za-z0-9@#$_]*/y;
-export const isNameChar = (c: string | undefined) => c !== undefined && /[A-Za-z0-9@#$_]/.test(c);
-const spaces = (text: string) => text.replace(/[^\n\r]/g, " ");
+/** @param {string | undefined} c */
+export const isNameChar = (c) => c !== undefined && /[A-Za-z0-9@#$_]/.test(c);
+/** @param {string} text */
+const spaces = (text) => text.replace(/[^\n\r]/g, " ");
 
 // Mainframe sources are often fixed-format: a sequence number in columns
-// 73-80 and, in PL/I, a carriage-control character in column 1. cgr blanks
-// them the same way before parsing (utils/pli_margins.py).
-export function blankMargins(text: string, language: Language): string {
+// 73-80 and, in PL/I, a carriage-control character in column 1. Both are
+// blanked before parsing.
+/**
+ * @param {string} text
+ * @param {Language} language
+ * @returns {string}
+ */
+export function blankMargins(text, language) {
   const lines = text.split("\n");
   const plain = lines.map((line) => line.replace(/\r$/, ""));
   const code = plain.filter((line) => line.trim());
   if (code.length === 0 || plain.some((line) => line.length > 80)) {
     return text;
   }
-  const isProcess = (line: string) => /^[*%]PROCESS/i.test(line);
+  /** @param {string} line */
+  const isProcess = (line) => /^[*%]PROCESS/i.test(line);
   const carriageControl = language === "pli" && code.every((line) => isProcess(line) || " 01-+".includes(line[0]));
   const numbered = code.filter((line) => line.slice(72).trim()).length;
   const blankSequence = numbered * 10 >= code.length * 9;
@@ -95,7 +104,11 @@ export function blankMargins(text: string, language: Language): string {
 
 // PL/I with its margins, comments and string literals blanked, so only code
 // is left at the same offsets. A literal's suffix (`'01'B`, `'C1'X`) goes too.
-export function pliCode(text: string): string {
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+export function pliCode(text) {
   const source = blankMargins(text, "pli");
   let out = "";
   let i = 0;
@@ -134,8 +147,13 @@ export function pliCode(text: string): string {
 }
 
 // The statements of PL/I code, split at semicolons.
-function statements(code: string): SqlStatement[] {
-  const result: SqlStatement[] = [];
+/**
+ * @param {string} code
+ * @returns {SqlStatement[]}
+ */
+function statements(code) {
+  /** @type {SqlStatement[]} */
+  const result = [];
   let start = 0;
   for (let i = 0; i < code.length; i++) {
     if (code[i] === ";") {
@@ -150,8 +168,15 @@ function statements(code: string): SqlStatement[] {
 }
 
 // Splits code[start, end) at the commas outside parentheses.
-function splitTopLevel(code: string, start: number, end: number): SqlStatement[] {
-  const parts: SqlStatement[] = [];
+/**
+ * @param {string} code
+ * @param {number} start
+ * @param {number} end
+ * @returns {SqlStatement[]}
+ */
+function splitTopLevel(code, start, end) {
+  /** @type {SqlStatement[]} */
+  const parts = [];
   let depth = 0;
   let from = start;
   for (let i = start; i < end; i++) {
@@ -167,18 +192,35 @@ function splitTopLevel(code: string, start: number, end: number): SqlStatement[]
   return parts;
 }
 
-function identifierAt(code: string, at: number): Name | undefined {
+/**
+ * @param {string} code
+ * @param {number} at
+ * @returns {Name | undefined}
+ */
+function identifierAt(code, at) {
   IDENTIFIER.lastIndex = at;
   const match = IDENTIFIER.exec(code);
   return match ? { name: match[0].toUpperCase(), start: at, end: at + match[0].length } : undefined;
 }
 
-function skipBlanks(code: string, at: number, end = code.length): number {
+/**
+ * @param {string} code
+ * @param {number} at
+ * @param {number} [end]
+ * @returns {number}
+ */
+function skipBlanks(code, at, end = code.length) {
   while (at < end && /\s/.test(code[at])) at++;
   return at;
 }
 
-function matchingParen(code: string, open: number, end: number): number {
+/**
+ * @param {string} code
+ * @param {number} open
+ * @param {number} end
+ * @returns {number}
+ */
+function matchingParen(code, open, end) {
   let depth = 0;
   for (let i = open; i < end; i++) {
     if (code[i] === "(") depth++;
@@ -187,12 +229,18 @@ function matchingParen(code: string, open: number, end: number): number {
   return end;
 }
 
-const tidy = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 80);
+/** @param {string} text */
+const tidy = (text) => text.replace(/\s+/g, " ").trim().slice(0, 80);
 
 // Every name a DECLARE (DCL) statement declares, structure fields with
 // their parent: `DCL 1 A, 2 B CHAR(8), 2 (C, D) FIXED BIN(31);`.
-export function pliDeclarations(code: string): Declaration[] {
-  const declarations: Declaration[] = [];
+/**
+ * @param {string} code
+ * @returns {Declaration[]}
+ */
+export function pliDeclarations(code) {
+  /** @type {Declaration[]} */
+  const declarations = [];
   for (const statement of statements(code)) {
     const head = /^\s*(?:[A-Za-z@#$_][A-Za-z0-9@#$_]*\s*:\s*)*%?\s*(?:DCL|DECLARE)\b/i.exec(
       code.slice(statement.start, statement.end),
@@ -200,14 +248,16 @@ export function pliDeclarations(code: string): Declaration[] {
     if (!head) {
       continue;
     }
-    const structure: Declaration[] = [];
+    /** @type {Declaration[]} */
+    const structure = [];
     for (const item of splitTopLevel(code, statement.start + head[0].length, statement.end)) {
       let at = skipBlanks(code, item.start, item.end);
       const level = /^\d+/.exec(code.slice(at, item.end));
       if (level) {
         at = skipBlanks(code, at + level[0].length, item.end);
       }
-      const names: Name[] = [];
+      /** @type {Name[]} */
+      const names = [];
       let rest = at;
       if (code[at] === "(") {
         const close = matchingParen(code, at, item.end);
@@ -229,7 +279,8 @@ export function pliDeclarations(code: string): Declaration[] {
       const parent = structure[structure.length - 1];
       const attributes = tidy(code.slice(rest, item.end));
       for (const name of names) {
-        const declaration: Declaration = { ...name, level: depth, parent, attributes };
+        /** @type {Declaration} */
+        const declaration = { ...name, level: depth, parent, attributes };
         declarations.push(declaration);
         if (names.length === 1) structure.push(declaration);
       }
@@ -239,14 +290,23 @@ export function pliDeclarations(code: string): Declaration[] {
 }
 
 // The EXEC SQL statements of PL/I code.
-export function sqlStatements(code: string): SqlStatement[] {
+/**
+ * @param {string} code
+ * @returns {SqlStatement[]}
+ */
+export function sqlStatements(code) {
   return statements(code).filter((s) => /^\s*(?:[A-Za-z@#$_][A-Za-z0-9@#$_]*\s*:\s*)*EXEC\s+SQL\b/i.test(code.slice(s.start, s.end)));
 }
 
 // Every name PL/I code uses, with the qualifiers written before it.
-export function pliUses(code: string): Use[] {
+/**
+ * @param {string} code
+ * @returns {Use[]}
+ */
+export function pliUses(code) {
   const sql = sqlStatements(code);
-  const uses: Use[] = [];
+  /** @type {Use[]} */
+  const uses = [];
   let inSql = 0;
   const pattern = /[A-Za-z@#$_][A-Za-z0-9@#$_]*/g;
   for (let match = pattern.exec(code); match; match = pattern.exec(code)) {
@@ -269,15 +329,26 @@ export function pliUses(code: string): Use[] {
   return uses;
 }
 
-export function skipBlanksBack(code: string, at: number): number {
+/**
+ * @param {string} code
+ * @param {number} at
+ * @returns {number}
+ */
+export function skipBlanksBack(code, at) {
   while (at >= 0 && /\s/.test(code[at])) at--;
   return at;
 }
 
 // `A.B.` before `start` gives A, B, and the offset where A starts. A pointer
 // (`P->A.B`) ends the chain.
-export function qualifiersBefore(code: string, start: number): { names: string[]; start: number } {
-  const names: string[] = [];
+/**
+ * @param {string} code
+ * @param {number} start
+ * @returns {{ names: string[], start: number }}
+ */
+export function qualifiersBefore(code, start) {
+  /** @type {string[]} */
+  const names = [];
   let first = start;
   let at = skipBlanksBack(code, start - 1);
   while (at >= 0 && code[at] === ".") {
@@ -294,56 +365,44 @@ export function qualifiersBefore(code: string, start: number): { names: string[]
   return { names, start: first };
 }
 
-// One HLASM statement: its label, operation and the names its operands use.
-// Comment lines are skipped, continuation lines joined and remarks dropped.
-export interface HlasmStatement {
-  label?: Name;
-  operation?: Name;
-  operands: Name[];
-}
+/**
+ * One HLASM statement: its label, operation and the names its operands use.
+ * Comment lines are skipped, continuation lines joined and remarks dropped.
+ * @typedef {object} HlasmStatement
+ * @property {Name} [label]
+ * @property {Name} [operation]
+ * @property {Name[]} operands
+ */
 
 const HLASM_NAME = /[.&]?[A-Za-z@#$_][A-Za-z0-9@#$_]*/y;
 // L'FIELD and its kin read an attribute of a symbol; C'..', X'..' and the
 // rest are constants.
 const ATTRIBUTES = new Set(["L", "T", "K", "N", "I", "S", "O", "D"]);
 
-export function hlasmStatements(text: string): HlasmStatement[] {
-  const source = blankMargins(text, "hlasm");
-  const lines: { text: string; offset: number }[] = [];
-  let offset = 0;
-  for (const line of source.split("\n")) {
-    lines.push({ text: line.replace(/\r$/, ""), offset });
-    offset += line.length + 1;
-  }
-  const continued = (n: number) => (lines[n].text[71] ?? " ") !== " " && n + 1 < lines.length;
-
-  const result: HlasmStatement[] = [];
-  for (let n = 0; n < lines.length; n++) {
-    const first = lines[n];
-    if (!first.text.trim() || first.text.startsWith("*") || first.text.startsWith(".*")) {
-      continue;
-    }
-    // A character in column 72 continues the statement in column 16 of the next line.
-    const segments = [{ text: first.text.slice(0, 71), base: first.offset, from: 0 }];
-    while (continued(n)) {
-      n++;
-      segments.push({ text: lines[n].text.slice(0, 71), base: lines[n].offset, from: 15 });
-    }
-
-    const statement: HlasmStatement = { operands: [] };
-    const body = segments[0].text;
+/**
+ * @param {string} text
+ * @returns {HlasmStatement[]}
+ */
+export function hlasmStatements(text) {
+  /** @type {HlasmStatement[]} */
+  const result = [];
+  for (const { segments } of hlasmLines(text)) {
+    const first = segments[0];
+    /** @type {HlasmStatement} */
+    const statement = { operands: [] };
+    const body = first.text;
     let at = 0;
     if (body[0] !== " ") {
       HLASM_NAME.lastIndex = 0;
       const label = HLASM_NAME.exec(body);
-      if (label) statement.label = { name: label[0].toUpperCase(), start: first.offset, end: first.offset + label[0].length };
+      if (label) statement.label = { name: label[0].toUpperCase(), start: first.base, end: first.base + label[0].length };
       while (at < body.length && body[at] !== " ") at++;
     }
     at = skipBlanks(body, at);
     HLASM_NAME.lastIndex = at;
     const operation = HLASM_NAME.exec(body);
     if (operation) {
-      statement.operation = { name: operation[0].toUpperCase(), start: first.offset + at, end: first.offset + at + operation[0].length };
+      statement.operation = { name: operation[0].toUpperCase(), start: first.base + at, end: first.base + at + operation[0].length };
       at = skipBlanks(body, at + operation[0].length);
     }
     const constants = statement.operation !== undefined && /^(DC|DS)$/.test(statement.operation.name);
@@ -372,7 +431,7 @@ export function hlasmStatements(text: string): HlasmStatement[] {
           continue;
         }
         HLASM_NAME.lastIndex = at;
-        const name = HLASM_NAME.exec(current)!;
+        const name = /** @type {RegExpExecArray} */ (HLASM_NAME.exec(current));
         const after = at + name[0].length;
         const upper = name[0].toUpperCase();
         at = after;
@@ -398,8 +457,41 @@ export function hlasmStatements(text: string): HlasmStatement[] {
   return result;
 }
 
+/**
+ * The lines each statement of an HLASM source spans, comment lines skipped:
+ * columns 1-71 of each, with `base` the text offset of its column 1. A
+ * character in column 72 continues the statement in column 16 of the next line.
+ * @param {string} text
+ * @returns {{ line: number, segments: { text: string, base: number }[] }[]}
+ */
+export function hlasmLines(text) {
+  /** @type {{ text: string, base: number }[]} */
+  const lines = [];
+  let base = 0;
+  for (const line of blankMargins(text, "hlasm").split("\n")) {
+    lines.push({ text: line.replace(/\r$/, ""), base });
+    base += line.length + 1;
+  }
+  const result = [];
+  for (let n = 0; n < lines.length; n++) {
+    const first = lines[n].text;
+    if (!first.trim() || first.startsWith("*") || first.startsWith(".*")) continue;
+    const statement = { line: n, segments: [{ text: first.slice(0, 71), base: lines[n].base }] };
+    while ((lines[n].text[71] ?? " ") !== " " && n + 1 < lines.length) {
+      n++;
+      statement.segments.push({ text: lines[n].text.slice(0, 71), base: lines[n].base });
+    }
+    result.push(statement);
+  }
+  return result;
+}
+
 // SQL with comments and strings blanked: `--` to the end of the line, /* */.
-export function sqlCode(text: string): string {
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+export function sqlCode(text) {
   return blankMargins(text, "db2")
     .replace(/\/\*[\s\S]*?\*\//g, spaces)
     .replace(/--[^\n]*/g, spaces)
@@ -409,9 +501,14 @@ export function sqlCode(text: string): string {
 const CONSTRAINTS = new Set(["PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT", "PERIOD", "LIKE"]);
 
 // The tables a DDL file creates, with their columns.
-export function ddlTables(text: string): Table[] {
+/**
+ * @param {string} text
+ * @returns {Table[]}
+ */
+export function ddlTables(text) {
   const code = sqlCode(text);
-  const tables: Table[] = [];
+  /** @type {Table[]} */
+  const tables = [];
   for (const statement of statements(code)) {
     const head = /^\s*CREATE\s+(?:GLOBAL\s+TEMPORARY\s+|AUXILIARY\s+)?TABLE\s+((?:[A-Za-z0-9@#$_"]+\s*\.\s*)*([A-Za-z0-9@#$_"]+))\s*\(/i.exec(
       code.slice(statement.start, statement.end),
@@ -422,7 +519,8 @@ export function ddlTables(text: string): Table[] {
     const nameStart = statement.start + head[0].indexOf(head[1]) + head[1].length - head[2].length;
     const open = statement.start + head[0].length - 1;
     const close = matchingParen(code, open, statement.end);
-    const table: Table = {
+    /** @type {Table} */
+    const table = {
       name: head[2].replaceAll('"', "").toUpperCase(),
       start: nameStart,
       end: nameStart + head[2].length,
@@ -445,7 +543,12 @@ export function ddlTables(text: string): Table[] {
 
 // What a statement does to `table`: INSERT, UPDATE, DELETE or MERGE when the
 // table is what it writes, SELECT when it only reads it.
-export function sqlOperation(statement: string, table: string): string | undefined {
+/**
+ * @param {string} statement
+ * @param {string} table
+ * @returns {string | undefined}
+ */
+export function sqlOperation(statement, table) {
   const sql = /\bEXEC\s+SQL\s+([\s\S]*)/i.exec(statement)?.[1] ?? statement;
   const verb = /^\s*([A-Za-z]+)/.exec(sql)?.[1].toUpperCase();
   if (!verb) {
@@ -463,27 +566,38 @@ export function sqlOperation(statement: string, table: string): string | undefin
 
 // Converts offsets to 0-based lines and columns.
 export class Lines {
-  private readonly starts: number[] = [0];
+  /** @type {number[]} */
+  #starts = [0];
 
-  constructor(text: string) {
+  /** @param {string} text */
+  constructor(text) {
     for (let i = 0; i < text.length; i++) {
-      if (text[i] === "\n") this.starts.push(i + 1);
+      if (text[i] === "\n") this.#starts.push(i + 1);
     }
   }
 
-  at(offset: number): { line: number; col: number } {
+  /**
+   * @param {number} offset
+   * @returns {{ line: number, col: number }}
+   */
+  at(offset) {
     let low = 0;
-    let high = this.starts.length - 1;
+    let high = this.#starts.length - 1;
     while (low < high) {
       const middle = (low + high + 1) >> 1;
-      if (this.starts[middle] <= offset) low = middle;
+      if (this.#starts[middle] <= offset) low = middle;
       else high = middle - 1;
     }
-    return { line: low, col: offset - this.starts[low] };
+    return { line: low, col: offset - this.#starts[low] };
   }
 
-  offset(line: number, col: number): number {
-    return (this.starts[line] ?? this.starts[this.starts.length - 1]) + col;
+  /**
+   * @param {number} line
+   * @param {number} col
+   * @returns {number}
+   */
+  offset(line, col) {
+    return (this.#starts[line] ?? this.#starts[this.#starts.length - 1]) + col;
   }
 }
 
