@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import * as vscode from "vscode";
 import { Graph, type Target, type TreeRow, type WholeGraph } from "./graph.ts";
+import { describe, type Progress, progressLine } from "./progress.ts";
 import { PLI_BUILTINS } from "./source.ts";
 import { type Symbol, Symbols } from "./symbols.ts";
 
@@ -18,11 +19,27 @@ interface Workspace {
   // Variables, fields, labels and columns, read from the source.
   symbols?: Symbols;
   error?: string;
+  // The sync cgr is running, while it runs.
+  indexing?: Indexing;
 }
+
+// A running sync: how far it is, and the notification showing it, if any.
+interface Indexing {
+  percent: number;
+  message: string;
+  shown: number;
+  report?: (value: { message?: string; increment?: number }) => void;
+  finish?: () => void;
+}
+
+// Smaller syncs, such as the one after saving a file, show only in the status bar.
+const NOTIFY_FROM_FILES = 50;
 
 const log = vscode.window.createOutputChannel("PL/I Graph", { log: true });
 const workspaces = new Map<string, Workspace>();
 const changed = new vscode.EventEmitter<void>();
+// Every step of a sync's progress, and undefined when it ends; for the end-to-end test.
+const indexingChanged = new vscode.EventEmitter<{ percent: number; message: string } | undefined>();
 let db: DatabaseSync | undefined;
 let dbError: string | undefined;
 let version: string | undefined;
@@ -52,9 +69,21 @@ export function activate(context: vscode.ExtensionContext) {
   status.command = "pliGraph.restart";
   const showStatus = () => {
     const syncing = [...workspaces.values()].some((w) => w.watcher && !w.graph);
+    const indexing = [...workspaces.values()].find((w) => w.indexing)?.indexing;
     const failed = dbError ?? [...workspaces.values()].find((w) => w.error)?.error;
-    status.text = failed ? "$(error) PL/I graph" : syncing ? "$(sync~spin) PL/I graph" : "$(type-hierarchy) PL/I graph";
-    status.tooltip = failed ?? (syncing ? "cgr is building the graph for the first time…" : "cgr keeps the graph in sync. Click to restart it.");
+    if (failed) {
+      status.text = "$(error) PL/I graph";
+      status.tooltip = failed;
+    } else if (indexing) {
+      status.text = `$(sync~spin) PL/I graph ${indexing.percent}%`;
+      status.tooltip = `cgr is indexing. ${indexing.message}`;
+    } else if (syncing) {
+      status.text = "$(sync~spin) PL/I graph";
+      status.tooltip = "cgr is building the graph for the first time…";
+    } else {
+      status.text = "$(type-hierarchy) PL/I graph";
+      status.tooltip = "cgr keeps the graph in sync. Click to restart it.";
+    }
     status.show();
   };
 
@@ -143,7 +172,7 @@ export function activate(context: vscode.ExtensionContext) {
   refresh();
   followEditor();
   // Lets the end-to-end test wait for cgr instead of sleeping.
-  return { onDidUpdateGraph: changed.event };
+  return { onDidUpdateGraph: changed.event, onDidChangeIndexing: indexingChanged.event };
 }
 
 export function deactivate() {
@@ -207,6 +236,8 @@ function startWatcher(workspace: Workspace, showStatus: () => void) {
     ...process.env,
     GRAPH_BACKEND: "sqlite",
     CGR_PLI_EXTENSIONLESS_MEMBERS: config.get("extensionlessMembers", true) ? "true" : "false",
+    // Progress lines on stderr, for the progress bar.
+    CGR_PROGRESS: "1",
   };
   log.info(`watching ${workspace.folder.name}: ${line}`);
   const child = spawn(line, {
@@ -219,17 +250,33 @@ function startWatcher(workspace: Workspace, showStatus: () => void) {
   });
   workspace.watcher = child;
   let tail = "";
-  const collect = (chunk: Buffer) => {
-    tail = (tail + chunk.toString()).slice(-4000);
-    log.info(chunk.toString().trimEnd());
+  // Each stream is read line by line: a progress line goes to the progress
+  // bar, everything else to the log.
+  const collector = () => {
+    let pending = "";
+    return (chunk: Buffer) => {
+      const lines = (pending + chunk.toString()).split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      const output = lines.filter((line) => {
+        const progress = progressLine(line);
+        if (progress) progressed(workspace, progress, showStatus);
+        return !progress;
+      });
+      if (output.length > 0) {
+        tail = (tail + output.join("\n") + "\n").slice(-4000);
+        log.info(output.join("\n").trimEnd());
+      }
+    };
   };
-  child.stdout?.on("data", collect);
-  child.stderr?.on("data", collect);
+  child.stdout?.on("data", collector());
+  child.stderr?.on("data", collector());
   const exited = (code: number | null | string) => {
     if (workspace.watcher !== child) {
       return;
     }
     workspace.watcher = undefined;
+    workspace.indexing?.finish?.();
+    workspace.indexing = undefined;
     if (stopping) {
       return;
     }
@@ -248,9 +295,55 @@ function startWatcher(workspace: Workspace, showStatus: () => void) {
   child.on("exit", (code) => exited(code));
 }
 
+// Moves the progress bar of a sync on, or ends it.
+function progressed(workspace: Workspace, progress: Progress, showStatus: () => void) {
+  const state = describe(progress);
+  if (!state) {
+    if (progress.phase === "done" && workspace.indexing) {
+      log.info(`${workspace.folder.name}: sync done`);
+      workspace.indexing.finish?.();
+      workspace.indexing = undefined;
+      indexingChanged.fire(undefined);
+      showStatus();
+    }
+    return;
+  }
+  let indexing = workspace.indexing;
+  if (!indexing) {
+    log.info(`${workspace.folder.name}: syncing ${progress.total} files`);
+    indexing = { percent: 0, message: state.message, shown: 0 };
+    workspace.indexing = indexing;
+    if (progress.total >= NOTIFY_FROM_FILES && progress.phase !== "write") {
+      const shown = indexing;
+      void vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Indexing ${workspace.folder.name}` },
+        (bar) =>
+          new Promise<void>((resolve) => {
+            shown.report = (value) => bar.report(value);
+            shown.finish = resolve;
+            bar.report({ message: shown.message, increment: shown.percent });
+            shown.shown = shown.percent;
+          }),
+      );
+    }
+  } else if (progress.done === 0) {
+    log.info(`${workspace.folder.name}: ${state.message}`);
+  }
+  indexing.percent = Math.max(indexing.percent, state.percent);
+  indexing.message = state.message;
+  if (indexing.report) {
+    indexing.report({ message: indexing.message, increment: indexing.percent - indexing.shown });
+    indexing.shown = indexing.percent;
+  }
+  indexingChanged.fire({ percent: indexing.percent, message: indexing.message });
+  showStatus();
+}
+
 function stopWatcher(workspace: Workspace) {
   const child = workspace.watcher;
   workspace.watcher = undefined;
+  workspace.indexing?.finish?.();
+  workspace.indexing = undefined;
   if (!child?.pid || child.exitCode !== null) {
     return;
   }

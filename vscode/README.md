@@ -39,6 +39,11 @@ PL/I support for VS Code built on the code-graph-rag (cgr) index:
   "calls" its programs, a program its tables and screens). Each row
   expands into its file. Files that already appear further up are marked
   `(repeated)` and don't expand.
+- **Progress** of cgr's indexing: the status bar shows `PL/I graph 42%`
+  while a sync runs, and a sync of 50 files or more, such as the first one,
+  also shows a notification with the step (`Reading definitions: 5,000 of
+  20,000 files`). cgr reports it on stderr when `CGR_PROGRESS=1`, which the
+  extension sets.
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
   whole graph next to the editor, starting at the active file's module. It is
   the page from `viz/`, drawn from the same database:

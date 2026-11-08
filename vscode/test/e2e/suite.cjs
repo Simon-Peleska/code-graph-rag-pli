@@ -8,6 +8,9 @@ const vscode = require("vscode");
 exports.run = async () => {
   const folder = vscode.workspace.workspaceFolders[0].uri;
   const api = await vscode.extensions.getExtension("local.pli-graph").activate();
+  // The first sync's progress, recorded from the start: cgr takes seconds to come up.
+  const progress = [];
+  api.onDidChangeIndexing((state) => progress.push(state));
 
   // Re-checks after every graph update and every document (re)opened, which
   // is how a language switch arrives; the workflow's step timeout ends a hang.
@@ -76,4 +79,20 @@ exports.run = async () => {
     });
   }
   console.log("Show Graph opens");
+
+  // The progress bar climbed through the first sync and ended with it.
+  while (!progress.includes(undefined)) {
+    await new Promise((resolve) => {
+      const listener = api.onDidChangeIndexing(() => {
+        listener.dispose();
+        resolve();
+      });
+    });
+  }
+  const first = progress.slice(0, progress.indexOf(undefined));
+  const percents = first.map((state) => state.percent);
+  assert.ok(first.length > 0, "the first sync reported no progress");
+  assert.deepEqual(percents, [...percents].sort((a, b) => a - b));
+  assert.ok(first.some((state) => state.message.startsWith("Resolving calls")), JSON.stringify(first));
+  console.log(`Progress bar works: ${first.map((s) => s.percent).join(" ")}`);
 };

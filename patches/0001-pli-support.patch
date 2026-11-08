@@ -583,10 +583,18 @@ index da8b6af07..28ad9cf06 100644
      if parser is None or language is None:
          return None
 diff --git a/codebase_rag/graph_updater.py b/codebase_rag/graph_updater.py
-index fbdb32098..e9a0b2ffe 100644
+index fbdb32098..62a72e55f 100644
 --- a/codebase_rag/graph_updater.py
 +++ b/codebase_rag/graph_updater.py
-@@ -42,8 +42,8 @@ from .language_spec import (
+@@ -24,6 +24,7 @@ from . import constants as cs
+ from . import cypher_queries as cq
+ from . import exceptions as ex
+ from . import logs as ls
++from . import progress_report
+ from .analyzers import FindingAnalyzer
+ from .ast_cache import BoundedASTCache
+ from .capture import CaptureSelection, default_capture
+@@ -42,8 +43,8 @@ from .language_spec import (
      LANGUAGE_FQN_SPECS,
      csharp_namespaced_from_graph,
      csharp_partial_key_from_graph,
@@ -597,7 +605,7 @@ index fbdb32098..e9a0b2ffe 100644
      sql_object_reference_name,
  )
  from .parser_fingerprint import compute_parser_fingerprint
-@@ -206,11 +206,7 @@ def _stored_strings(value: object) -> list[str]:
+@@ -206,11 +207,7 @@ def _stored_strings(value: object) -> list[str]:
  
  def _stored_language(path: object) -> cs.SupportedLanguage | None:
      # The language of a stored definition, from its file's extension.
@@ -610,7 +618,7 @@ index fbdb32098..e9a0b2ffe 100644
  
  
  def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
-@@ -1712,7 +1708,12 @@ class GraphUpdater:
+@@ -1712,7 +1709,12 @@ class GraphUpdater:
          self.function_registry = FunctionRegistryTrie(
              simple_name_lookup=self.simple_name_lookup
          )
@@ -624,7 +632,7 @@ index fbdb32098..e9a0b2ffe 100644
          # Every file parsed this run, in parse order. The AST cache is bounded
          # and evicts on large repos, so Pass 3 must iterate this full list (not
          # the cache) and re-parse evicted files, or their calls are dropped.
-@@ -2687,7 +2688,7 @@ class GraphUpdater:
+@@ -2687,7 +2689,7 @@ class GraphUpdater:
  
      def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
          """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -633,7 +641,31 @@ index fbdb32098..e9a0b2ffe 100644
          if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
              return False
          language = spec.language
-@@ -4394,7 +4395,7 @@ class GraphUpdater:
+@@ -2996,6 +2998,7 @@ class GraphUpdater:
+         logger.info(ls.PASS_3_CALLS)
+         self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
+         self._process_function_calls()
++        progress_report.report("write", 0, 1)
+ 
+         # IMPORTS flush AFTER Pass 3: a C# namespace import lands on the
+         # modules the file actually resolved entities from, and those
+@@ -3060,6 +3063,7 @@ class GraphUpdater:
+         self._generate_semantic_embeddings()
+ 
+         self._commit_run_state()
++        progress_report.report("done", 1, 1)
+         if self._embeddings_interrupted:
+             raise ex.EmbeddingsInterrupted
+         self._retire_legacy_dotted_project()
+@@ -3119,6 +3123,7 @@ class GraphUpdater:
+         self._record_sync_time()
+         # Nothing to save on this path, and nothing left half-written.
+         self.committed = True
++        progress_report.report("done", 1, 1)
+ 
+     def _commit_run_state(self) -> None:
+         # The delombok state commits ONLY here, after every pass and the
+@@ -4394,7 +4399,7 @@ class GraphUpdater:
              # A row written before the flag existed reads as exported: the
              # star lookup then counts it, as it did before.
              row.get(cs.KEY_IS_EXPORTED) is not False,
@@ -642,7 +674,7 @@ index fbdb32098..e9a0b2ffe 100644
          )
          # The C# declared-form index (issue #1629) is filled only by
          # parsing; an unchanged type must stay reachable by `N.Widget`
-@@ -5403,7 +5404,7 @@ class GraphUpdater:
+@@ -5403,7 +5408,7 @@ class GraphUpdater:
          a parse of its bytes with the language's combined query: what a
          waiting module wrote as a base or a callee (issue #1568). A language
          without a parser or a combined query offers nothing."""
@@ -651,7 +683,7 @@ index fbdb32098..e9a0b2ffe 100644
          parser = self.parsers.get(language) if language is not None else None
          query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
          if parser is None or query is None or language is None:
-@@ -6010,7 +6011,7 @@ class GraphUpdater:
+@@ -6010,7 +6015,7 @@ class GraphUpdater:
          if recorded_qns:
              module_qn_prefixes = recorded_qns
          elif (
@@ -660,7 +692,7 @@ index fbdb32098..e9a0b2ffe 100644
              and module_map.get(path_derived_qn) is None
          ):
              module_qn_prefixes = {path_derived_qn}
-@@ -7364,7 +7365,7 @@ class GraphUpdater:
+@@ -7364,7 +7369,7 @@ class GraphUpdater:
                      self._process_single_file(
                          filepath,
                          file_bytes=file_bytes,
@@ -669,7 +701,32 @@ index fbdb32098..e9a0b2ffe 100644
                      )
                  except Exception as exc:
                      logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
-@@ -8174,6 +8175,12 @@ class GraphUpdater:
+@@ -7378,6 +7383,12 @@ class GraphUpdater:
+                     advance=1,
+                     description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
+                 )
++                progress_report.report(
++                    "definitions", changed_count, len(scan.changed_entries)
++                )
++        # What follows until the calls pass (deleted files, deferred
++        # definitions, cross-file joins) takes a sixth of a first sync.
++        progress_report.report("link", 0, 1)
+ 
+         deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
+         self._delete_reconciled_files(deleted_keys, deleted_set)
+@@ -8159,7 +8170,10 @@ class GraphUpdater:
+         changed_entries: list[tuple[Path, str, bool, bytes]],
+     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
+-        for filepath, _file_key, _is_new, file_bytes in changed_entries:
++        for done, (filepath, _file_key, _is_new, file_bytes) in enumerate(
++            changed_entries
++        ):
++            progress_report.report("parse", done, len(changed_entries))
+             language = self._tree_sitter_language(filepath)
+             if language is None:
+                 continue
+@@ -8174,6 +8188,12 @@ class GraphUpdater:
              tree = parse_with_preproc_recovery(
                  parser, grammar_bytes(file_bytes, language, filepath), language
              )
@@ -682,7 +739,15 @@ index fbdb32098..e9a0b2ffe 100644
              root_node = tree.root_node
              combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
              combined_captures: dict[str, list] | None = None
-@@ -8234,7 +8241,7 @@ class GraphUpdater:
+@@ -8181,6 +8201,7 @@ class GraphUpdater:
+                 cursor = QueryCursor(combined_query)
+                 combined_captures = sorted_captures(cursor, root_node)
+             result[filepath] = (root_node, combined_captures)
++        progress_report.report("parse", len(changed_entries), len(changed_entries))
+         return result
+ 
+     def _process_single_file(
+@@ -8234,7 +8255,7 @@ class GraphUpdater:
          module's qn, and parsing it would claim or twin the Module. It still
          falls through to the generic File node (issue #2445).
          """
@@ -691,7 +756,7 @@ index fbdb32098..e9a0b2ffe 100644
          if not (
              lang_config
              and isinstance(lang_config.language, cs.SupportedLanguage)
-@@ -8322,7 +8329,7 @@ class GraphUpdater:
+@@ -8322,7 +8343,7 @@ class GraphUpdater:
          """
          if is_notebook_path(file_path):
              return self._load_notebook_ast(file_path)
@@ -700,7 +765,25 @@ index fbdb32098..e9a0b2ffe 100644
          if language is None or language not in self.parsers:
              return None
          parser = self.queries[language].get(cs.KEY_PARSER)
-@@ -9209,7 +9216,7 @@ class GraphUpdater:
+@@ -8408,7 +8429,8 @@ class GraphUpdater:
+         # defining kX.
+         self.factory.call_processor.finalize_callable_field_bindings()
+         self.factory.call_processor.finalize_js_symbol_bindings()
+-        for file_path, language in files:
++        for done, (file_path, language) in enumerate(files):
++            progress_report.report("calls", done, len(files))
+             root_node = self._ast_for(file_path)
+             if root_node is None:
+                 continue
+@@ -8444,6 +8466,7 @@ class GraphUpdater:
+                 self.queries,
+                 func_class_captures_cache=captures_cache,
+             )
++        progress_report.report("calls", len(files), len(files))
+         self.factory.call_processor.finalize_callable_param_flow()
+         self.factory.call_processor.finalize_flow()
+         self.factory.call_processor.finalize_dispatch()
+@@ -9209,7 +9232,7 @@ class GraphUpdater:
      ) -> dict[str, bytes]:
          touched_languages: set[cs.SupportedLanguage] = set()
          for path in (*reparse.values(), *gone.values()):
@@ -1877,6 +1960,44 @@ index fd79c9697..70ec1de0b 100644
      stack = [node]
      while stack:
          current = stack.pop(0)
+diff --git a/codebase_rag/progress_report.py b/codebase_rag/progress_report.py
+new file mode 100644
+index 000000000..5e96592d1
+--- /dev/null
++++ b/codebase_rag/progress_report.py
+@@ -0,0 +1,32 @@
++"""Progress of a sync for a program that runs cgr, such as the VS Code extension.
++
++With ``CGR_PROGRESS=1`` in the environment, each step writes one line to
++stderr: ``CGR_PROGRESS {"phase": ..., "done": ..., "total": ...}``. The phases
++of a sync are ``parse`` and ``definitions`` (files), ``link``, ``calls``
++(files), then ``write`` and ``done``. A phase reports at most four times a
++second, plus its first and last step, so 20,000 files cost a few hundred
++lines.
++"""
++
++import json
++import os
++import sys
++import time
++
++ENV_VAR = "CGR_PROGRESS"
++PREFIX = "CGR_PROGRESS "
++_INTERVAL = 0.25
++
++_last: dict[str, float] = {}
++
++
++def report(phase: str, done: int, total: int) -> None:
++    if os.environ.get(ENV_VAR) != "1":
++        return
++    now = time.monotonic()
++    if 0 < done < total and now - _last.get(phase, 0.0) < _INTERVAL:
++        return
++    _last[phase] = now
++    line = json.dumps({"phase": phase, "done": done, "total": total})
++    sys.stderr.write(f"{PREFIX}{line}\n")
++    sys.stderr.flush()
 diff --git a/codebase_rag/queries/highlights/db2.scm b/codebase_rag/queries/highlights/db2.scm
 new file mode 100644
 index 000000000..b21785ba7
@@ -2605,6 +2726,69 @@ index 000000000..0d2f05938
 +    procedure = tree.root_node.children[0].children[-1]
 +    assert procedure.type == "procedure_statement"
 +    assert _name_span(procedure, "MAIN") == (0, 4)
+diff --git a/codebase_rag/tests/test_progress_report.py b/codebase_rag/tests/test_progress_report.py
+new file mode 100644
+index 000000000..fece79791
+--- /dev/null
++++ b/codebase_rag/tests/test_progress_report.py
+@@ -0,0 +1,57 @@
++# The progress lines a program running cgr reads to draw a progress bar,
++# such as the PL/I Graph VS Code extension.
++import json
++from pathlib import Path
++from unittest.mock import MagicMock
++
++import pytest
++
++from codebase_rag import progress_report
++from codebase_rag.tests.conftest import run_updater
++
++
++def _project(temp_repo: Path) -> Path:
++    project = temp_repo / "proj"
++    project.mkdir()
++    for name in ("a", "b", "c"):
++        (project / f"{name}.py").write_text(f"def {name}():\n    return 1\n")
++    return project
++
++
++def _progress(stderr: str) -> list[tuple[str, int, int]]:
++    lines = [
++        line for line in stderr.splitlines() if line.startswith(progress_report.PREFIX)
++    ]
++    values = [json.loads(line.removeprefix(progress_report.PREFIX)) for line in lines]
++    return [(v["phase"], v["done"], v["total"]) for v in values]
++
++
++def test_a_sync_reports_each_phase_in_order_and_ends_done(
++    temp_repo: Path,
++    mock_ingestor: MagicMock,
++    monkeypatch: pytest.MonkeyPatch,
++    capfd: pytest.CaptureFixture[str],
++) -> None:
++    monkeypatch.setenv(progress_report.ENV_VAR, "1")
++    run_updater(_project(temp_repo), mock_ingestor, skip_if_missing="python")
++
++    progress = _progress(capfd.readouterr().err)
++    phases = list(dict.fromkeys(phase for phase, _, _ in progress))
++    assert phases == ["parse", "definitions", "link", "calls", "write", "done"], (
++        progress
++    )
++    assert ("parse", 3, 3) in progress
++    assert ("definitions", 3, 3) in progress
++    assert progress[-1] == ("done", 1, 1)
++
++
++def test_without_the_variable_nothing_is_reported(
++    temp_repo: Path,
++    mock_ingestor: MagicMock,
++    monkeypatch: pytest.MonkeyPatch,
++    capfd: pytest.CaptureFixture[str],
++) -> None:
++    monkeypatch.delenv(progress_report.ENV_VAR, raising=False)
++    run_updater(_project(temp_repo), mock_ingestor, skip_if_missing="python")
++
++    assert _progress(capfd.readouterr().err) == []
 diff --git a/codebase_rag/tests/test_rename_op.py b/codebase_rag/tests/test_rename_op.py
 index d76ff82c3..a6f8d1917 100644
 --- a/codebase_rag/tests/test_rename_op.py
