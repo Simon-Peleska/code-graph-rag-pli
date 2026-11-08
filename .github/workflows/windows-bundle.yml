@@ -54,7 +54,10 @@ jobs:
           # The versions cgr's uv.lock pins, which upstream tests against. The
           # newest releases moved huggingface-hub and google-genai from httpx
           # to httpx2, which left the httpx cgr imports out of the bundle.
-          (cd upstream && uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o ../requirements.txt)
+          # cgr-graph-rs is a path in the lock (rust/cgr_graph_rs); its abi3
+          # wheel comes from PyPI as cgr's own dependency instead.
+          (cd upstream && uv export --frozen --no-dev --no-emit-project --no-emit-package cgr-graph-rs \
+            --no-hashes --format requirements-txt -o ../requirements.txt)
           python -m pip wheel --no-deps -w wheels upstream/grammars/tree-sitter-pli \
             upstream/grammars/tree-sitter-jcl upstream/grammars/tree-sitter-hlasm \
             upstream/grammars/tree-sitter-db2 ./upstream
