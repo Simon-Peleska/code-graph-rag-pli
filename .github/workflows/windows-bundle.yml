@@ -53,7 +53,7 @@ jobs:
           python -m pip install --quiet --upgrade pip wheel
           python -m pip wheel --no-deps -w wheels upstream/grammars/tree-sitter-pli \
             upstream/grammars/tree-sitter-jcl upstream/grammars/tree-sitter-hlasm \
-            upstream/grammars/tree-sitter-db2 upstream
+            upstream/grammars/tree-sitter-db2 ./upstream
           ls wheels
 
       - name: Assemble bundle
