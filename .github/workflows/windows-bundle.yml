@@ -50,7 +50,11 @@ jobs:
       # looking for a checkout, so the bundle never compiles anything.
       - name: Build wheels
         run: |
-          python -m pip install --quiet --upgrade pip wheel
+          python -m pip install --quiet --upgrade pip wheel uv
+          # The versions cgr's uv.lock pins, which upstream tests against. The
+          # newest releases moved huggingface-hub and google-genai from httpx
+          # to httpx2, which left the httpx cgr imports out of the bundle.
+          (cd upstream && uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o ../requirements.txt)
           python -m pip wheel --no-deps -w wheels upstream/grammars/tree-sitter-pli \
             upstream/grammars/tree-sitter-jcl upstream/grammars/tree-sitter-hlasm \
             upstream/grammars/tree-sitter-db2 ./upstream
@@ -63,7 +67,7 @@ jobs:
           unzip -q python.zip -d bundle/python
           # The embeddable Python only searches the paths its ._pth file lists.
           printf 'python312.zip\r\n.\r\n..\\lib\r\nimport site\r\n' > bundle/python/python312._pth
-          python -m pip install --quiet --only-binary :all: --target bundle/lib wheels/*.whl
+          python -m pip install --quiet --only-binary :all: --target bundle/lib -r requirements.txt wheels/*.whl
           mkdir -p bundle/viz
           cp -r viz/build_graph_site.py viz/graph.template.html viz/vendor bundle/viz/
           printf '@echo off\r\n"%%~dp0python\\python.exe" -m codebase_rag.cli %%*\r\n' > bundle/cgr.cmd
