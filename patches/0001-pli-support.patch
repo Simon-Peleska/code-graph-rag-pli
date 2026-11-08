@@ -180,6 +180,28 @@ index f0c5c134d..5fcd751c3 100644
  )
  PY_SOURCE_GLOB = "*.py"
  # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
+diff --git a/codebase_rag/constants/graph.py b/codebase_rag/constants/graph.py
+index 6dc235075..6008abafd 100644
+--- a/codebase_rag/constants/graph.py
++++ b/codebase_rag/constants/graph.py
+@@ -1784,6 +1784,17 @@ NODE_NAME_INDEXES: tuple[str, ...] = tuple(
+     if key is not UniqueKeyType.NAME
+ )
+ 
++# The per-file deletes of a re-index match a Module by `path` and a File,
++# Folder or Package by `absolute_path` (CYPHER_DELETE_MODULE and kin).
++# Without an index each of them scans every node: re-indexing 20,000 PL/I
++# members took about 50 minutes on the embedded graph instead of a minute.
++NODE_PATH_INDEXES: tuple[tuple[str, str], ...] = (
++    (NodeLabel.MODULE.value, KEY_PATH),
++    (NodeLabel.FILE.value, KEY_ABSOLUTE_PATH),
++    (NodeLabel.FOLDER.value, KEY_ABSOLUTE_PATH),
++    (NodeLabel.PACKAGE.value, KEY_ABSOLUTE_PATH),
++)
++
+ # Superseded unique constraints that must be dropped from existing shared
+ # databases; a leftover Folder/File path constraint would keep rejecting the
+ # second same-relative-path node the fix now creates (issue #897).
 diff --git a/codebase_rag/constants/languages.py b/codebase_rag/constants/languages.py
 index 820b68d07..faf4d88f8 100644
 --- a/codebase_rag/constants/languages.py
@@ -560,6 +582,57 @@ index a4872060a..166b30cfd 100644
              raise _Unmapped(cs.SIGNATURE_SITE_OTHER_LANGUAGE.format(path=path))
          dialect = _DIALECTS[header.language]
          try:
+diff --git a/codebase_rag/embedded_graph/compiler.py b/codebase_rag/embedded_graph/compiler.py
+index a46d82957..e433a5273 100644
+--- a/codebase_rag/embedded_graph/compiler.py
++++ b/codebase_rag/embedded_graph/compiler.py
+@@ -531,8 +531,15 @@ class _MatchBuilder:
+ 
+     def _node(self, np: a.NodePattern) -> CE:
+         alias = self.ctx.fresh(sq.NODE_PREFIX)
+-        self.from_items.append(sq.table(sq.NODES, alias))
+         bound = self.scope.get(np.var) if np.var and self.scope.has(np.var) else None
++        if bound is not None:
++            # A node an earlier clause bound is read by id after the input
++            # row it comes from. Left to itself SQLite sometimes put it first
++            # and scanned every node against the input instead: 7 ms of each
++            # per-file module delete on 43,000 nodes.
++            self.from_items[0] += f" CROSS JOIN {sq.table(sq.NODES, alias)}"
++        else:
++            self.from_items.append(sq.table(sq.NODES, alias))
+         if bound is not None:
+             if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
+                 raise CompileError(EG_ERR_NOT_NODE.format(name=np.var))
+diff --git a/codebase_rag/function_registry.py b/codebase_rag/function_registry.py
+index ef2e46308..a903f9e99 100644
+--- a/codebase_rag/function_registry.py
++++ b/codebase_rag/function_registry.py
+@@ -622,6 +622,25 @@ class FunctionRegistryTrie:
+             self._ending_with_tails.setdefault(tail, set()).add(suffix)
+         return result
+ 
++    def names_under(self, prefix: str) -> list[QualifiedName]:
++        """`prefix` itself and every qn below it, read off the trie by name
++        alone: some trie leaves hold their type as a plain string, which
++        `find_with_prefix` refuses."""
++        node = self._navigate_to_prefix(prefix)
++        names: list[QualifiedName] = []
++        stack = [] if node is None else [node]
++        while stack:
++            current = stack.pop()
++            qn = current.get(cs.TRIE_QN_KEY)
++            if isinstance(qn, str):
++                names.append(qn)
++            for key, child in current.items():
++                if not key.startswith(cs.TRIE_INTERNAL_PREFIX) and isinstance(
++                    child, dict
++                ):
++                    stack.append(child)
++        return names
++
+     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
+         node = self._navigate_to_prefix(prefix)
+         return [] if node is None else self._collect_from_subtree(node)
 diff --git a/codebase_rag/gloss_anchor.py b/codebase_rag/gloss_anchor.py
 index da8b6af07..28ad9cf06 100644
 --- a/codebase_rag/gloss_anchor.py
@@ -583,7 +656,7 @@ index da8b6af07..28ad9cf06 100644
      if parser is None or language is None:
          return None
 diff --git a/codebase_rag/graph_updater.py b/codebase_rag/graph_updater.py
-index fbdb32098..62a72e55f 100644
+index fbdb32098..b5d093a44 100644
 --- a/codebase_rag/graph_updater.py
 +++ b/codebase_rag/graph_updater.py
 @@ -24,6 +24,7 @@ from . import constants as cs
@@ -605,7 +678,15 @@ index fbdb32098..62a72e55f 100644
      sql_object_reference_name,
  )
  from .parser_fingerprint import compute_parser_fingerprint
-@@ -206,11 +207,7 @@ def _stored_strings(value: object) -> list[str]:
+@@ -108,6 +109,7 @@ from .parsers.java_lombok import (
+     current_lombok_identity,
+     overlay_identity,
+ )
++from .parsers.module_paths import module_qns_of
+ from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
+ from .parsers.parameter_nodes import PendingParameterType
+ from .parsers.py.ast_analyzer import clear_scope_facts
+@@ -206,11 +208,7 @@ def _stored_strings(value: object) -> list[str]:
  
  def _stored_language(path: object) -> cs.SupportedLanguage | None:
      # The language of a stored definition, from its file's extension.
@@ -618,7 +699,7 @@ index fbdb32098..62a72e55f 100644
  
  
  def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
-@@ -1712,7 +1709,12 @@ class GraphUpdater:
+@@ -1712,7 +1710,12 @@ class GraphUpdater:
          self.function_registry = FunctionRegistryTrie(
              simple_name_lookup=self.simple_name_lookup
          )
@@ -632,7 +713,7 @@ index fbdb32098..62a72e55f 100644
          # Every file parsed this run, in parse order. The AST cache is bounded
          # and evicts on large repos, so Pass 3 must iterate this full list (not
          # the cache) and re-parse evicted files, or their calls are dropped.
-@@ -2687,7 +2689,7 @@ class GraphUpdater:
+@@ -2687,7 +2690,7 @@ class GraphUpdater:
  
      def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
          """Parse one unchanged module's imports; False when Pass 2 would not."""
@@ -641,7 +722,7 @@ index fbdb32098..62a72e55f 100644
          if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
              return False
          language = spec.language
-@@ -2996,6 +2998,7 @@ class GraphUpdater:
+@@ -2996,6 +2999,7 @@ class GraphUpdater:
          logger.info(ls.PASS_3_CALLS)
          self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
          self._process_function_calls()
@@ -649,7 +730,7 @@ index fbdb32098..62a72e55f 100644
  
          # IMPORTS flush AFTER Pass 3: a C# namespace import lands on the
          # modules the file actually resolved entities from, and those
-@@ -3060,6 +3063,7 @@ class GraphUpdater:
+@@ -3060,6 +3064,7 @@ class GraphUpdater:
          self._generate_semantic_embeddings()
  
          self._commit_run_state()
@@ -657,7 +738,7 @@ index fbdb32098..62a72e55f 100644
          if self._embeddings_interrupted:
              raise ex.EmbeddingsInterrupted
          self._retire_legacy_dotted_project()
-@@ -3119,6 +3123,7 @@ class GraphUpdater:
+@@ -3119,6 +3124,7 @@ class GraphUpdater:
          self._record_sync_time()
          # Nothing to save on this path, and nothing left half-written.
          self.committed = True
@@ -665,7 +746,7 @@ index fbdb32098..62a72e55f 100644
  
      def _commit_run_state(self) -> None:
          # The delombok state commits ONLY here, after every pass and the
-@@ -4394,7 +4399,7 @@ class GraphUpdater:
+@@ -4394,7 +4400,7 @@ class GraphUpdater:
              # A row written before the flag existed reads as exported: the
              # star lookup then counts it, as it did before.
              row.get(cs.KEY_IS_EXPORTED) is not False,
@@ -674,7 +755,20 @@ index fbdb32098..62a72e55f 100644
          )
          # The C# declared-form index (issue #1629) is filled only by
          # parsing; an unchanged type must stay reachable by `N.Widget`
-@@ -5403,7 +5408,7 @@ class GraphUpdater:
+@@ -4552,8 +4558,11 @@ class GraphUpdater:
+         the late deletion pass, and a name-keyed guard cannot tell the two
+         call sites apart (issue #1584).
+         """
+-        for key in keys:
++        stale = list(keys)
++        for done, key in enumerate(stale):
++            progress_report.report("clear", done, len(stale))
+             self._delete_module_entities(key)
++        progress_report.report("clear", len(stale), len(stale))
+ 
+     def _forget_flux_stem_qns(self, flux_stems: set[str]) -> None:
+         """Drop the module-qn claims of every file on a stem in flux.
+@@ -5403,7 +5412,7 @@ class GraphUpdater:
          a parse of its bytes with the language's combined query: what a
          waiting module wrote as a base or a callee (issue #1568). A language
          without a parser or a combined query offers nothing."""
@@ -683,7 +777,12 @@ index fbdb32098..62a72e55f 100644
          parser = self.parsers.get(language) if language is not None else None
          query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
          if parser is None or query is None or language is None:
-@@ -6010,7 +6015,7 @@ class GraphUpdater:
+@@ -6006,11 +6015,11 @@ class GraphUpdater:
+         # a registry that had lost them, and the next sync saw nothing to
+         # redo (issue #2463). Such a file owns no module state to sweep.
+         module_map = self.factory.definition_processor.module_qn_to_file_path
+-        recorded_qns = {qn for qn, path in module_map.items() if path == file_path}
++        recorded_qns = module_qns_of(module_map, file_path)
          if recorded_qns:
              module_qn_prefixes = recorded_qns
          elif (
@@ -692,7 +791,110 @@ index fbdb32098..62a72e55f 100644
              and module_map.get(path_derived_qn) is None
          ):
              module_qn_prefixes = {path_derived_qn}
-@@ -7364,7 +7369,7 @@ class GraphUpdater:
+@@ -6071,18 +6080,16 @@ class GraphUpdater:
+         # with no recorded qn was never parsed and owns no import state.
+         if file_path.suffix == cs.EXT_RS:
+             qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+-            for qn, path in qn_to_path.items():
+-                if path == file_path:
+-                    self.factory.import_processor.drop_rust_module_import_state(qn)
++            for qn in module_qns_of(qn_to_path, file_path):
++                self.factory.import_processor.drop_rust_module_import_state(qn)
+ 
+         # Same discipline for C#: a deleted file's namespaces, identifier
+         # evidence, and using entries must not survive into the next flush
+         # (issue #1347).
+         if file_path.suffix == cs.EXT_CS:
+             qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+-            for qn, path in qn_to_path.items():
+-                if path == file_path:
+-                    self.factory.import_processor.drop_csharp_module_import_state(qn)
++            for qn in module_qns_of(qn_to_path, file_path):
++                self.factory.import_processor.drop_csharp_module_import_state(qn)
+ 
+     def _span_ownership(
+         self,
+@@ -6183,7 +6190,9 @@ class GraphUpdater:
+         # a file that still exists: keep it. A qn with no recorded owner is
+         # left to the prefix rule, which is the pre-existing behaviour.
+         owner_module = self.factory.definition_processor.class_owner_module
+-        live_modules = set(self.factory.definition_processor.module_qn_to_file_path)
++        # Read in place, not copied: this runs once per re-parsed file, and a
++        # copy of every module per file made re-indexing quadratic.
++        live_modules = self.factory.definition_processor.module_qn_to_file_path
+         # `class_owner_module` is written at INGEST, so a definition carried
+         # over by a REHYDRATE has no entry there and would fall back to the
+         # prefix rule. `rehydrated_definition_paths` is the record for exactly
+@@ -6199,10 +6208,17 @@ class GraphUpdater:
+         # be preserved as a stale entry that goes on steering call resolution
+         # (raised by CodeRabbit on #1844). Require the recorded path to belong
+         # to a module that is still live.
+-        live_paths = {
+-            cached_relative_path(path, self.repo_path).as_posix()
+-            for path in self.factory.definition_processor.module_qn_to_file_path.values()
+-        }
++        # Built only when a rehydrated qn asks, once per call.
++        live_path_set: set[str] | None = None
++
++        def live_paths() -> set[str]:
++            nonlocal live_path_set
++            if live_path_set is None:
++                live_path_set = {
++                    cached_relative_path(path, self.repo_path).as_posix()
++                    for path in live_modules.values()
++                }
++            return live_path_set
+ 
+         def _owned_by_a_surviving_file(qn: str) -> bool:
+             owner = owner_module.get(qn)
+@@ -6215,7 +6231,7 @@ class GraphUpdater:
+             if rehydrated_path is not None:
+                 return (
+                     str(rehydrated_path) != deleted_rel
+-                    and str(rehydrated_path) in live_paths
++                    and str(rehydrated_path) in live_paths()
+                 )
+             return False
+ 
+@@ -6240,7 +6256,16 @@ class GraphUpdater:
+         owned_by_a_surviving_file: Callable[[str], bool],
+     ) -> None:
+         """Deregister every registry qn the removed file owns."""
+-        for qn in list(self.function_registry.keys()):
++        # Only the qns under the file's module prefixes or recorded as its
++        # own can match, so those are looked up in the trie instead of
++        # walking the whole registry once per re-parsed file, which made
++        # re-indexing 20,000 PL/I members take most of an hour.
++        candidates = set(owned_qns)
++        for prefix in module_qn_prefixes:
++            candidates.update(self.function_registry.names_under(prefix))
++        for qn in sorted(candidates):
++            if qn not in self.function_registry:
++                continue
+             matched_prefix = any(
+                 qn.startswith(f"{prefix}.") or qn == prefix
+                 for prefix in module_qn_prefixes
+@@ -6344,6 +6369,10 @@ class GraphUpdater:
+     def _drop_module_records(self, file_path: Path, qns_to_remove: set[str]) -> None:
+         """Drop the removed file's simple-name, module and rehydrated records."""
+         for simple_name, qn_set in self.simple_name_lookup.items():
++            # Runs once per re-parsed file over every simple name: the
++            # common case, nothing to drop, must stay cheap.
++            if qn_set.isdisjoint(qns_to_remove):
++                continue
+             original_count = len(qn_set)
+             new_qn_set = qn_set - qns_to_remove
+             if len(new_qn_set) < original_count:
+@@ -6365,7 +6394,7 @@ class GraphUpdater:
+         # `known_module_paths` would otherwise keep offering the deleted
+         # module to deferred resolution as a live internal target on a
+         # reused updater (issue #1575).
+-        for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
++        for qn in module_qns_of(qn_to_path, file_path):
+             del qn_to_path[qn]
+             self._rehydrated_module_qns.discard(qn)
+         # The paths read back from the graph for an earlier incremental run
+@@ -7364,7 +7393,7 @@ class GraphUpdater:
                      self._process_single_file(
                          filepath,
                          file_bytes=file_bytes,
@@ -701,7 +903,7 @@ index fbdb32098..62a72e55f 100644
                      )
                  except Exception as exc:
                      logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
-@@ -7378,6 +7383,12 @@ class GraphUpdater:
+@@ -7378,6 +7407,12 @@ class GraphUpdater:
                      advance=1,
                      description=ls.PROGRESS_FILES_PROCESSED.format(count=changed_count),
                  )
@@ -714,7 +916,7 @@ index fbdb32098..62a72e55f 100644
  
          deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
          self._delete_reconciled_files(deleted_keys, deleted_set)
-@@ -8159,7 +8170,10 @@ class GraphUpdater:
+@@ -8159,7 +8194,10 @@ class GraphUpdater:
          changed_entries: list[tuple[Path, str, bool, bytes]],
      ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
          result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
@@ -726,7 +928,7 @@ index fbdb32098..62a72e55f 100644
              language = self._tree_sitter_language(filepath)
              if language is None:
                  continue
-@@ -8174,6 +8188,12 @@ class GraphUpdater:
+@@ -8174,6 +8212,12 @@ class GraphUpdater:
              tree = parse_with_preproc_recovery(
                  parser, grammar_bytes(file_bytes, language, filepath), language
              )
@@ -739,7 +941,7 @@ index fbdb32098..62a72e55f 100644
              root_node = tree.root_node
              combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
              combined_captures: dict[str, list] | None = None
-@@ -8181,6 +8201,7 @@ class GraphUpdater:
+@@ -8181,6 +8225,7 @@ class GraphUpdater:
                  cursor = QueryCursor(combined_query)
                  combined_captures = sorted_captures(cursor, root_node)
              result[filepath] = (root_node, combined_captures)
@@ -747,7 +949,7 @@ index fbdb32098..62a72e55f 100644
          return result
  
      def _process_single_file(
-@@ -8234,7 +8255,7 @@ class GraphUpdater:
+@@ -8234,7 +8279,7 @@ class GraphUpdater:
          module's qn, and parsing it would claim or twin the Module. It still
          falls through to the generic File node (issue #2445).
          """
@@ -756,7 +958,7 @@ index fbdb32098..62a72e55f 100644
          if not (
              lang_config
              and isinstance(lang_config.language, cs.SupportedLanguage)
-@@ -8322,7 +8343,7 @@ class GraphUpdater:
+@@ -8322,7 +8367,7 @@ class GraphUpdater:
          """
          if is_notebook_path(file_path):
              return self._load_notebook_ast(file_path)
@@ -765,7 +967,7 @@ index fbdb32098..62a72e55f 100644
          if language is None or language not in self.parsers:
              return None
          parser = self.queries[language].get(cs.KEY_PARSER)
-@@ -8408,7 +8429,8 @@ class GraphUpdater:
+@@ -8408,7 +8453,8 @@ class GraphUpdater:
          # defining kX.
          self.factory.call_processor.finalize_callable_field_bindings()
          self.factory.call_processor.finalize_js_symbol_bindings()
@@ -775,7 +977,7 @@ index fbdb32098..62a72e55f 100644
              root_node = self._ast_for(file_path)
              if root_node is None:
                  continue
-@@ -8444,6 +8466,7 @@ class GraphUpdater:
+@@ -8444,6 +8490,7 @@ class GraphUpdater:
                  self.queries,
                  func_class_captures_cache=captures_cache,
              )
@@ -783,7 +985,7 @@ index fbdb32098..62a72e55f 100644
          self.factory.call_processor.finalize_callable_param_flow()
          self.factory.call_processor.finalize_flow()
          self.factory.call_processor.finalize_dispatch()
-@@ -9209,7 +9232,7 @@ class GraphUpdater:
+@@ -9209,7 +9256,7 @@ class GraphUpdater:
      ) -> dict[str, bytes]:
          touched_languages: set[cs.SupportedLanguage] = set()
          for path in (*reparse.values(), *gone.values()):
@@ -1206,6 +1408,27 @@ index 7bf986ec9..d869a32b5 100644
                  break
              if cs.SEPARATOR_DOT not in probe:
                  break
+diff --git a/codebase_rag/parsers/factory.py b/codebase_rag/parsers/factory.py
+index 45d8761a2..becf281bd 100644
+--- a/codebase_rag/parsers/factory.py
++++ b/codebase_rag/parsers/factory.py
+@@ -13,6 +13,7 @@ from ..types_defs import (
+ from .call_processor import CallProcessor
+ from .definition_processor import DefinitionProcessor
+ from .import_processor import ImportProcessor
++from .module_paths import ModulePaths
+ from .structure_processor import StructureProcessor
+ from .type_inference import TypeInferenceEngine
+ 
+@@ -62,7 +63,7 @@ class ProcessorFactory:
+         self.exclude_paths = exclude_paths
+         self.capture = capture if capture is not None else ALL_ENABLED
+ 
+-        self.module_qn_to_file_path: dict[str, Path] = {}
++        self.module_qn_to_file_path: dict[str, Path] = ModulePaths()
+         self._func_class_captures_cache: dict[Path, dict] = {}
+ 
+         self._import_processor: ImportProcessor | None = None
 diff --git a/codebase_rag/parsers/handlers/mainframe.py b/codebase_rag/parsers/handlers/mainframe.py
 new file mode 100644
 index 000000000..18d3e217f
@@ -1874,6 +2097,91 @@ index 8f466d591..90939b80b 100644
      # SQL has no module-documentation convention -- a leading `--` is as
      # likely to be a commented-out statement -- so nothing is extracted.
  }
+diff --git a/codebase_rag/parsers/module_paths.py b/codebase_rag/parsers/module_paths.py
+new file mode 100644
+index 000000000..4c6027ad1
+--- /dev/null
++++ b/codebase_rag/parsers/module_paths.py
+@@ -0,0 +1,79 @@
++"""The module qn -> file map, which also answers which qns a file holds.
++
++Clearing a file before its re-parse asked that by scanning every module and
++comparing paths, once per file: re-indexing 20,000 PL/I members compared
++paths hundreds of millions of times. This dict keeps the reverse index on
++every write, so the answer is a lookup.
++"""
++
++from collections.abc import Iterable, Mapping
++from pathlib import Path
++
++_MISSING = object()
++
++
++class ModulePaths(dict[str, Path]):
++    def __init__(self) -> None:
++        super().__init__()
++        self._by_path: dict[Path, set[str]] = {}
++
++    def qns_of(self, path: Path) -> set[str]:
++        return set(self._by_path.get(path, ()))
++
++    def _forget(self, qn: str, path: Path) -> None:
++        qns = self._by_path.get(path)
++        if qns is not None:
++            qns.discard(qn)
++            if not qns:
++                del self._by_path[path]
++
++    def __setitem__(self, qn: str, path: Path) -> None:
++        if qn in self:
++            self._forget(qn, dict.__getitem__(self, qn))
++        super().__setitem__(qn, path)
++        self._by_path.setdefault(path, set()).add(qn)
++
++    def __delitem__(self, qn: str) -> None:
++        path = dict.__getitem__(self, qn)
++        super().__delitem__(qn)
++        self._forget(qn, path)
++
++    def pop(self, qn: str, default: object = _MISSING) -> Path:  # type: ignore[override]
++        if qn in self:
++            path = dict.__getitem__(self, qn)
++            del self[qn]
++            return path
++        if default is _MISSING:
++            raise KeyError(qn)
++        return default  # type: ignore[return-value]
++
++    def popitem(self) -> tuple[str, Path]:
++        qn, path = super().popitem()
++        self._forget(qn, path)
++        return qn, path
++
++    def setdefault(self, qn: str, path: Path) -> Path:  # type: ignore[override]
++        if qn not in self:
++            self[qn] = path
++        return dict.__getitem__(self, qn)
++
++    def update(  # type: ignore[override]
++        self, other: Mapping[str, Path] | Iterable[tuple[str, Path]] = (), **kw: Path
++    ) -> None:
++        for qn, path in dict(other, **kw).items():
++            self[qn] = path
++
++    def __ior__(self, other: Mapping[str, Path]) -> "ModulePaths":  # type: ignore[override]
++        self.update(other)
++        return self
++
++    def clear(self) -> None:
++        super().clear()
++        self._by_path.clear()
++
++
++def module_qns_of(module_map: Mapping[str, Path], path: Path) -> set[str]:
++    """The module qns `module_map` records for `path`."""
++    if isinstance(module_map, ModulePaths):
++        return module_map.qns_of(path)
++    return {qn for qn, recorded in module_map.items() if recorded == path}
 diff --git a/codebase_rag/parsers/pli.py b/codebase_rag/parsers/pli.py
 new file mode 100644
 index 000000000..8abd3bfe1
@@ -1962,16 +2270,17 @@ index fd79c9697..70ec1de0b 100644
          current = stack.pop(0)
 diff --git a/codebase_rag/progress_report.py b/codebase_rag/progress_report.py
 new file mode 100644
-index 000000000..5e96592d1
+index 000000000..e1d9fba73
 --- /dev/null
 +++ b/codebase_rag/progress_report.py
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,33 @@
 +"""Progress of a sync for a program that runs cgr, such as the VS Code extension.
 +
 +With ``CGR_PROGRESS=1`` in the environment, each step writes one line to
 +stderr: ``CGR_PROGRESS {"phase": ..., "done": ..., "total": ...}``. The phases
-+of a sync are ``parse`` and ``definitions`` (files), ``link``, ``calls``
-+(files), then ``write`` and ``done``. A phase reports at most four times a
++of a sync are ``parse``, ``clear`` (the old entries of changed files) and
++``definitions`` (files), ``link``, ``calls`` (files), then ``write`` and
++``done``. A phase reports at most four times a
 +second, plus its first and last step, so 20,000 files cost a few hundred
 +lines.
 +"""
@@ -2038,6 +2347,30 @@ index 000000000..74d9da281
 +(procedure_heading (simple_attribute) @keyword.modifier)
 +(procedure_heading
 +  (options_attribute (paren_group (identifier) @keyword.modifier)))
+diff --git a/codebase_rag/services/graph_service.py b/codebase_rag/services/graph_service.py
+index 8632a78eb..4770e4010 100644
+--- a/codebase_rag/services/graph_service.py
++++ b/codebase_rag/services/graph_service.py
+@@ -49,6 +49,7 @@ from ..constants import (
+     MG_TRANSIENT_RETRY_BASE_DELAY_S,
+     NEO4J_EXCEPTIONS_MODULE,
+     NODE_NAME_INDEXES,
++    NODE_PATH_INDEXES,
+     NODE_UNIQUE_CONSTRAINTS,
+     REL_ENDPOINT_JOINER,
+     REL_ENDPOINT_SOURCE,
+@@ -805,6 +806,11 @@ class MemgraphIngestor:
+                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
+             except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
+                 pass
++        for label, prop in NODE_PATH_INDEXES:
++            try:
++                self._execute_query(self._dialect.create_index(label, prop))
++            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
++                pass
+         logger.info(ls.MG_INDEXES_DONE)
+ 
+     def ensure_node_batch(
 diff --git a/codebase_rag/structural_delta.py b/codebase_rag/structural_delta.py
 index 2d5fd0197..a73b63793 100644
 --- a/codebase_rag/structural_delta.py
@@ -2069,6 +2402,40 @@ index 2d5fd0197..a73b63793 100644
          return None
      try:
          return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
+diff --git a/codebase_rag/tests/test_graph_service.py b/codebase_rag/tests/test_graph_service.py
+index 45349331e..4ca3ad7e8 100644
+--- a/codebase_rag/tests/test_graph_service.py
++++ b/codebase_rag/tests/test_graph_service.py
+@@ -7,7 +7,11 @@ import pytest
+ from loguru import logger
+ 
+ from codebase_rag import logs as ls
+-from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
++from codebase_rag.constants import (
++    NODE_NAME_INDEXES,
++    NODE_PATH_INDEXES,
++    NODE_UNIQUE_CONSTRAINTS,
++)
+ from codebase_rag.cypher_queries import (
+     build_create_node_query,
+     build_create_relationship_query,
+@@ -407,8 +411,14 @@ class TestEnsureConstraints:
+             ingestor.ensure_constraints()
+ 
+         # One SHOW, two damage probes, a create-constraint and a
+-        # create-index per label, plus a name index per non-name-keyed label.
+-        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
++        # create-index per label, plus a name index per non-name-keyed label
++        # and the path indexes the per-file deletes match by.
++        expected_queries = (
++            3
++            + len(NODE_UNIQUE_CONSTRAINTS) * 2
++            + len(NODE_NAME_INDEXES)
++            + len(NODE_PATH_INDEXES)
++        )
+         assert call_count == expected_queries
+ 
+     def test_continues_on_name_index_error(self) -> None:
 diff --git a/codebase_rag/tests/test_mainframe.py b/codebase_rag/tests/test_mainframe.py
 new file mode 100644
 index 000000000..e7098502c
@@ -2287,6 +2654,49 @@ index 000000000..e7098502c
 +        for c in get_relationships(mock_ingestor, "IMPORTS")
 +    }
 +    assert ("zos.asm.main", "zos.maclib.regs") in imports
+diff --git a/codebase_rag/tests/test_module_paths.py b/codebase_rag/tests/test_module_paths.py
+new file mode 100644
+index 000000000..2b136e912
+--- /dev/null
++++ b/codebase_rag/tests/test_module_paths.py
+@@ -0,0 +1,37 @@
++# The module qn -> file map answers which qns a file holds from an index it
++# keeps on every write, instead of a scan per re-parsed file.
++from pathlib import Path
++
++from codebase_rag.parsers.module_paths import ModulePaths, module_qns_of
++
++A = Path("/repo/a.pli")
++B = Path("/repo/b.pli")
++
++
++def _scan(paths: ModulePaths, path: Path) -> set[str]:
++    return {qn for qn, recorded in paths.items() if recorded == path}
++
++
++def test_the_index_follows_every_kind_of_write() -> None:
++    paths = ModulePaths()
++    paths["p.a"] = A
++    paths.setdefault("p.a2", A)
++    paths.setdefault("p.a2", B)
++    paths.update({"p.b": B}, extra=B)
++    paths["p.a"] = B
++    assert paths.qns_of(A) == _scan(paths, A) == {"p.a2"}
++    assert paths.qns_of(B) == _scan(paths, B) == {"p.a", "p.b", "extra"}
++
++    del paths["p.b"]
++    assert paths.pop("p.a") == B
++    assert paths.pop("gone", None) is None
++    paths |= {"p.c": A}
++    assert paths.qns_of(A) == _scan(paths, A) == {"p.a2", "p.c"}
++    assert paths.qns_of(B) == _scan(paths, B) == {"extra"}
++
++    paths.clear()
++    assert paths.qns_of(A) == set()
++
++
++def test_a_plain_dict_is_still_scanned() -> None:
++    assert module_qns_of({"p.a": A, "p.b": B}, A) == {"p.a"}
 diff --git a/codebase_rag/tests/test_pli.py b/codebase_rag/tests/test_pli.py
 new file mode 100644
 index 000000000..0d2f05938
@@ -2728,10 +3138,10 @@ index 000000000..0d2f05938
 +    assert _name_span(procedure, "MAIN") == (0, 4)
 diff --git a/codebase_rag/tests/test_progress_report.py b/codebase_rag/tests/test_progress_report.py
 new file mode 100644
-index 000000000..fece79791
+index 000000000..8444443fe
 --- /dev/null
 +++ b/codebase_rag/tests/test_progress_report.py
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,64 @@
 +# The progress lines a program running cgr reads to draw a progress bar,
 +# such as the PL/I Graph VS Code extension.
 +import json
@@ -2771,9 +3181,16 @@ index 000000000..fece79791
 +
 +    progress = _progress(capfd.readouterr().err)
 +    phases = list(dict.fromkeys(phase for phase, _, _ in progress))
-+    assert phases == ["parse", "definitions", "link", "calls", "write", "done"], (
-+        progress
-+    )
++    # A first sync has no old entries to clear: `clear` reports 0 of 0.
++    assert phases == [
++        "parse",
++        "clear",
++        "definitions",
++        "link",
++        "calls",
++        "write",
++        "done",
++    ], progress
 +    assert ("parse", 3, 3) in progress
 +    assert ("definitions", 3, 3) in progress
 +    assert progress[-1] == ("done", 1, 1)

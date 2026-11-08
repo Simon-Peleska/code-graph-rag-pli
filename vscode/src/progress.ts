@@ -11,14 +11,18 @@ export interface Progress {
 const PREFIX = "CGR_PROGRESS ";
 
 // The share of the whole sync each phase starts at and takes, in percent, and
-// what to call it. Measured on a first sync of 20,000 members (29 s): parsing
-// 1.9 s, definitions 11.5 s, linking 4.8 s, calls 8.5 s, writing 2.5 s.
+// what to call it. Measured on 20,000 members: a first sync (30 s) parses in
+// 2 s, reads definitions in 11, links in 5, resolves calls in 8, writes in 3;
+// a re-index of every file (145 s) also clears the old entries first (33 s)
+// and reads definitions in 90. A first sync has nothing to clear and jumps
+// past that share.
 const PHASES: Record<string, { start: number; weight: number; label: string }> = {
-  parse: { start: 0, weight: 6, label: "Parsing" },
-  definitions: { start: 6, weight: 40, label: "Reading definitions" },
-  link: { start: 46, weight: 16, label: "Linking definitions" },
-  calls: { start: 62, weight: 29, label: "Resolving calls" },
-  write: { start: 91, weight: 9, label: "Writing the graph" },
+  parse: { start: 0, weight: 5, label: "Parsing" },
+  clear: { start: 5, weight: 20, label: "Removing old entries" },
+  definitions: { start: 25, weight: 35, label: "Reading definitions" },
+  link: { start: 60, weight: 10, label: "Linking definitions" },
+  calls: { start: 70, weight: 23, label: "Resolving calls" },
+  write: { start: 93, weight: 7, label: "Writing the graph" },
 };
 
 // The progress a line of cgr's output carries, if it is a progress line.

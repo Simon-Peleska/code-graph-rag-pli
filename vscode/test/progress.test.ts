@@ -16,7 +16,9 @@ test("cgr's progress lines are read, anything else is not", () => {
 test("the phases add up to one bar from 0 to 100", () => {
   const at = (phase: string, done: number, total: number) => describe({ phase, done, total });
   assert.deepEqual(at("parse", 0, 20000), { percent: 0, message: "Parsing: 0 of 20,000 files" });
-  assert.equal(at("parse", 20000, 20000)?.percent, at("definitions", 0, 20000)?.percent);
+  assert.equal(at("parse", 20000, 20000)?.percent, at("clear", 0, 20000)?.percent);
+  assert.equal(at("clear", 20000, 20000)?.percent, at("definitions", 0, 20000)?.percent);
+  assert.equal(at("clear", 5000, 20000)?.message, "Removing old entries: 5,000 of 20,000 files");
   assert.equal(at("definitions", 20000, 20000)?.percent, at("link", 0, 1)?.percent);
   assert.equal(at("link", 1, 1)?.percent, at("calls", 0, 20000)?.percent);
   assert.equal(at("link", 0, 1)?.message, "Linking definitions");
