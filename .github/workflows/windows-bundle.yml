@@ -68,9 +68,13 @@ jobs:
           mkdir -p bundle/python
           curl -sSfL -o python.zip "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
           unzip -q python.zip -d bundle/python
-          # The embeddable Python only searches the paths its ._pth file lists.
-          printf 'python312.zip\r\n.\r\n..\\lib\r\nimport site\r\n' > bundle/python/python312._pth
+          # The embeddable Python only searches the paths its ._pth file lists
+          # and runs no .pth file, so pywin32's (which mcp needs on Windows)
+          # is spelled out here: its module folders, and its DLLs next to the
+          # .pyd files that load them.
+          printf 'python312.zip\r\n.\r\n..\\lib\r\n..\\lib\\win32\r\n..\\lib\\win32\\lib\r\n..\\lib\\Pythonwin\r\nimport site\r\n' > bundle/python/python312._pth
           python -m pip install --quiet --only-binary :all: --target bundle/lib -r requirements.txt wheels/*.whl
+          cp bundle/lib/pywin32_system32/*.dll bundle/lib/win32/
           mkdir -p bundle/viz
           cp -r viz/build_graph_site.py viz/graph.template.html viz/vendor bundle/viz/
           printf '@echo off\r\n"%%~dp0python\\python.exe" -m codebase_rag.cli %%*\r\n' > bundle/cgr.cmd
