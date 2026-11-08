@@ -128,20 +128,24 @@ jobs:
           $reply
           if (-not ($reply -match '"serverInfo"')) { exit 1 }
 
+      # Two packages: pli-graph.vsix for a cgr installed some other way, and
+      # pli-graph-win32-x64.vsix, which carries the bundle and needs nothing else.
       - name: Build VS Code extension
         working-directory: vscode
         run: |
           npm ci --no-audit --no-fund
           npm run package
+          node package-vsix.mjs --bundle ../bundle
+          ls -l *.vsix
 
-      # Opens the smoke-test sample in a real VS Code with the extension, which
-      # runs `cgr watch` through bundle/cgr.cmd as it would on a work machine.
+      # Opens the smoke-test sample in a real VS Code with the unpacked Windows
+      # package and no settings, so the extension runs its own cgr as it would
+      # on a work machine.
       - name: Smoke test - VS Code extension
         timeout-minutes: 10
         run: |
-          mkdir -p sample/.vscode
-          python -c "import json, os; json.dump({'pliGraph.command': os.path.abspath('bundle/cgr.cmd')}, open('sample/.vscode/settings.json', 'w'))"
-          node vscode/test/e2e/run.mjs sample
+          7z x -bso0 -ovsix vscode/pli-graph-win32-x64.vsix
+          node vscode/test/e2e/run.mjs sample vsix/extension
 
       - name: Zip
         run: 7z a -bso0 -tzip cgr-pli-windows-x64.zip ./bundle/*
@@ -155,5 +159,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pli-graph-vsix
-          path: vscode/pli-graph.vsix
+          path: |
+            vscode/pli-graph-win32-x64.vsix
+            vscode/pli-graph.vsix
           if-no-files-found: error

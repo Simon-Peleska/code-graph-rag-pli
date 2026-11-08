@@ -161,7 +161,7 @@
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
-          "markdownDescription": "How to run cgr. On Windows the path to `cgr.cmd` from the cgr bundle, e.g. `C:\\Users\\me\\tools\\cgr\\cgr.cmd`. Elsewhere a command line such as `uv run --project /path/to/upstream cgr`. The extension runs `cgr watch` with it for each workspace folder."
+          "markdownDescription": "How to run cgr. Leave it empty to use the cgr the Windows package brings along. Otherwise the path to a `cgr.cmd`, or a command line such as `uv run --project /path/to/upstream cgr`. The extension runs `cgr watch` with it for each workspace folder."
         },
         "pliGraph.extensionlessMembers": {
           "type": "boolean",

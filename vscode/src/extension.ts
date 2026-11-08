@@ -29,6 +29,8 @@ let version: string | undefined;
 let stopping = false;
 // Opening a file from a tree must not re-root the tree being explored.
 let openedFromTree: string | undefined;
+// The extension's own folder: the Windows package carries cgr in `cgr/`.
+let extensionPath = "";
 // The Show Graph page; `hash` is the view it shows, kept for reloads.
 let graphPanel: { panel: vscode.WebviewPanel; workspace: Workspace; hash: string } | undefined;
 
@@ -41,6 +43,7 @@ function graphFile(): string {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  extensionPath = context.extensionPath;
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     workspaces.set(folder.uri.toString(), { folder });
   }
@@ -184,9 +187,10 @@ function openDatabase(): boolean {
 
 function startWatcher(workspace: Workspace, showStatus: () => void) {
   const config = vscode.workspace.getConfiguration("pliGraph", workspace.folder);
-  const command = config.get<string>("command", "").trim();
+  const bundled = join(extensionPath, "cgr", "cgr.cmd");
+  const command = config.get<string>("command", "").trim() || (existsSync(bundled) ? bundled : "");
   if (!command) {
-    workspace.error = "[PLG001E] Set 'pliGraph.command' to cgr.cmd from the cgr bundle.";
+    workspace.error = "[PLG001E] This package carries no cgr: set 'pliGraph.command' to cgr (the Windows package brings its own).";
     log.error(workspace.error);
     void vscode.window.showErrorMessage(workspace.error, "Open Settings").then((choice) => {
       if (choice) {

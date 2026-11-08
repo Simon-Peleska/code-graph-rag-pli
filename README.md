@@ -140,14 +140,18 @@ Definition (F12) on calls and `%INCLUDE` members, and **PL/I Dependencies** /
 **PL/I Graph: Show Graph**, the graph website's page inside VS Code. For each
 workspace folder it runs `cgr watch`, which keeps the folder's project in
 cgr's SQLite graph (`~/.cgr/graph.sqlite`) in sync as files change, and it
-answers every question straight from that database. On Windows it only needs
-the bundle above. Details and error codes (`PLG001E`-`PLG008E`) are in
-`vscode/README.md`.
+answers every question straight from that database. Details and error codes
+(`PLG001E`-`PLG010E`) are in `vscode/README.md`.
 
-The workflow builds `pli-graph.vsix` (artifact `pli-graph-vsix`) and tests it
-in a real VS Code against the bundle. Install it with **Extensions → ... →
-Install from VSIX**, then set `pliGraph.command` to
-`C:\Users\<you>\tools\cgr\cgr.cmd`. The first sync of a large workspace
+The workflow builds two packages (artifact `pli-graph-vsix`) and tests the
+first in a real VS Code with no settings:
+
+- `pli-graph-win32-x64.vsix` (about 80 MB) carries the Windows bundle above
+  and uses it on its own: install it with **Extensions → ... → Install from
+  VSIX** and open the sources. Nothing else is needed.
+- `pli-graph.vsix` has no cgr; set `pliGraph.command` to one.
+
+The first sync of a large workspace
 takes about 3 minutes for 20,000 files and needs about 1.2 GB of memory while
 it runs; later starts only re-read changed files (about a second when nothing
 changed). Don't close VS Code during that first sync: an unfinished sync starts

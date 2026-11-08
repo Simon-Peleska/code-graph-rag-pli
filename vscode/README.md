@@ -57,9 +57,12 @@ PL/I support for VS Code built on the code-graph-rag (cgr) index:
 
 ## Setup
 
-Set `pliGraph.command` to the cgr bundle's `cgr.cmd`, e.g.
-`C:\Users\<you>\tools\cgr\cgr.cmd`. On Linux:
-`uv run --project /path/to/upstream cgr`.
+On Windows, install `pli-graph-win32-x64.vsix`: it carries cgr (Python, its
+libraries and the compiled grammars) and uses it when `pliGraph.command` is
+empty, so nothing else needs installing. `pli-graph.vsix` has no cgr: set
+`pliGraph.command` to one, e.g. `uv run --project /path/to/upstream cgr` on
+Linux or another bundle's `cgr.cmd`. The setting also overrides the
+carried cgr.
 
 For each workspace folder the extension runs
 `cgr watch --repo-path <folder> --debounce 1 --no-start-stack` with
@@ -86,7 +89,7 @@ Needs VS Code 1.101 or newer, whose Node has `node:sqlite`.
 
 ## Error codes
 
-- `PLG001E` `pliGraph.command` is not set.
+- `PLG001E` the package carries no cgr and `pliGraph.command` is not set.
 - `PLG002E` `cgr watch` stopped; the output channel has cgr's messages.
 - `PLG004E` a file from the tree could not be opened.
 - `PLG005E` this VS Code has no `node:sqlite`; update VS Code.
