@@ -1,0 +1,27 @@
+{
+  "name": "JCL",
+  "scopeName": "source.jcl",
+  "patterns": [
+    { "name": "comment.line.jcl", "match": "^//\\*.*$" },
+    { "name": "keyword.control.delimiter.jcl", "match": "^/\\*.*$" },
+    {
+      "match": "^(//)([A-Za-z@#$][A-Za-z0-9@#$.]*)?\\s+(?i:(JOB|EXEC|DD|PROC|PEND|INCLUDE|JCLLIB|SET|IF|THEN|ELSE|ENDIF|OUTPUT|CNTL|ENDCNTL|XMIT|COMMAND|EXPORT|SCHEDULE))\\b",
+      "captures": {
+        "1": { "name": "punctuation.definition.statement.jcl" },
+        "2": { "name": "entity.name.function.jcl" },
+        "3": { "name": "keyword.other.operation.jcl" }
+      }
+    },
+    {
+      "match": "^(//)([A-Za-z@#$][A-Za-z0-9@#$.]*)?",
+      "captures": {
+        "1": { "name": "punctuation.definition.statement.jcl" },
+        "2": { "name": "entity.name.function.jcl" }
+      }
+    },
+    { "name": "string.quoted.single.jcl", "begin": "'", "end": "'|$" },
+    { "name": "variable.other.symbolic.jcl", "match": "&&?[A-Za-z@#$][A-Za-z0-9@#$]*\\.?" },
+    { "name": "variable.parameter.jcl", "match": "\\b[A-Za-z][A-Za-z0-9]*(?==)" },
+    { "name": "constant.numeric.jcl", "match": "\\b[0-9]+\\b" }
+  ]
+}

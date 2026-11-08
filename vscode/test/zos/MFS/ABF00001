@@ -1,0 +1,15 @@
+CUSTFMT  FMT
+         DEV   TYPE=(3270,2),FEAT=IGNORE
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((3,20))
+F00      DFLD  POS=(3,20),LTH=8
+         FMTEND
+CUSTI    MSG   TYPE=INPUT,SOR=(CUSTFMT,IGNORE),NXT=CUSTO
+         SEG
+         MFLD  F00,LTH=8
+         MSGEND
+CUSTO    MSG   TYPE=OUTPUT,SOR=(CUSTFMT,IGNORE)
+         SEG
+         MFLD  F00,LTH=8
+         MSGEND
+         END

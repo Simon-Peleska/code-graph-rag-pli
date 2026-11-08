@@ -1,0 +1,188 @@
+{
+  "name": "pli-graph",
+  "displayName": "PL/I Graph (cgr)",
+  "description": "PL/I, JCL, IMS MFS and Db2 highlighting, Go to Definition and dependency trees from the code-graph-rag graph, kept in sync by cgr watch.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vitali87/code-graph-rag"
+  },
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "pli",
+    "pl/i",
+    "pl1",
+    "mainframe",
+    "cgr",
+    "jcl",
+    "hlasm",
+    "mfs",
+    "db2"
+  ],
+  "main": "./out/extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pli",
+        "aliases": [
+          "PL/I",
+          "PLI",
+          "PL1"
+        ],
+        "extensions": [
+          ".pli",
+          ".pl1",
+          ".pco",
+          ".inc"
+        ],
+        "firstLine": "^[*%][Pp][Rr][Oo][Cc][Ee][Ss][Ss]|\\s+[Dd][Ee][Cc][Ll][Aa][Rr][Ee]|\\s+[Dd][Cc][Ll]|\\s+\\w+: [Pp][Rr][Oo][Cc]",
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "jcl",
+        "aliases": [
+          "JCL"
+        ],
+        "extensions": [
+          ".jcl",
+          ".cntl"
+        ],
+        "firstLine": "^//[A-Za-z@#$][A-Za-z0-9@#$]*\\s+JOB\\b",
+        "configuration": "./jcl-language-configuration.json"
+      },
+      {
+        "id": "hlasm",
+        "aliases": [
+          "HLASM",
+          "IMS MFS",
+          "Assembler"
+        ],
+        "extensions": [
+          ".mfs",
+          ".asm",
+          ".hlasm",
+          ".mlc"
+        ],
+        "configuration": "./hlasm-language-configuration.json"
+      },
+      {
+        "id": "db2",
+        "aliases": [
+          "Db2 SQL",
+          "Db2 DDL"
+        ],
+        "extensions": [
+          ".ddl",
+          ".db2"
+        ],
+        "configuration": "./db2-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pli",
+        "scopeName": "source.pli",
+        "path": "./syntaxes/pli.tmLanguage.json"
+      },
+      {
+        "language": "jcl",
+        "scopeName": "source.jcl",
+        "path": "./syntaxes/jcl.tmLanguage.json"
+      },
+      {
+        "language": "hlasm",
+        "scopeName": "source.hlasm",
+        "path": "./syntaxes/hlasm.tmLanguage.json"
+      },
+      {
+        "language": "db2",
+        "scopeName": "source.db2",
+        "path": "./syntaxes/db2.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "pliGraph.show",
+        "title": "Show Graph",
+        "category": "PL/I Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "pliGraph.restart",
+        "title": "Restart cgr watch",
+        "category": "PL/I Graph",
+        "icon": "$(refresh)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "pliGraphDependencies",
+          "name": "PL/I Dependencies",
+          "when": "resourceLangId == pli || pliGraph.activeEditorIsPli"
+        },
+        {
+          "id": "pliGraphDependents",
+          "name": "PL/I Dependents",
+          "when": "resourceLangId == pli || pliGraph.activeEditorIsPli"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "pliGraph.show",
+          "when": "view == pliGraphDependencies || view == pliGraphDependents",
+          "group": "navigation"
+        },
+        {
+          "command": "pliGraph.restart",
+          "when": "view == pliGraphDependencies || view == pliGraphDependents",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PL/I Graph",
+      "properties": {
+        "pliGraph.command": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "How to run cgr. On Windows the path to `cgr.cmd` from the cgr bundle, e.g. `C:\\Users\\me\\tools\\cgr\\cgr.cmd`. Elsewhere a command line such as `uv run --project /path/to/upstream cgr`. The extension runs `cgr watch` with it for each workspace folder."
+        },
+        "pliGraph.extensionlessMembers": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "Index files named like z/OS members (`ABMAIN01`, no extension) as PL/I. Sets `CGR_PLI_EXTENSIONLESS_MEMBERS` for cgr."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build-page.mjs && esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node18 --external:vscode --outfile=out/extension.cjs",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "package": "npm run check && npm run build -- --minify && node package-vsix.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "2.4.1",
+    "esbuild": "0.24.2",
+    "typescript": "5.7.2"
+  }
+}

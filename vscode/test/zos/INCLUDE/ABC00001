@@ -1,0 +1,6 @@
+ /* customer record */                                                  ABC00010
+ DCL 1 CUST,                                                            ABC00020
+       2 ID CHAR(8),                                                    ABC00030
+       2 ADDR,                                                          ABC00040
+         3 CITY CHAR(20);                                               ABC00050
+ %INCLUDE ABC00002;                                                     ABC00060

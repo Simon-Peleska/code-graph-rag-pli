@@ -1,0 +1,6 @@
+helper: proc;
+  inner: proc;
+  end inner;
+  call inner;
+  call main;
+end helper;

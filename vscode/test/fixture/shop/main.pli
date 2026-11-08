@@ -1,0 +1,6 @@
+main: proc options(main);
+  %include shopdcl;
+  call helper;
+  call nowhere;
+  %include missing;
+end main;

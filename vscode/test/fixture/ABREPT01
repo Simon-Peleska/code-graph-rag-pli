@@ -1,0 +1,3 @@
+report: proc;
+  call helper;
+end report;

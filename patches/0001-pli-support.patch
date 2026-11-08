@@ -1,0 +1,3116 @@
+diff --git a/.gitmodules b/.gitmodules
+index e69de29bb..3506d1b41 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -0,0 +1,12 @@
++[submodule "grammars/tree-sitter-pli"]
++	path = grammars/tree-sitter-pli
++	url = https://github.com/Simon-Peleska/tree-sitter-pli
++[submodule "grammars/tree-sitter-jcl"]
++	path = grammars/tree-sitter-jcl
++	url = https://github.com/Simon-Peleska/tree-sitter-jcl
++[submodule "grammars/tree-sitter-hlasm"]
++	path = grammars/tree-sitter-hlasm
++	url = https://github.com/Simon-Peleska/tree-sitter-hlasm
++[submodule "grammars/tree-sitter-db2"]
++	path = grammars/tree-sitter-db2
++	url = https://github.com/Simon-Peleska/tree-sitter-db2
+diff --git a/codebase_rag/ast_cache.py b/codebase_rag/ast_cache.py
+index e94a745b9..cd232691c 100644
+--- a/codebase_rag/ast_cache.py
++++ b/codebase_rag/ast_cache.py
+@@ -28,6 +28,7 @@ class BoundedASTCache:
+         "loader",
+         "max_entries",
+         "max_memory_bytes",
++        "on_evict",
+         "total_bytes",
+     )
+ 
+@@ -37,6 +38,7 @@ class BoundedASTCache:
+         max_memory_mb: int | None = None,
+         loader: Callable[[Path], tuple[Node, cs.SupportedLanguage] | None]
+         | None = None,
++        on_evict: Callable[[Path], None] | None = None,
+     ):
+         self.cache: OrderedDict[Path, tuple[Node, cs.SupportedLanguage]] = OrderedDict()
+         # Sizes are recorded at insert so eviction and the running total never
+@@ -44,6 +46,9 @@ class BoundedASTCache:
+         self.entry_sizes: dict[Path, int] = {}
+         self.total_bytes = 0
+         self.loader = loader
++        # Whoever else holds nodes of an evicted tree keeps the whole tree
++        # alive, so an eviction frees nothing unless they let go too.
++        self.on_evict = on_evict
+         self.max_entries = (
+             max_entries if max_entries is not None else settings.CACHE_MAX_ENTRIES
+         )
+@@ -100,6 +105,8 @@ class BoundedASTCache:
+     def _evict_oldest(self) -> None:
+         key, _ = self.cache.popitem(last=False)
+         self.total_bytes -= self.entry_sizes.pop(key)
++        if self.on_evict is not None:
++            self.on_evict(key)
+ 
+     def _enforce_limits(self) -> None:
+         # Evict LRU entries until both caps hold. The newest entry is kept even
+diff --git a/codebase_rag/config.py b/codebase_rag/config.py
+index 63140f790..a55db1e8a 100644
+--- a/codebase_rag/config.py
++++ b/codebase_rag/config.py
+@@ -346,6 +346,10 @@ class AppConfig(BaseSettings):
+     CAPTURE_FUNCTION_LOCAL_DEFINITIONS: bool = Field(
+         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
+     )
++    # Index extensionless z/OS member names (see path_utils.member_language).
++    PLI_EXTENSIONLESS_MEMBERS: bool = Field(
++        False, validation_alias="CGR_PLI_EXTENSIONLESS_MEMBERS"
++    )
+     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
+ 
+     @property
+diff --git a/codebase_rag/constants/__init__.py b/codebase_rag/constants/__init__.py
+index 98aa8b92f..ac7994643 100644
+--- a/codebase_rag/constants/__init__.py
++++ b/codebase_rag/constants/__init__.py
+@@ -8,8 +8,10 @@ from .ast_java import *  # noqa: F403
+ from .ast_js import *  # noqa: F403
+ from .ast_julia import *  # noqa: F403
+ from .ast_lua import *  # noqa: F403
++from .ast_mainframe import *  # noqa: F403
+ from .ast_nodes import *  # noqa: F403
+ from .ast_php import *  # noqa: F403
++from .ast_pli import *  # noqa: F403
+ from .ast_python import *  # noqa: F403
+ from .ast_rust import *  # noqa: F403
+ from .ast_scala import *  # noqa: F403
+diff --git a/codebase_rag/constants/ast_mainframe.py b/codebase_rag/constants/ast_mainframe.py
+new file mode 100644
+index 000000000..99f81d085
+--- /dev/null
++++ b/codebase_rag/constants/ast_mainframe.py
+@@ -0,0 +1,43 @@
++# Node types of the z/OS grammars: tree-sitter-jcl, tree-sitter-hlasm
++# (IMS MFS) and tree-sitter-db2 (github.com/Simon-Peleska/tree-sitter-*).
++
++TS_MF_SOURCE_FILE = "source_file"
++TS_MF_FIELD_NAME = "name"
++
++TS_JCL_JOB_STATEMENT = "job_statement"
++TS_JCL_PROC_STATEMENT = "proc_statement"
++TS_JCL_EXEC_STATEMENT = "exec_statement"
++TS_JCL_INCLUDE_STATEMENT = "include_statement"
++TS_JCL_DATA_LINE = "data_line"
++TS_JCL_PARAMETER = "parameter"
++TS_JCL_FIELD_KEY = "key"
++TS_JCL_FIELD_VALUE = "value"
++
++TS_HLASM_STATEMENT = "statement"
++TS_HLASM_KEYWORD_OPERAND = "keyword_operand"
++TS_HLASM_LIST = "list"
++TS_HLASM_WORD = "word"
++TS_HLASM_FIELD_OPERATION = "operation"
++TS_HLASM_FIELD_KEY = "key"
++TS_HLASM_FIELD_VALUE = "value"
++TS_HLASM_FIELD_OPERANDS = "operands"
++# `COPY MEMBER` pulls a member of the SYSLIB concatenation into the source.
++HLASM_COPY = "COPY"
++# The MFS statements that name something a program or another statement
++# refers to: a format and a message (MOD / MID).
++HLASM_MFS_DEFINITIONS = ("FMT", "MSG")
++
++TS_DB2_CREATE_TABLE = "create_table_statement"
++TS_DB2_CREATE_VIEW = "create_view_statement"
++TS_DB2_CREATE_ALIAS = "create_alias_statement"
++TS_DB2_OBJECT_NAME = "object_name"
++
++TS_PLI_STRING_LITERAL = "string_literal"
++
++JCL_FUNCTION_TYPES = (TS_JCL_JOB_STATEMENT, TS_JCL_PROC_STATEMENT)
++HLASM_FUNCTION_TYPES = (TS_HLASM_STATEMENT,)
++DB2_FUNCTION_TYPES = (TS_DB2_CREATE_TABLE, TS_DB2_CREATE_VIEW, TS_DB2_CREATE_ALIAS)
++MF_MODULE_TYPES = (TS_MF_SOURCE_FILE,)
++MF_SCOPE_TYPES = (TS_MF_SOURCE_FILE,)
++JCL_IMPORT_TYPES = (TS_JCL_INCLUDE_STATEMENT,)
++HLASM_IMPORT_TYPES = (TS_HLASM_STATEMENT,)
+diff --git a/codebase_rag/constants/ast_pli.py b/codebase_rag/constants/ast_pli.py
+new file mode 100644
+index 000000000..0de057c16
+--- /dev/null
++++ b/codebase_rag/constants/ast_pli.py
+@@ -0,0 +1,28 @@
++# Tree-sitter-pli node types (github.com/Simon-Peleska/tree-sitter-pli).
++
++TS_PLI_SOURCE_FILE = "source_file"
++TS_PLI_LABELED_STATEMENT = "labeled_statement"
++TS_PLI_STATEMENT_PREFIX = "statement_prefix"
++TS_PLI_PROCEDURE_STATEMENT = "procedure_statement"
++TS_PLI_ENTRY_STATEMENT = "entry_statement"
++TS_PLI_PACKAGE_STATEMENT = "package_statement"
++TS_PLI_BEGIN_STATEMENT = "begin_statement"
++TS_PLI_CALL_STATEMENT = "call_statement"
++TS_PLI_FETCH_STATEMENT = "fetch_statement"
++TS_PLI_REFERENCE = "reference"
++TS_PLI_ARGUMENT = "argument"
++TS_PLI_ASSIGNMENT_STATEMENT = "assignment_statement"
++TS_PLI_IDENTIFIER = "identifier"
++TS_PLI_PREPROCESSOR_INCLUDE = "preprocessor_include"
++TS_PLI_INCLUDE_SPEC = "include_spec"
++TS_PLI_EXEC_STATEMENT = "exec_statement"
++
++TS_PLI_FIELD_LABEL = "label"
++TS_PLI_FIELD_ENTRY = "entry"
++TS_PLI_FIELD_MEMBER = "member"
++
++PLI_FUNCTION_TYPES = (TS_PLI_PROCEDURE_STATEMENT, TS_PLI_ENTRY_STATEMENT)
++PLI_CLASS_TYPES = (TS_PLI_PACKAGE_STATEMENT,)
++PLI_MODULE_TYPES = (TS_PLI_SOURCE_FILE,)
++PLI_SCOPE_TYPES = (TS_PLI_SOURCE_FILE, TS_PLI_PACKAGE_STATEMENT)
++PLI_IMPORT_TYPES = (TS_PLI_PREPROCESSOR_INCLUDE, TS_PLI_EXEC_STATEMENT)
+diff --git a/codebase_rag/constants/core.py b/codebase_rag/constants/core.py
+index f0c5c134d..5fcd751c3 100644
+--- a/codebase_rag/constants/core.py
++++ b/codebase_rag/constants/core.py
+@@ -432,6 +432,8 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
+     # Decides which bytes the grammar reads for a Python source, so every name
+     # in a declared-encoding file depends on it (issue #2445).
+     "utils/source_encoding.py",
++    # Blanks fixed-format PL/I margins in those same bytes.
++    "utils/pli_margins.py",
+ )
+ PY_SOURCE_GLOB = "*.py"
+ # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj
+diff --git a/codebase_rag/constants/languages.py b/codebase_rag/constants/languages.py
+index 820b68d07..faf4d88f8 100644
+--- a/codebase_rag/constants/languages.py
++++ b/codebase_rag/constants/languages.py
+@@ -56,6 +56,17 @@ EXT_CS = ".cs"
+ EXT_DART = ".dart"
+ EXT_SQL = ".sql"
+ EXT_JL = ".jl"
++EXT_PLI = ".pli"
++EXT_PL1 = ".pl1"
++EXT_PCO = ".pco"
++EXT_JCL = ".jcl"
++EXT_CNTL = ".cntl"
++EXT_MFS = ".mfs"
++EXT_ASM = ".asm"
++EXT_HLASM = ".hlasm"
++EXT_MLC = ".mlc"
++EXT_DDL = ".ddl"
++EXT_DB2 = ".db2"
+ # Data file extensions
+ EXT_JSON = ".json"
+ 
+@@ -108,6 +119,10 @@ CS_EXTENSIONS = (EXT_CS,)
+ DART_EXTENSIONS = (EXT_DART,)
+ SQL_EXTENSIONS = (EXT_SQL,)
+ JULIA_EXTENSIONS = (EXT_JL,)
++PLI_EXTENSIONS = (EXT_PLI, EXT_PL1, EXT_PCO)
++JCL_EXTENSIONS = (EXT_JCL, EXT_CNTL)
++HLASM_EXTENSIONS = (EXT_MFS, EXT_ASM, EXT_HLASM, EXT_MLC)
++DB2_EXTENSIONS = (EXT_DDL, EXT_DB2)
+ 
+ # Package indicator files
+ PKG_INIT_PY = "__init__.py"
+@@ -290,6 +305,10 @@ class SupportedLanguage(StrEnum):
+     DART = "dart"
+     SQL = "sql"
+     JULIA = "julia"
++    PLI = "pli"
++    JCL = "jcl"
++    HLASM = "hlasm"
++    DB2 = "db2"
+ 
+ 
+ # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
+@@ -453,6 +472,26 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
+         "Modules, struct/abstract/primitive types with single-supertype <: inheritance (the grammar error-recovers a comma supertype list), concise methods, inner constructors, macros (separate @ namespace), arrow functions, using/import, broadcast calls",
+         "Julia",
+     ),
++    SupportedLanguage.PLI: LanguageMetadata(
++        LanguageStatus.DEV,
++        "Procedures, ENTRY points and PACKAGEs (as classes) named by their labels, CALL statements and function references to known procedures, %INCLUDE resolution to members, fixed-format margins blanked before parsing, extensionless z/OS member names (opt-in)",
++        "PL/I",
++    ),
++    SupportedLanguage.JCL: LanguageMetadata(
++        LanguageStatus.DEV,
++        "JOBs and in-stream or cataloged PROCs as functions calling the programs their steps run (PGM=, IMS DFSRRC00 PARM=, MBR=, DSN RUN PROGRAM) and the procedures they execute, INCLUDE members as imports",
++        "JCL",
++    ),
++    SupportedLanguage.HLASM: LanguageMetadata(
++        LanguageStatus.DEV,
++        "IMS MFS formats (FMT) and messages (MSG) as functions, a message calling its SOR format and NXT message; PL/I string literals naming them become calls",
++        "HLASM",
++    ),
++    SupportedLanguage.DB2: LanguageMetadata(
++        LanguageStatus.DEV,
++        "Db2 for z/OS tables and views from CREATE statements as functions; PL/I EXEC SQL statements and views call the tables they name",
++        "Db2 SQL",
++    ),
+ }
+ 
+ # Index file names
+@@ -502,6 +541,10 @@ class TreeSitterModule(StrEnum):
+     DART = "tree_sitter_dart"
+     SQL = "tree_sitter_sql"
+     JULIA = "tree_sitter_julia"
++    PLI = "tree_sitter_pli"
++    JCL = "tree_sitter_jcl"
++    HLASM = "tree_sitter_hlasm"
++    DB2 = "tree_sitter_db2"
+ 
+ 
+ # Directory names with a context-dependent ignore: `bin` is build output
+diff --git a/codebase_rag/crash_correlation.py b/codebase_rag/crash_correlation.py
+index 87555c47f..e83b838a1 100644
+--- a/codebase_rag/crash_correlation.py
++++ b/codebase_rag/crash_correlation.py
+@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, NamedTuple
+ 
+ from . import constants as cs
+ from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES, QueryFn
+-from .language_spec import get_language_for_extension
++from .language_spec import get_language_for_path
+ from .trace.records import FramePoint
+ from .trace.resolution import (
+     CallableNode,
+@@ -344,7 +344,7 @@ def diagnose_arity(
+ 
+ def _declares_its_arity(path: str) -> bool:
+     """Whether the node's list follows another language's rules (#2517)."""
+-    return get_language_for_extension(Path(path).suffix) in cs.DECLARED_ARITY_LANGUAGES
++    return get_language_for_path(Path(path)) in cs.DECLARED_ARITY_LANGUAGES
+ 
+ 
+ class RootCause(NamedTuple):
+diff --git a/codebase_rag/editing/import_paths.py b/codebase_rag/editing/import_paths.py
+index 76bfce8de..69ea5c3e4 100644
+--- a/codebase_rag/editing/import_paths.py
++++ b/codebase_rag/editing/import_paths.py
+@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
+ from typing import NamedTuple
+ 
+ from .. import constants as cs
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..parsers.import_processor import (
+     _load_jsonc,
+     _load_ts_path_aliases,
+@@ -101,7 +101,7 @@ def module_key(path: str) -> tuple[str, ...]:
+     directory's."""
+     file = PurePosixPath(path)
+     stem = module_stem(file.name)
+-    language = get_language_for_extension(file.suffix)
++    language = get_language_for_path(file)
+     if language is not None and stem in cs.RENAME_PACKAGE_FILES.get(
+         language, frozenset()
+     ):
+@@ -116,7 +116,7 @@ def spelled_length(repo_root: Path, path: str) -> int:
+     anywhere else its own name."""
+     file = PurePosixPath(path)
+     key = module_key(path)
+-    if get_language_for_extension(file.suffix) is not cs.SupportedLanguage.PYTHON:
++    if get_language_for_path(file) is not cs.SupportedLanguage.PYTHON:
+         return 1
+     packages = 0
+     directory = file.parent
+@@ -611,6 +611,6 @@ def _without_suffix(segments: tuple[str, ...]) -> tuple[str, ...]:
+     if not segments:
+         return segments
+     last = PurePosixPath(segments[-1])
+-    if last.suffix and get_language_for_extension(last.suffix) is not None:
++    if last.suffix and get_language_for_path(last) is not None:
+         return (*segments[:-1], module_stem(last.name))
+     return segments
+diff --git a/codebase_rag/editing/imports.py b/codebase_rag/editing/imports.py
+index 415a46395..718b49a82 100644
+--- a/codebase_rag/editing/imports.py
++++ b/codebase_rag/editing/imports.py
+@@ -29,7 +29,7 @@ from pathlib import Path
+ from typing import NamedTuple
+ 
+ from .. import constants as cs
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from .patcher import Patcher
+ 
+ 
+@@ -528,7 +528,7 @@ class ImportRewriter:
+             if span_key in seen:
+                 continue
+             seen.add(span_key)
+-            language = get_language_for_extension(Path(site.path).suffix)
++            language = get_language_for_path(Path(site.path))
+             source, start, end = self._statement(site)
+             statement = source[start:end].decode(cs.ENCODING_UTF8)
+             replacement = self._rewrite_for(language, statement, move, site.path)
+diff --git a/codebase_rag/editing/occurrences.py b/codebase_rag/editing/occurrences.py
+index 4830ccf61..2d091dd74 100644
+--- a/codebase_rag/editing/occurrences.py
++++ b/codebase_rag/editing/occurrences.py
+@@ -40,7 +40,10 @@ from tree_sitter import Node
+ 
+ from .. import constants as cs
+ from ..config import load_ignore_patterns
+-from ..language_spec import get_language_for_extension, language_family
++from ..language_spec import (
++    get_language_for_path,
++    language_family,
++)
+ from ..parser_loader import load_parsers
+ from ..utils.path_utils import (
+     declaration_implementations,
+@@ -215,7 +218,7 @@ def find_occurrences(repo_root: Path, target: Target) -> list[Occurrence]:
+     for directory, filename, rel_path in walk_eligible_files(
+         repo_root, ignore.exclude or None, ignore.unignore or None
+     ):
+-        language = get_language_for_extension(Path(filename).suffix)
++        language = get_language_for_path(Path(filename))
+         if language not in family or (parser := parsers.get(language)) is None:
+             continue
+         try:
+@@ -319,7 +322,7 @@ def declares_target(
+     indexes a `.d.ts` beside its `.ts` as a module of its own, so its
+     `helper` is a symbol of its own there, and this says it is the target's."""
+     implementations = declared_files(target, path)
+-    language = get_language_for_extension(Path(path).suffix)
++    language = get_language_for_path(Path(path))
+     parsers, _queries = load_parsers()
+     if not implementations or language is None or language not in parsers:
+         return False
+@@ -1341,7 +1344,7 @@ def binding_scope(
+     `line`:`col` (1-based line, byte column) binds its names for a bare use:
+     the function around it, or the whole file at module level. None where
+     that is a class body, whose names a method's bare uses never see."""
+-    language = get_language_for_extension(Path(path).suffix)
++    language = get_language_for_path(Path(path))
+     parsers, _queries = load_parsers()
+     if language is None or (parser := parsers.get(language)) is None:
+         return None
+diff --git a/codebase_rag/editing/patcher.py b/codebase_rag/editing/patcher.py
+index cfd746ee5..c61593cc0 100644
+--- a/codebase_rag/editing/patcher.py
++++ b/codebase_rag/editing/patcher.py
+@@ -31,7 +31,7 @@ from typing import NamedTuple, Protocol
+ from tree_sitter import Node, Parser
+ 
+ from .. import constants as cs
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..parser_loader import load_parsers
+ from ..utils.source_encoding import encode_source, python_source_view
+ 
+@@ -159,7 +159,7 @@ _FORMATTERS: dict[cs.SupportedLanguage, tuple[str, tuple[str, ...], str]] = {
+ 
+ 
+ def _language_for(path: Path) -> cs.SupportedLanguage | None:
+-    language = get_language_for_extension(path.suffix)
++    language = get_language_for_path(path)
+     return language if isinstance(language, cs.SupportedLanguage) else None
+ 
+ 
+diff --git a/codebase_rag/editing/rename.py b/codebase_rag/editing/rename.py
+index afa9357eb..a490f0e4c 100644
+--- a/codebase_rag/editing/rename.py
++++ b/codebase_rag/editing/rename.py
+@@ -41,7 +41,10 @@ from .. import cypher_queries as cq
+ from .. import graph_query
+ from ..function_registry import TYPE_SPACE_KINDS
+ from ..graph_updater import ReingestAborted
+-from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
++from ..language_spec import (
++    csharp_partial_key_from_graph,
++    get_language_for_path,
++)
+ from ..parser_loader import load_parsers
+ from ..parsers.go import utils as go_utils
+ from ..parsers.go.builds import GoBuilds
+@@ -284,7 +287,7 @@ def _go_implementers_unknown(
+ 
+ 
+ def _is_go_path(path: str) -> bool:
+-    return get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
++    return get_language_for_path(Path(path)) == cs.SupportedLanguage.GO
+ 
+ 
+ def _go_declaration_place(
+@@ -323,7 +326,7 @@ def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str
+         not path
+         or not name
+         or label not in cs.CSHARP_PARTIAL_TYPE_LABELS
+-        or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
++        or get_language_for_path(Path(path)) != cs.SupportedLanguage.CSHARP
+     ):
+         return []
+     owns = graph_query._owner_check(fetch_all, project)
+@@ -562,9 +565,7 @@ def _add_jsx_closing_site(
+     Kept out of `Renamer._add_site` so that method stays under the
+     cognitive complexity limit (S3776).
+     """
+-    closing = _jsx_closing_token(
+-        source, get_language_for_extension(Path(path).suffix), token
+-    )
++    closing = _jsx_closing_token(source, get_language_for_path(Path(path)), token)
+     if closing is None:
+         return
+     if any((s.path, s.line, s.col) == (path, *closing) for s in sites):
+@@ -586,7 +587,7 @@ def _chain_link_sites(
+     # for (the receiver's type was not inferred) binds to nobody the graph
+     # knows. It is renamed only as a guess the caller opts into with
+     # allow_heuristic; `plan` drops it where a row covers it.
+-    language = get_language_for_extension(Path(path).suffix)
++    language = get_language_for_path(Path(path))
+     return [
+         RenameSite(kind, path, link[0], link[1], owner, _CHAIN)
+         for link in _chain_links(source, language, line, col, old_name)
+@@ -656,7 +657,7 @@ def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[Renam
+     names them; renaming only the implementation would strand them under the
+     old name, which for TypeScript is a type error (TS2389).
+     """
+-    language = get_language_for_extension(Path(definition.path).suffix)
++    language = get_language_for_path(Path(definition.path))
+     if language != cs.SupportedLanguage.PYTHON and language not in _TS_LANGUAGES:
+         return []
+     parsers, _queries = load_parsers()
+@@ -796,8 +797,7 @@ class Renamer:
+             if (
+                 site.kind not in ("call", "reference")
+                 or site.path == path
+-                or get_language_for_extension(Path(site.path).suffix)
+-                not in cs.JS_TS_LANGUAGES
++                or get_language_for_path(Path(site.path)) not in cs.JS_TS_LANGUAGES
+                 or self._is_member_token(patcher, site)
+             ):
+                 kept.append(site)
+@@ -942,7 +942,7 @@ class Renamer:
+         start = definition["name_line"] or definition["start_line"] or 1
+         end = definition["end_line"] or start
+         token = _name_token(
+-            source, get_language_for_extension(Path(path).suffix), start, end, old_name
++            source, get_language_for_path(Path(path)), start, end, old_name
+         )
+         if token is None:
+             raise RenameRefused(
+@@ -1191,7 +1191,7 @@ class Renamer:
+             end_line if isinstance(end_line, int) else None,
+             end_col if isinstance(end_col, int) else None,
+             old_name,
+-            get_language_for_extension(Path(path).suffix),
++            get_language_for_path(Path(path)),
+             is_call=kind == "call",
+         )
+         if token == _STALE_CALL:
+@@ -1296,7 +1296,7 @@ class Renamer:
+                 cs.EdgeResolution.EXACT,
+             )
+             for site, module in self._import_sites(qn, old_name)
+-            if get_language_for_extension(Path(site.path).suffix) in _TS_LANGUAGES
++            if get_language_for_path(Path(site.path)) in _TS_LANGUAGES
+         ]
+         if not typed:
+             return []
+@@ -1505,7 +1505,7 @@ class Renamer:
+         """
+         definitions = [s for s in sites if s.kind == "definition"]
+         definition = definitions[0].path
+-        language = get_language_for_extension(Path(definition).suffix)
++        language = get_language_for_path(Path(definition))
+         if language is None:
+             return [], ()
+         kind = _target_kind(label)
+@@ -1687,8 +1687,7 @@ class Renamer:
+         return {
+             path
+             for path in paths
+-            if get_language_for_extension(Path(path).suffix)
+-            == cs.SupportedLanguage.PYTHON
++            if get_language_for_path(Path(path)) == cs.SupportedLanguage.PYTHON
+         }
+ 
+     def _stage(
+diff --git a/codebase_rag/editing/signature.py b/codebase_rag/editing/signature.py
+index a4872060a..166b30cfd 100644
+--- a/codebase_rag/editing/signature.py
++++ b/codebase_rag/editing/signature.py
+@@ -38,7 +38,7 @@ from tree_sitter import Node, Parser
+ from .. import constants as cs
+ from .. import graph_query
+ from ..graph_query import QueryFn
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..parser_loader import load_parsers
+ from .contract import Reingest
+ from .patcher import Patcher, PatcherError
+@@ -201,7 +201,7 @@ class SignatureChanger:
+         path = definition["path"]
+         if not definition["found"] or not path:
+             raise SignatureRefused(cs.RENAME_UNKNOWN.format(qn=qn))
+-        language = get_language_for_extension(Path(path).suffix)
++        language = get_language_for_path(Path(path))
+         dialect = _DIALECTS.get(language) if language is not None else None
+         if language is None or dialect is None:
+             raise SignatureRefused(
+@@ -362,7 +362,7 @@ class SignatureChanger:
+             raise _Unmapped(cs.SIGNATURE_SITE_GUESSED.format(resolution=resolution))
+         # A call from another language reaches the definition through some
+         # binding layer this operation cannot read.
+-        if get_language_for_extension(Path(path).suffix) != header.language:
++        if get_language_for_path(Path(path)) != header.language:
+             raise _Unmapped(cs.SIGNATURE_SITE_OTHER_LANGUAGE.format(path=path))
+         dialect = _DIALECTS[header.language]
+         try:
+diff --git a/codebase_rag/gloss_anchor.py b/codebase_rag/gloss_anchor.py
+index da8b6af07..28ad9cf06 100644
+--- a/codebase_rag/gloss_anchor.py
++++ b/codebase_rag/gloss_anchor.py
+@@ -34,7 +34,7 @@ from typing import NamedTuple, TypeGuard
+ from tree_sitter import Node, Parser, Tree
+ 
+ from . import constants as cs
+-from .language_spec import get_language_for_extension
++from .language_spec import get_language_for_path
+ from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+ from .types_defs import ResultValue
+ 
+@@ -217,7 +217,7 @@ def parse_source(
+     leaves for the same source, so a quote could disagree with the spans
+     it was selected by (Copilot, PR #1966).
+     """
+-    language = get_language_for_extension(path.suffix)
++    language = get_language_for_path(path)
+     parser = parsers.get(language) if language is not None else None
+     if parser is None or language is None:
+         return None
+diff --git a/codebase_rag/graph_updater.py b/codebase_rag/graph_updater.py
+index fbdb32098..e9a0b2ffe 100644
+--- a/codebase_rag/graph_updater.py
++++ b/codebase_rag/graph_updater.py
+@@ -42,8 +42,8 @@ from .language_spec import (
+     LANGUAGE_FQN_SPECS,
+     csharp_namespaced_from_graph,
+     csharp_partial_key_from_graph,
+-    get_language_for_extension,
+-    get_language_spec,
++    get_language_for_path,
++    get_language_spec_for_path,
+     sql_object_reference_name,
+ )
+ from .parser_fingerprint import compute_parser_fingerprint
+@@ -206,11 +206,7 @@ def _stored_strings(value: object) -> list[str]:
+ 
+ def _stored_language(path: object) -> cs.SupportedLanguage | None:
+     # The language of a stored definition, from its file's extension.
+-    return (
+-        get_language_for_extension(PurePosixPath(path).suffix)
+-        if isinstance(path, str)
+-        else None
+-    )
++    return get_language_for_path(PurePosixPath(path)) if isinstance(path, str) else None
+ 
+ 
+ def _owning_module_qn(qn: str, module_qns: set[str]) -> str | None:
+@@ -1712,7 +1708,12 @@ class GraphUpdater:
+         self.function_registry = FunctionRegistryTrie(
+             simple_name_lookup=self.simple_name_lookup
+         )
+-        self.ast_cache = BoundedASTCache(loader=self._load_ast_from_disk)
++        self.ast_cache = BoundedASTCache(
++            loader=self._load_ast_from_disk,
++            on_evict=lambda path: self.factory._func_class_captures_cache.pop(
++                path, None
++            ),
++        )
+         # Every file parsed this run, in parse order. The AST cache is bounded
+         # and evicts on large repos, so Pass 3 must iterate this full list (not
+         # the cache) and re-parse evicted files, or their calls are dropped.
+@@ -2687,7 +2688,7 @@ class GraphUpdater:
+ 
+     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
+         """Parse one unchanged module's imports; False when Pass 2 would not."""
+-        spec = get_language_spec(path.suffix)
++        spec = get_language_spec_for_path(path)
+         if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
+             return False
+         language = spec.language
+@@ -4394,7 +4395,7 @@ class GraphUpdater:
+             # A row written before the flag existed reads as exported: the
+             # star lookup then counts it, as it did before.
+             row.get(cs.KEY_IS_EXPORTED) is not False,
+-            get_language_for_extension(Path(path).suffix),
++            get_language_for_path(Path(path)),
+         )
+         # The C# declared-form index (issue #1629) is filled only by
+         # parsing; an unchanged type must stay reachable by `N.Widget`
+@@ -5403,7 +5404,7 @@ class GraphUpdater:
+         a parse of its bytes with the language's combined query: what a
+         waiting module wrote as a base or a callee (issue #1568). A language
+         without a parser or a combined query offers nothing."""
+-        language = get_language_for_extension(PurePosixPath(key).suffix)
++        language = get_language_for_path(PurePosixPath(key))
+         parser = self.parsers.get(language) if language is not None else None
+         query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
+         if parser is None or query is None or language is None:
+@@ -6010,7 +6011,7 @@ class GraphUpdater:
+         if recorded_qns:
+             module_qn_prefixes = recorded_qns
+         elif (
+-            get_language_for_extension(file_path.suffix) is not None
++            get_language_for_path(file_path) is not None
+             and module_map.get(path_derived_qn) is None
+         ):
+             module_qn_prefixes = {path_derived_qn}
+@@ -7364,7 +7365,7 @@ class GraphUpdater:
+                     self._process_single_file(
+                         filepath,
+                         file_bytes=file_bytes,
+-                        pre_parsed=pre_parsed.get(filepath),
++                        pre_parsed=pre_parsed.pop(filepath, None),
+                     )
+                 except Exception as exc:
+                     logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
+@@ -8174,6 +8175,12 @@ class GraphUpdater:
+             tree = parse_with_preproc_recovery(
+                 parser, grammar_bytes(file_bytes, language, filepath), language
+             )
++            if len(result) >= self.ast_cache.max_entries:
++                # Every file is still parsed here, so a parse failure leaves
++                # the graph untouched, but keeping every tree held them all at
++                # once (8 GB for 20,000 files); past the AST cache's size the
++                # per-file loop parses again instead.
++                continue
+             root_node = tree.root_node
+             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
+             combined_captures: dict[str, list] | None = None
+@@ -8234,7 +8241,7 @@ class GraphUpdater:
+         module's qn, and parsing it would claim or twin the Module. It still
+         falls through to the generic File node (issue #2445).
+         """
+-        lang_config = get_language_spec(filepath.suffix)
++        lang_config = get_language_spec_for_path(filepath)
+         if not (
+             lang_config
+             and isinstance(lang_config.language, cs.SupportedLanguage)
+@@ -8322,7 +8329,7 @@ class GraphUpdater:
+         """
+         if is_notebook_path(file_path):
+             return self._load_notebook_ast(file_path)
+-        language = get_language_for_extension(file_path.suffix)
++        language = get_language_for_path(file_path)
+         if language is None or language not in self.parsers:
+             return None
+         parser = self.queries[language].get(cs.KEY_PARSER)
+@@ -9209,7 +9216,7 @@ class GraphUpdater:
+     ) -> dict[str, bytes]:
+         touched_languages: set[cs.SupportedLanguage] = set()
+         for path in (*reparse.values(), *gone.values()):
+-            spec = get_language_spec(path.suffix)
++            spec = get_language_spec_for_path(path)
+             if spec is not None and isinstance(spec.language, cs.SupportedLanguage):
+                 touched_languages.add(spec.language)
+         if touched_languages & cs.C_FAMILY_LANGUAGES and (
+diff --git a/codebase_rag/language_spec.py b/codebase_rag/language_spec.py
+index 026846e9b..6f60ec78f 100644
+--- a/codebase_rag/language_spec.py
++++ b/codebase_rag/language_spec.py
+@@ -556,6 +556,70 @@ DART_FQN_SPEC = FQNSpec(
+     file_to_module_parts=_generic_file_to_module,
+ )
+ 
++
++def pli_label(node: Node) -> str | None:
++    # A PL/I procedure, entry or package is named by the label in front of
++    # it (`MAIN: PROC;`), which the grammar puts on the enclosing
++    # labeled_statement, not on the statement itself.
++    parent = node.parent
++    if parent is None or parent.type != cs.TS_PLI_LABELED_STATEMENT:
++        return None
++    for child in parent.children:
++        if child.type != cs.TS_PLI_STATEMENT_PREFIX:
++            continue
++        label = child.child_by_field_name(cs.TS_PLI_FIELD_LABEL)
++        if label is not None and label.text:
++            return decode_node_text(label.text).upper()
++    return None
++
++
++def _pli_get_name(node: Node) -> str | None:
++    if node.type == cs.TS_PLI_SOURCE_FILE:
++        return None
++    return pli_label(node)
++
++
++PLI_FQN_SPEC = FQNSpec(
++    scope_node_types=frozenset(cs.PLI_SCOPE_TYPES),
++    function_node_types=frozenset(cs.PLI_FUNCTION_TYPES),
++    get_name=_pli_get_name,
++    file_to_module_parts=_generic_file_to_module,
++)
++
++
++def mainframe_name(node: Node) -> str | None:
++    # A JCL JOB or PROC is named by its name field, an MFS FMT or MSG by the
++    # name in front of it (other assembler statements name nothing), a Db2
++    # table or view by the last part of its qualified name.
++    if node.type == cs.TS_HLASM_STATEMENT:
++        operation = node.child_by_field_name(cs.TS_HLASM_FIELD_OPERATION)
++        if operation is None or not operation.text:
++            return None
++        if decode_node_text(operation.text).upper() not in cs.HLASM_MFS_DEFINITIONS:
++            return None
++    name = node.child_by_field_name(cs.TS_MF_FIELD_NAME)
++    if name is not None and name.type == cs.TS_DB2_OBJECT_NAME and name.named_children:
++        name = name.named_children[-1]
++    if name is None or not name.text:
++        return None
++    return decode_node_text(name.text).strip('"').upper()
++
++
++def _mainframe_get_name(node: Node) -> str | None:
++    if node.type == cs.TS_MF_SOURCE_FILE:
++        return None
++    return mainframe_name(node)
++
++
++def _mainframe_fqn_spec(function_types: tuple[str, ...]) -> FQNSpec:
++    return FQNSpec(
++        scope_node_types=frozenset(cs.MF_SCOPE_TYPES),
++        function_node_types=frozenset(function_types),
++        get_name=_mainframe_get_name,
++        file_to_module_parts=_generic_file_to_module,
++    )
++
++
+ JULIA_FQN_SPEC = FQNSpec(
+     scope_node_types=frozenset(cs.FQN_JULIA_SCOPE_TYPES),
+     function_node_types=frozenset(cs.FQN_JULIA_FUNCTION_TYPES),
+@@ -580,6 +644,10 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
+     cs.SupportedLanguage.DART: DART_FQN_SPEC,
+     cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
+     cs.SupportedLanguage.JULIA: JULIA_FQN_SPEC,
++    cs.SupportedLanguage.PLI: PLI_FQN_SPEC,
++    cs.SupportedLanguage.JCL: _mainframe_fqn_spec(cs.JCL_FUNCTION_TYPES),
++    cs.SupportedLanguage.HLASM: _mainframe_fqn_spec(cs.HLASM_FUNCTION_TYPES),
++    cs.SupportedLanguage.DB2: _mainframe_fqn_spec(cs.DB2_FUNCTION_TYPES),
+ }
+ 
+ 
+@@ -980,6 +1048,58 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
+         (broadcast_call_expression) @call
+         """,
+     ),
++    cs.SupportedLanguage.PLI: LanguageSpec(
++        language=cs.SupportedLanguage.PLI,
++        file_extensions=cs.PLI_EXTENSIONS,
++        function_node_types=cs.PLI_FUNCTION_TYPES,
++        class_node_types=cs.PLI_CLASS_TYPES,
++        module_node_types=cs.PLI_MODULE_TYPES,
++        call_node_types=(
++            cs.TS_PLI_CALL_STATEMENT,
++            cs.TS_PLI_FETCH_STATEMENT,
++            cs.TS_PLI_REFERENCE,
++        ),
++        # Only a reference with an argument list can be a function call, and
++        # most references are plain variables: filtering here keeps them out
++        # of the Python call processing, which dominated indexing time.
++        call_query="""
++        (call_statement) @call
++        (fetch_statement) @call
++        (reference (argument)) @call
++        """,
++        import_node_types=cs.PLI_IMPORT_TYPES,
++    ),
++    # The z/OS languages have no call expressions: their links to programs,
++    # procedures, screens and tables come from parsers/mainframe.py.
++    cs.SupportedLanguage.JCL: LanguageSpec(
++        language=cs.SupportedLanguage.JCL,
++        file_extensions=cs.JCL_EXTENSIONS,
++        function_node_types=cs.JCL_FUNCTION_TYPES,
++        class_node_types=(),
++        module_node_types=cs.MF_MODULE_TYPES,
++        import_node_types=cs.JCL_IMPORT_TYPES,
++    ),
++    cs.SupportedLanguage.HLASM: LanguageSpec(
++        language=cs.SupportedLanguage.HLASM,
++        file_extensions=cs.HLASM_EXTENSIONS,
++        function_node_types=cs.HLASM_FUNCTION_TYPES,
++        class_node_types=(),
++        module_node_types=cs.MF_MODULE_TYPES,
++        import_node_types=cs.HLASM_IMPORT_TYPES,
++        # Only FMT and MSG statements define something; matching every
++        # statement would hand each one to the definition pass.
++        function_query="""
++        ((statement name: (name) operation: (operation) @_operation) @function
++         (#match? @_operation "^(FMT|MSG|fmt|msg)$"))
++        """,
++    ),
++    cs.SupportedLanguage.DB2: LanguageSpec(
++        language=cs.SupportedLanguage.DB2,
++        file_extensions=cs.DB2_EXTENSIONS,
++        function_node_types=cs.DB2_FUNCTION_TYPES,
++        class_node_types=(),
++        module_node_types=cs.MF_MODULE_TYPES,
++    ),
+ }
+ 
+ _EXTENSION_TO_SPEC: dict[str, LanguageSpec] = {}
+@@ -989,11 +1109,31 @@ for _config in LANGUAGE_SPECS.values():
+ 
+ 
+ def get_language_spec(file_extension: str) -> LanguageSpec | None:
++    if not file_extension and path_utils.pli_extensionless_members():
++        # Which extensionless files are PL/I members is decided by name in
++        # path_utils.is_ignored_filename; the rest never get this far.
++        return LANGUAGE_SPECS[cs.SupportedLanguage.PLI]
+     return _EXTENSION_TO_SPEC.get(file_extension)
+ 
+ 
+ def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | None:
+-    spec = _EXTENSION_TO_SPEC.get(file_extension)
++    spec = get_language_spec(file_extension)
++    if spec and isinstance(spec.language, cs.SupportedLanguage):
++        return spec.language
++    return None
++
++
++def get_language_spec_for_path(path: str | os.PathLike[str]) -> LanguageSpec | None:
++    # Extensionless z/OS members are told apart by name, not by extension.
++    pure = PurePosixPath(os.fspath(path).replace("\\", "/"))
++    if not pure.suffix and path_utils.pli_extensionless_members():
++        language = path_utils.member_language(pure.name)
++        return LANGUAGE_SPECS[language] if language is not None else None
++    return _EXTENSION_TO_SPEC.get(pure.suffix)
++
++
++def get_language_for_path(path: str | os.PathLike[str]) -> cs.SupportedLanguage | None:
++    spec = get_language_spec_for_path(path)
+     if spec and isinstance(spec.language, cs.SupportedLanguage):
+         return spec.language
+     return None
+@@ -1047,7 +1187,7 @@ def has_other_language_sibling(
+     candidates go through `should_skip_path`, the predicate the walk prunes
+     with, so an excluded or ignored file counts for nothing.
+     """
+-    language = get_language_for_extension(path.suffix)
++    language = get_language_for_path(path)
+     # `__init__.py` and `mod.rs` are named after their directory, not their
+     # stem, so they share no name with a file of the same stem.
+     if language is None or path.name in _PACKAGE_NAMED_FILES:
+diff --git a/codebase_rag/logs.py b/codebase_rag/logs.py
+index ac8dcd400..d016a3038 100644
+--- a/codebase_rag/logs.py
++++ b/codebase_rag/logs.py
+@@ -937,6 +937,7 @@ CONTRACT_YAML_UNAVAILABLE = (
+     "PyYAML is not installed; skipping YAML contract spec {path}"
+ )
+ IMP_CPP_INCLUDE = "C++ include: {local} -> {full} (system: {system})"
++IMP_PLI_INCLUDE = "PL/I include: {member} -> {target}"
+ IMP_CPP_MODULE = "C++20 module import: {local} -> {full}"
+ IMP_CPP_MODULE_IMPL = "C++20 module implementation: {name}"
+ IMP_CPP_MODULE_IFACE = "C++20 module interface: {name}"
+diff --git a/codebase_rag/parser_fingerprint.py b/codebase_rag/parser_fingerprint.py
+index ad6c5438f..817c75660 100644
+--- a/codebase_rag/parser_fingerprint.py
++++ b/codebase_rag/parser_fingerprint.py
+@@ -482,6 +482,7 @@ def _frontend_settings() -> list[str]:
+     from .parsers.java_frontend import resolve_java_frontend
+     from .parsers.java_lombok import current_lombok_version
+     from .parsers.py_frontend import resolve_python_frontend
++    from .utils.path_utils import pli_extensionless_members
+ 
+     return [
+         f"CPP_FRONTEND={resolve_cpp_frontend().value}",
+@@ -494,6 +495,8 @@ def _frontend_settings() -> list[str]:
+         # languages get only File nodes, and an unchanged repository synced
+         # after installing it must re-parse them (issue #2634).
+         f"AST_GREP_TIER={ast_grep_importable()}",
++        # Decides which extensionless files are PL/I at all.
++        f"PLI_EXTENSIONLESS_MEMBERS={pli_extensionless_members()}",
+     ]
+ 
+ 
+diff --git a/codebase_rag/parser_loader.py b/codebase_rag/parser_loader.py
+index ab6dce496..c16f5c575 100644
+--- a/codebase_rag/parser_loader.py
++++ b/codebase_rag/parser_loader.py
+@@ -237,6 +237,30 @@ def _language_imports() -> list[LanguageImport]:
+             cs.QUERY_LANGUAGE,
+             cs.SupportedLanguage.JULIA,
+         ),
++        LanguageImport(
++            cs.SupportedLanguage.PLI,
++            cs.TreeSitterModule.PLI,
++            cs.QUERY_LANGUAGE,
++            cs.SupportedLanguage.PLI,
++        ),
++        LanguageImport(
++            cs.SupportedLanguage.JCL,
++            cs.TreeSitterModule.JCL,
++            cs.QUERY_LANGUAGE,
++            cs.SupportedLanguage.JCL,
++        ),
++        LanguageImport(
++            cs.SupportedLanguage.HLASM,
++            cs.TreeSitterModule.HLASM,
++            cs.QUERY_LANGUAGE,
++            cs.SupportedLanguage.HLASM,
++        ),
++        LanguageImport(
++            cs.SupportedLanguage.DB2,
++            cs.TreeSitterModule.DB2,
++            cs.QUERY_LANGUAGE,
++            cs.SupportedLanguage.DB2,
++        ),
+     ]
+ 
+     return language_imports
+diff --git a/codebase_rag/parsers/call_processor.py b/codebase_rag/parsers/call_processor.py
+index 95da49b82..d453630df 100644
+--- a/codebase_rag/parsers/call_processor.py
++++ b/codebase_rag/parsers/call_processor.py
+@@ -19,6 +19,7 @@ from ..capture import ALL_ENABLED, CaptureSelection
+ from ..language_spec import (
+     LanguageSpec,
+     decode_node_text,
++    pli_label,
+     sql_object_reference_name,
+ )
+ from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
+@@ -63,8 +64,10 @@ from .java import utils as java_utils
+ from .js_ts import utils as js_ts_utils
+ from .julia import utils as julia_utils
+ from .lua import utils as lua_utils
++from .mainframe import MAINFRAME_LANGUAGES, MainframeLinker
+ from .php import class_names as php_class_names
+ from .php import utils as php_utils
++from .pli import pli_call_name
+ from .py.class_aliases import scan_class_body_aliases
+ from .py.flow_bindings import Binding, BindingKind, FlowBindings, call_base
+ from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
+@@ -2235,6 +2238,7 @@ class CallProcessor:
+         "function_locations",
+         "macro_qns",
+         "_resolver",
++        "_mainframe",
+         "_string_call_specs",
+         "_flow_param_names",
+         "_go_type_declarations",
+@@ -2362,6 +2366,9 @@ class CallProcessor:
+             go_package_names=self._go_package_names,
+             go_links=go_links,
+         )
++        self._mainframe = MainframeLinker(
++            function_registry, import_processor, self.module_qn_to_file_path
++        )
+         # Inter-procedural callable-parameter flow: ordered params per function and
+         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
+         self._flow_param_names: dict[str, list[str]] = {}
+@@ -2447,6 +2454,23 @@ class CallProcessor:
+         else:
+             self.ingestor.ensure_relationship_batch(from_spec, rel_type, to_spec)
+ 
++    def _emit_mainframe_call(
++        self,
++        caller_label: str,
++        caller_qn: str,
++        target_label: str,
++        target_qn: str,
++        site: Node,
++    ) -> None:
++        self._site_node = site
++        self._resolution = cs.EdgeResolution.EXACT
++        self._emit_rel(
++            (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
++            cs.RelationshipType.CALLS,
++            (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
++        )
++        self._site_node = None
++
+     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
+         name_node = node.child_by_field_name(field)
+         if not name_node:
+@@ -3001,6 +3025,7 @@ class CallProcessor:
+ 
+     def reset_resolution_caches(self) -> None:
+         self._resolver.reset_resolution_caches()
++        self._mainframe.reset()
+         self._resolver.type_inference.reset_semantic_join_memos()
+         # Both indexes are derived from module_qn_to_file_path and rebuilt
+         # lazily: the package index only when the map's SIZE changes, the
+@@ -3038,6 +3063,13 @@ class CallProcessor:
+         try:
+             module_qn = self._module_qn(file_path, relative_path)
+ 
++            if language in MAINFRAME_LANGUAGES or language == cs.SupportedLanguage.PLI:
++                self._mainframe.link(
++                    root_node, language, module_qn, queries, self._emit_mainframe_call
++                )
++            if language in MAINFRAME_LANGUAGES:
++                return
++
+             self._dispatch_registry.process_file(root_node, module_qn, language)
+ 
+             call_name_cache: dict[int, str | None] = {}
+@@ -3681,6 +3713,8 @@ class CallProcessor:
+             # the routine got no caller pass and its body's calls went to the
+             # module (issue #2449).
+             func_name = sql_object_reference_name(func_node)
++        if not func_name and language == cs.SupportedLanguage.PLI:
++            func_name = pli_label(func_node)
+         if (
+             not func_name
+             and language == cs.SupportedLanguage.LUA
+@@ -4571,6 +4605,8 @@ class CallProcessor:
+         # chain, not inside the node.
+         if language == cs.SupportedLanguage.DART:
+             return dart_utils.dart_call_name(call_node)
++        if language == cs.SupportedLanguage.PLI:
++            return pli_call_name(call_node)
+         if language == cs.SupportedLanguage.JULIA:
+             # A definition's own head IS a call_expression; drop heads
+             # here (no query negation to exclude them at capture time).
+diff --git a/codebase_rag/parsers/call_resolver.py b/codebase_rag/parsers/call_resolver.py
+index 7bf986ec9..d869a32b5 100644
+--- a/codebase_rag/parsers/call_resolver.py
++++ b/codebase_rag/parsers/call_resolver.py
+@@ -11,7 +11,7 @@ from tree_sitter import Node
+ 
+ from .. import constants as cs
+ from .. import logs as ls
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
+ from ..utils import qn_markers
+ from .cpp import utils as cpp_utils
+@@ -286,12 +286,12 @@ def _binds_identifier(target: Node, name: str) -> bool:
+     return False
+ 
+ 
+-def _file_language(suffix: str) -> cs.SupportedLanguage | None:
++def _file_language(path: PurePath) -> cs.SupportedLanguage | None:
+     # `.ipynb` maps to no grammar, but the only notebooks that become modules
+     # are Python ones, whose cells are parsed as Python (issue #2480).
+-    if suffix == cs.EXT_IPYNB:
++    if path.suffix == cs.EXT_IPYNB:
+         return cs.SupportedLanguage.PYTHON
+-    return get_language_for_extension(suffix)
++    return get_language_for_path(path)
+ 
+ 
+ class CallResolver:
+@@ -4976,7 +4976,7 @@ class CallResolver:
+         while cs.SEPARATOR_DOT in probe:
+             probe = self._parent_qn(probe)
+             if (path := modules.get(probe)) is not None:
+-                if get_language_for_extension(path.suffix) == cs.SupportedLanguage.SQL:
++                if get_language_for_path(path) == cs.SupportedLanguage.SQL:
+                     return probe
+                 return None
+         return None
+@@ -4993,13 +4993,13 @@ class CallResolver:
+         language: cs.SupportedLanguage | None = None
+         while probe:
+             if (path := modules.get(probe)) is not None:
+-                language = _file_language(path.suffix)
++                language = _file_language(path)
+                 break
+             # An incremental run only re-parses changed files, so an
+             # unchanged module is absent above; its definitions carry the
+             # file path recorded on their graph nodes instead.
+             if (rehydrated := self.rehydrated_definition_paths.get(probe)) is not None:
+-                language = _file_language(PurePath(rehydrated).suffix)
++                language = _file_language(PurePath(rehydrated))
+                 break
+             if cs.SEPARATOR_DOT not in probe:
+                 break
+diff --git a/codebase_rag/parsers/handlers/mainframe.py b/codebase_rag/parsers/handlers/mainframe.py
+new file mode 100644
+index 000000000..18d3e217f
+--- /dev/null
++++ b/codebase_rag/parsers/handlers/mainframe.py
+@@ -0,0 +1,16 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++from ...language_spec import mainframe_name
++from .base import BaseLanguageHandler
++
++if TYPE_CHECKING:
++    from ...types_defs import ASTNode
++
++
++class MainframeHandler(BaseLanguageHandler):
++    __slots__ = ()
++
++    def _extract_node_name(self, node: ASTNode) -> str | None:
++        return mainframe_name(node)
+diff --git a/codebase_rag/parsers/handlers/pli.py b/codebase_rag/parsers/handlers/pli.py
+new file mode 100644
+index 000000000..9c62fbb71
+--- /dev/null
++++ b/codebase_rag/parsers/handlers/pli.py
+@@ -0,0 +1,16 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++from ...language_spec import pli_label
++from .base import BaseLanguageHandler
++
++if TYPE_CHECKING:
++    from ...types_defs import ASTNode
++
++
++class PliHandler(BaseLanguageHandler):
++    __slots__ = ()
++
++    def _extract_node_name(self, node: ASTNode) -> str | None:
++        return pli_label(node)
+diff --git a/codebase_rag/parsers/handlers/registry.py b/codebase_rag/parsers/handlers/registry.py
+index 8a7831b4f..627d8fdb9 100644
+--- a/codebase_rag/parsers/handlers/registry.py
++++ b/codebase_rag/parsers/handlers/registry.py
+@@ -9,7 +9,9 @@ from .java import JavaHandler
+ from .js_ts import JsTsHandler
+ from .julia import JuliaHandler
+ from .lua import LuaHandler
++from .mainframe import MainframeHandler
+ from .php import PhpHandler
++from .pli import PliHandler
+ from .protocol import LanguageHandler
+ from .python import PythonHandler
+ from .rust import RustHandler
+@@ -25,6 +27,10 @@ _HANDLERS: dict[SupportedLanguage, type[BaseLanguageHandler]] = {
+     SupportedLanguage.JULIA: JuliaHandler,
+     SupportedLanguage.LUA: LuaHandler,
+     SupportedLanguage.PHP: PhpHandler,
++    SupportedLanguage.PLI: PliHandler,
++    SupportedLanguage.JCL: MainframeHandler,
++    SupportedLanguage.HLASM: MainframeHandler,
++    SupportedLanguage.DB2: MainframeHandler,
+ }
+ 
+ _DEFAULT_HANDLER = BaseLanguageHandler
+diff --git a/codebase_rag/parsers/import_processor.py b/codebase_rag/parsers/import_processor.py
+index 30a1697cd..86e1674eb 100644
+--- a/codebase_rag/parsers/import_processor.py
++++ b/codebase_rag/parsers/import_processor.py
+@@ -4,7 +4,7 @@ import re
+ import tomllib
+ from collections.abc import Iterator, Mapping, Sequence
+ from functools import lru_cache
+-from pathlib import Path
++from pathlib import Path, PurePosixPath
+ from typing import NamedTuple
+ 
+ from loguru import logger
+@@ -15,7 +15,7 @@ from .. import logs as ls
+ from ..language_spec import (
+     LANGUAGE_SPECS,
+     LanguageSpec,
+-    get_language_for_extension,
++    get_language_for_path,
+     language_family,
+     own_extension_module_qn,
+ )
+@@ -66,6 +66,7 @@ from .js_ts.module_paths import (
+ )
+ from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+ from .lua import utils as lua_utils
++from .mainframe import jcl_parameters
+ from .php.namespaces import declared_namespace
+ from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
+ from .rs import cargo_semver
+@@ -1102,6 +1103,7 @@ class ImportProcessor:
+         "_map_js_workspace_import",
+         "_cpp_module_qn_map",
+         "_cpp_qn_to_rel",
++        "_pli_members",
+         "_julia_file_stems",
+         "_julia_declared",
+         "_julia_scope_declared",
+@@ -1226,6 +1228,7 @@ class ImportProcessor:
+         # include so non-C++ projects never pay for it.
+         self._cpp_module_qn_map: dict[str, str] | None = None
+         self._cpp_qn_to_rel: dict[str, str] = {}
++        self._pli_members: dict[str, list[str]] = {}
+         # File module -> its nested-scope map keys; read unguarded on the
+         # re-ingest path, which never runs the per-run cache resets.
+         self._julia_scope_map_keys: dict[str, set[str]] = {}
+@@ -1865,6 +1868,12 @@ class ImportProcessor:
+                     self._parse_dart_imports(captures, module_qn, root_node)
+                 case cs.SupportedLanguage.SCALA:
+                     self._parse_scala_imports(captures, module_qn)
++                case cs.SupportedLanguage.PLI:
++                    self._parse_pli_imports(captures, module_qn)
++                case cs.SupportedLanguage.JCL:
++                    self._parse_jcl_imports(captures, module_qn)
++                case cs.SupportedLanguage.HLASM:
++                    self._parse_hlasm_imports(captures, module_qn)
+                 case _:
+                     self._parse_generic_imports(captures, lang_config)
+ 
+@@ -2059,6 +2068,7 @@ class ImportProcessor:
+         self.import_mapping.pop(module_qn, None)
+         self._cpp_module_qn_map = None
+         self._cpp_qn_to_rel.clear()
++        self._pli_members.clear()
+ 
+     def drop_csharp_module_import_state(self, module_qn: str) -> None:
+         # A deleted C# file must stop declaring its namespaces, contributing
+@@ -2360,6 +2370,19 @@ class ImportProcessor:
+                     entry, declaring, known_module_qns
+                 )
+                 continue
++            if (
++                entry.language
++                in (
++                    cs.SupportedLanguage.PLI,
++                    cs.SupportedLanguage.JCL,
++                    cs.SupportedLanguage.HLASM,
++                )
++                and entry.full_name in known_module_qns
++            ):
++                # Resolved to the member's own module at parse time.
++                self._emit_import_edge(entry, cs.NodeLabel.MODULE, entry.full_name)
++                emitted += 1
++                continue
+             if self._is_scala_project_import(entry):
+                 emitted += self._flush_scala_project_import(entry, known_module_qns)
+                 continue
+@@ -2575,7 +2598,7 @@ class ImportProcessor:
+             if not raw_path:
+                 continue
+             path = Path(raw_path)
+-            language = get_language_for_extension(path.suffix)
++            language = get_language_for_path(path)
+             # Most modules carry no extension segment; skip them before paying
+             # for the path arithmetic below.
+             if language is None or not qn.endswith(module_extension(path.name)):
+@@ -2626,7 +2649,7 @@ class ImportProcessor:
+         # an unknown language is given the benefit of the doubt.
+         if not path:
+             return True
+-        language = get_language_for_extension(Path(path).suffix)
++        language = get_language_for_path(Path(path))
+         return language is None or language in family
+ 
+     def point_imports_at_own_language_siblings(
+@@ -2659,7 +2682,7 @@ class ImportProcessor:
+         importer_path = module_paths.get(importer)
+         if not mapping or not siblings or importer_path is None:
+             return
+-        language = get_language_for_extension(importer_path.suffix)
++        language = get_language_for_path(importer_path)
+         if language is None:
+             return
+         family = language_family(language)
+@@ -6340,6 +6363,94 @@ class ImportProcessor:
+                 self._record_import_site(module_qn, package_name, spec_node)
+             logger.debug(ls.IMP_GO, package=package_name, path=import_path)
+ 
++    def _parse_pli_imports(self, captures: dict, module_qn: str) -> None:
++        # `%INCLUDE MEMBER;`, `%INCLUDE DDNAME(MEMBER);` and
++        # `EXEC SQL INCLUDE MEMBER;` all pull in a member by name.
++        for node in captures.get(cs.CAPTURE_IMPORT, []):
++            if node.type == cs.TS_PLI_PREPROCESSOR_INCLUDE:
++                # One %INCLUDE can name several members; in DDNAME(MEMBER)
++                # the member is the last identifier.
++                for spec in node.named_children:
++                    if idents := [
++                        c for c in spec.named_children if c.type == cs.TS_PLI_IDENTIFIER
++                    ]:
++                        self._record_pli_include(module_qn, node, idents[-1])
++            elif member := node.child_by_field_name(cs.TS_PLI_FIELD_MEMBER):
++                self._record_pli_include(module_qn, node, member)
++
++    def _parse_jcl_imports(self, captures: dict, module_qn: str) -> None:
++        # `// INCLUDE MEMBER=NAME` pulls in a member of the JCLLIB search order.
++        for node in captures.get(cs.CAPTURE_IMPORT, []):
++            for key, value in jcl_parameters(node):
++                if key == "MEMBER":
++                    self._record_pli_include(module_qn, node, value)
++
++    def _parse_hlasm_imports(self, captures: dict, module_qn: str) -> None:
++        for node in captures.get(cs.CAPTURE_IMPORT, []):
++            operation = node.child_by_field_name(cs.TS_HLASM_FIELD_OPERATION)
++            operands = node.child_by_field_name(cs.TS_HLASM_FIELD_OPERANDS)
++            if operation is None or operands is None:
++                continue
++            if safe_decode_text(operation).upper() != cs.HLASM_COPY:
++                continue
++            # The member is the first word of the operands: `COPY REGS`.
++            member = operands
++            while member.type != cs.TS_HLASM_WORD and member.named_child_count:
++                member = member.named_children[0]
++            if member.type == cs.TS_HLASM_WORD:
++                self._record_pli_include(module_qn, node, member)
++
++    def _record_pli_include(
++        self, module_qn: str, include_node: Node, member_node: Node
++    ) -> None:
++        member = safe_decode_text(member_node).upper()
++        target = self.resolve_member(member, module_qn) or member
++        self.import_mapping[module_qn][member] = target
++        self._record_import_site(module_qn, member, include_node, member)
++        logger.debug(ls.IMP_PLI_INCLUDE, member=member, target=target)
++
++    def resolve_member(self, member: str, module_qn: str) -> str | None:
++        # z/OS members (PL/I, JCL, MFS, DDL) are files named exactly like the
++        # member, usually without an extension. Prefer the includer's directory, then the file sharing
++        # the longest path with it.
++        if self._cpp_module_qn_map is None:
++            self._cpp_module_qn_map = build_module_qn_map(
++                self.repo_path,
++                self.project_name,
++                self.exclude_paths,
++                self.unignore_paths,
++            )
++            self._cpp_qn_to_rel = {
++                qn: rel for rel, qn in self._cpp_module_qn_map.items()
++            }
++        if not self._pli_members:
++            # Built once: scanning every file per include made a first sync
++            # quadratic in the repository size.
++            extensions = tuple(
++                ext.upper()
++                for ext in (
++                    *cs.PLI_EXTENSIONS,
++                    *cs.JCL_EXTENSIONS,
++                    *cs.HLASM_EXTENSIONS,
++                    *cs.DB2_EXTENSIONS,
++                )
++            )
++            for rel in self._cpp_module_qn_map:
++                name = PurePosixPath(rel).name.upper()
++                self._pli_members.setdefault(name, []).append(rel)
++                if name.endswith(extensions):
++                    stem = name.rsplit(".", 1)[0]
++                    self._pli_members.setdefault(stem, []).append(rel)
++        matches = sorted(self._pli_members.get(member, []))
++        if not matches:
++            return None
++        includer_rel = self._cpp_qn_to_rel.get(module_qn)
++        if includer_rel is not None:
++            matches.sort(
++                key=lambda rel: (-len(os.path.commonpath([rel, includer_rel])), rel)
++            )
++        return self._cpp_module_qn_map[matches[0]]
++
+     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
+         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+             if import_node.type == cs.TS_PREPROC_INCLUDE:
+diff --git a/codebase_rag/parsers/mainframe.py b/codebase_rag/parsers/mainframe.py
+new file mode 100644
+index 000000000..ee9164fd3
+--- /dev/null
++++ b/codebase_rag/parsers/mainframe.py
+@@ -0,0 +1,365 @@
++"""Links between the members of an IMS / MVS z/OS repository.
++
++A job runs programs and procedures, a program reads Db2 tables and sends MFS
++screens, a screen message names its format and the next message. None of this
++is a call a tree-sitter call query sees, so this module finds the references
++by hand and links them as CALLS between the definitions: jobs and procedures
++(JCL), formats and messages (HLASM MFS), tables, views and aliases (Db2 DDL)
++and PL/I procedures.
++"""
++
++from __future__ import annotations
++
++import re
++from collections.abc import Callable, Mapping
++from dataclasses import dataclass
++from pathlib import Path
++from typing import TYPE_CHECKING
++
++from loguru import logger
++from tree_sitter import Node, Parser, Query, QueryCursor
++
++from .. import constants as cs
++from ..language_spec import get_language_for_path, mainframe_name, pli_label
++
++if TYPE_CHECKING:
++    from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
++    from .import_processor import ImportProcessor
++
++MAINFRAME_LANGUAGES = (
++    cs.SupportedLanguage.JCL,
++    cs.SupportedLanguage.HLASM,
++    cs.SupportedLanguage.DB2,
++)
++
++PROGRAM = "program"
++PROCEDURE = "procedure"
++SCREEN = "screen"
++TABLE = "table"
++
++_MEMBER = re.compile(r"[A-Z@#$][A-Z0-9@#$]{0,7}")
++_RUN_PROGRAM = re.compile(
++    r"\bRUN\s+PROG(?:RAM)?\s*\(\s*([A-Z@#$][A-Z0-9@#$]{0,7})\s*\)", re.IGNORECASE
++)
++# IMS region controller: PARM='BMP,PROGRAM,PSB,...' names the program second.
++_IMS_REGION_CONTROLLER = "DFSRRC00"
++_PLI_QUERY = "(string_literal) @string (exec_statement) @exec"
++
++
++@dataclass(frozen=True, slots=True)
++class Reference:
++    # The caller as qn parts below the module, innermost last; the linker
++    # takes the longest that is registered, or the module.
++    caller: tuple[str, ...]
++    kind: str
++    target: str
++    site: Node
++
++
++def _text(node: Node | None) -> str:
++    if node is None or node.text is None:
++        return ""
++    return node.text.decode("utf-8", errors="replace")
++
++
++def _member(text: str) -> str | None:
++    name = text.strip().strip("'\"").strip().upper()
++    if _MEMBER.fullmatch(name):
++        return name
++    return None
++
++
++# ---- JCL --------------------------------------------------------------------
++
++
++def jcl_parameters(statement: Node) -> list[tuple[str, Node]]:
++    """(KEYWORD, value) per operand of a statement; '' for positional ones."""
++    operands = statement.child_by_field_name("operands")
++    if operands is None:
++        return []
++    parameters = []
++    for parameter in operands.named_children:
++        if parameter.type != cs.TS_JCL_PARAMETER:
++            continue
++        value = parameter.child_by_field_name(cs.TS_JCL_FIELD_VALUE)
++        if value is None:
++            continue
++        key = parameter.child_by_field_name(cs.TS_JCL_FIELD_KEY)
++        parameters.append((_text(key).upper(), value))
++    return parameters
++
++
++def _jcl_references(root: Node) -> list[Reference]:
++    references: list[Reference] = []
++    job: tuple[str, ...] = ()
++    caller: tuple[str, ...] = ()
++    for statement in root.named_children:
++        match statement.type:
++            case cs.TS_JCL_JOB_STATEMENT:
++                name = mainframe_name(statement)
++                job = caller = (name,) if name else ()
++            case cs.TS_JCL_PROC_STATEMENT:
++                name = mainframe_name(statement)
++                caller = (name,) if name else ()
++            case "pend_statement":
++                caller = job
++            case cs.TS_JCL_EXEC_STATEMENT:
++                references.extend(_jcl_exec_references(statement, caller))
++            case cs.TS_JCL_DATA_LINE:
++                # IKJEFT01 with `DSN SYSTEM(..)` / `RUN PROGRAM(X)` in SYSTSIN.
++                for match in _RUN_PROGRAM.finditer(_text(statement)):
++                    references.append(
++                        Reference(caller, PROGRAM, match[1].upper(), statement)
++                    )
++    return references
++
++
++def _jcl_exec_references(statement: Node, caller: tuple[str, ...]) -> list[Reference]:
++    references = []
++    parameters = jcl_parameters(statement)
++    program = None
++    for index, (key, value) in enumerate(parameters):
++        if (index == 0 and key == "") or key == "PROC":
++            if name := _member(_text(value)):
++                references.append(Reference(caller, PROCEDURE, name, statement))
++        elif key in ("PGM", "MBR"):
++            if name := _member(_text(value)):
++                program = name
++                if name != _IMS_REGION_CONTROLLER:
++                    references.append(Reference(caller, PROGRAM, name, statement))
++    if program == _IMS_REGION_CONTROLLER:
++        for key, value in parameters:
++            if key != "PARM":
++                continue
++            fields = _text(value).strip("()'\"").split(",")
++            if len(fields) > 1 and (name := _member(fields[1])):
++                references.append(Reference(caller, PROGRAM, name, statement))
++    return references
++
++
++# ---- HLASM (IMS MFS) --------------------------------------------------------
++
++
++def _first_word(node: Node) -> Node | None:
++    if node.type == cs.TS_HLASM_WORD:
++        return node
++    for child in node.named_children:
++        if (word := _first_word(child)) is not None:
++            return word
++    return None
++
++
++def _hlasm_references(root: Node) -> list[Reference]:
++    # A message names the format it is mapped through (SOR=) and the message
++    # that follows it (NXT=).
++    references = []
++    for statement in root.named_children:
++        if statement.type != cs.TS_HLASM_STATEMENT:
++            continue
++        operation = statement.child_by_field_name(cs.TS_HLASM_FIELD_OPERATION)
++        name = mainframe_name(statement)
++        if name is None or _text(operation).upper() != "MSG":
++            continue
++        operands = statement.child_by_field_name("operands")
++        for operand in operands.named_children if operands is not None else []:
++            if operand.type != cs.TS_HLASM_KEYWORD_OPERAND:
++                continue
++            key = _text(operand.child_by_field_name(cs.TS_HLASM_FIELD_KEY)).upper()
++            value = operand.child_by_field_name(cs.TS_HLASM_FIELD_VALUE)
++            if key not in ("SOR", "NXT") or value is None:
++                continue
++            word = _first_word(value)
++            if word is not None and (target := _member(_text(word))):
++                references.append(Reference((name,), SCREEN, target, operand))
++    return references
++
++
++# ---- Db2 --------------------------------------------------------------------
++
++
++def _db2_table_names(node: Node) -> list[tuple[str, Node]]:
++    # Every object_name in a `table` position (FROM, JOIN, INTO, UPDATE,
++    # REFERENCES, ...) or the `target` of an alias, unqualified.
++    names = []
++    stack = [node]
++    while stack:
++        current = stack.pop()
++        for index, child in enumerate(current.children):
++            field = current.field_name_for_child(index)
++            if child.type == cs.TS_DB2_OBJECT_NAME and field in ("table", "target"):
++                if child.named_children and (name := _text(child.named_children[-1])):
++                    names.append((name.strip('"').upper(), child))
++            elif child.named_child_count:
++                stack.append(child)
++    return names
++
++
++def _db2_references(root: Node) -> list[Reference]:
++    references = []
++    for statement in root.named_children:
++        name = (
++            mainframe_name(statement)
++            if statement.type in cs.DB2_FUNCTION_TYPES
++            else None
++        )
++        caller = (name,) if name else ()
++        for table, site in _db2_table_names(statement):
++            if table != name:
++                references.append(Reference(caller, TABLE, table, site))
++    return references
++
++
++# ---- PL/I -------------------------------------------------------------------
++
++
++def _pli_caller(node: Node) -> tuple[str, ...]:
++    procedure = package = None
++    parent = node.parent
++    while parent is not None:
++        if procedure is None and parent.type in cs.PLI_FUNCTION_TYPES:
++            procedure = pli_label(parent)
++        elif parent.type == cs.TS_PLI_PACKAGE_STATEMENT:
++            package = pli_label(parent)
++        parent = parent.parent
++    return tuple(part for part in (package, procedure) if part)
++
++
++def _pli_references(
++    root: Node, query: Query, db2_parser: Parser | None
++) -> list[Reference]:
++    references = []
++    captures = QueryCursor(query).captures(root)
++    for node in captures.get("string", []):
++        # MFS message and format names are passed as padded literals
++        # ('CUSTO   '); anything else member-like simply won't resolve.
++        if name := _member(_text(node)):
++            references.append(Reference(_pli_caller(node), SCREEN, name, node))
++    for node in captures.get("exec", []):
++        language = node.child_by_field_name("language")
++        if db2_parser is None or _text(language).upper() != "SQL":
++            continue
++        sql = node.text[language.end_byte - node.start_byte :].rstrip(b"; \n")
++        tree = db2_parser.parse(sql + b";")
++        caller = _pli_caller(node)
++        for table, _ in _db2_table_names(tree.root_node):
++            references.append(Reference(caller, TABLE, table, node))
++    return references
++
++
++# ---- linking ----------------------------------------------------------------
++
++Emit = Callable[[str, str, str, str, Node], None]
++
++
++class MainframeLinker:
++    def __init__(
++        self,
++        function_registry: FunctionRegistryTrieProtocol,
++        import_processor: ImportProcessor,
++        module_qn_to_file_path: Mapping[str, Path],
++    ) -> None:
++        self._registry = function_registry
++        self._imports = import_processor
++        self._module_paths = module_qn_to_file_path
++        self._pli_query: Query | None = None
++        self._definitions: dict[cs.SupportedLanguage, dict[str, list[str]]] | None = (
++            None
++        )
++
++    def reset(self) -> None:
++        self._definitions = None
++
++    def link(
++        self,
++        root: Node,
++        language: cs.SupportedLanguage,
++        module_qn: str,
++        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
++        emit: Emit,
++    ) -> None:
++        match language:
++            case cs.SupportedLanguage.JCL:
++                references = _jcl_references(root)
++            case cs.SupportedLanguage.HLASM:
++                references = _hlasm_references(root)
++            case cs.SupportedLanguage.DB2:
++                references = _db2_references(root)
++            case cs.SupportedLanguage.PLI:
++                if self._pli_query is None:
++                    self._pli_query = Query(queries[language]["language"], _PLI_QUERY)
++                db2 = queries.get(cs.SupportedLanguage.DB2)
++                references = _pli_references(
++                    root, self._pli_query, db2["parser"] if db2 else None
++                )
++            case _:
++                return
++        for reference in references:
++            caller_label, caller_qn = self._caller(module_qn, reference.caller)
++            targets = self._targets(module_qn, reference)
++            logger.debug(
++                "mainframe: {} {} {} -> {}",
++                caller_qn,
++                reference.kind,
++                reference.target,
++                targets or "unresolved",
++            )
++            for target_qn in targets:
++                if target_qn == caller_qn:
++                    continue
++                target_label = str(
++                    self._registry.get(target_qn) or cs.NodeLabel.FUNCTION
++                )
++                emit(caller_label, caller_qn, target_label, target_qn, reference.site)
++
++    def _caller(self, module_qn: str, parts: tuple[str, ...]) -> tuple[str, str]:
++        for start in range(len(parts)):
++            qn = cs.SEPARATOR_DOT.join((module_qn, *parts[start:]))
++            if qn in self._registry:
++                return str(self._registry[qn]), qn
++        return cs.NodeLabel.MODULE, module_qn
++
++    def _targets(self, module_qn: str, reference: Reference) -> list[str]:
++        if reference.kind == SCREEN:
++            return self._defined(cs.SupportedLanguage.HLASM).get(reference.target, [])
++        if reference.kind == TABLE:
++            return self._defined(cs.SupportedLanguage.DB2).get(reference.target, [])
++        in_stream = f"{module_qn}{cs.SEPARATOR_DOT}{reference.target}"
++        if reference.kind == PROCEDURE and in_stream in self._registry:
++            return [in_stream]
++        return self._program(module_qn, reference.target)
++
++    def _program(self, module_qn: str, member: str) -> list[str]:
++        # A program or cataloged procedure is a member. Its entry is the
++        # top-level definition named like the member, or else every top-level
++        # definition (PL/I nests procedures flat, so these may include
++        # internal ones).
++        target_module = self._imports.resolve_member(member, module_qn)
++        if target_module is None or target_module == module_qn:
++            return []
++        named = f"{target_module}{cs.SEPARATOR_DOT}{member}"
++        if named in self._registry:
++            return [named]
++        depth = target_module.count(cs.SEPARATOR_DOT) + 1
++        return sorted(
++            qn
++            for qn, _ in self._registry.find_with_prefix(target_module)
++            if qn.count(cs.SEPARATOR_DOT) == depth
++        )
++
++    def _defined(self, language: cs.SupportedLanguage) -> dict[str, list[str]]:
++        # Built once per run from the registry: definition name -> qns, for
++        # the MFS screens and the Db2 tables.
++        if self._definitions is None:
++            self._definitions = {
++                cs.SupportedLanguage.HLASM: {},
++                cs.SupportedLanguage.DB2: {},
++            }
++            for qn in self._registry.keys():
++                module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
++                path = self._module_paths.get(module_qn)
++                if path is None:
++                    continue
++                defined = self._definitions.get(get_language_for_path(path))
++                if defined is not None:
++                    defined.setdefault(name, []).append(qn)
++        return self._definitions[language]
+diff --git a/codebase_rag/parsers/module_docstring.py b/codebase_rag/parsers/module_docstring.py
+index 8f466d591..90939b80b 100644
+--- a/codebase_rag/parsers/module_docstring.py
++++ b/codebase_rag/parsers/module_docstring.py
+@@ -323,6 +323,14 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
+         skip_types=_SHEBANGS,
+         declaration_types=_JULIA_DECLS,
+     ),
++    # PL/I has no doc-comment marker: a leading `/* ... */` box is a
++    # changelog or licence header far more often than a description.
++    SupportedLanguage.PLI: ModuleDocSpec(),
++    # JCL, assembler and DDL members start with a comment box that is a
++    # changelog far more often than a description, as in PL/I.
++    SupportedLanguage.JCL: ModuleDocSpec(),
++    SupportedLanguage.HLASM: ModuleDocSpec(),
++    SupportedLanguage.DB2: ModuleDocSpec(),
+     # SQL has no module-documentation convention -- a leading `--` is as
+     # likely to be a commented-out statement -- so nothing is extracted.
+ }
+diff --git a/codebase_rag/parsers/pli.py b/codebase_rag/parsers/pli.py
+new file mode 100644
+index 000000000..8abd3bfe1
+--- /dev/null
++++ b/codebase_rag/parsers/pli.py
+@@ -0,0 +1,43 @@
++from __future__ import annotations
++
++from typing import TYPE_CHECKING
++
++from .. import constants as cs
++from ..language_spec import decode_node_text
++
++if TYPE_CHECKING:
++    from tree_sitter import Node
++
++
++def pli_reference_name(reference: Node) -> str | None:
++    # `A.B(1)` is a reference with identifiers A, B and an argument; a
++    # builtin like SUBSTR(...) has a builtin_name instead and yields None.
++    parts = [
++        decode_node_text(c.text).upper()
++        for c in reference.children
++        if c.type == cs.TS_PLI_IDENTIFIER and c.text
++    ]
++    return cs.SEPARATOR_DOT.join(parts) if parts else None
++
++
++def pli_call_name(call_node: Node) -> str | None:
++    # FETCH loads a separately linked program; it is a dependency like CALL.
++    if call_node.type in (cs.TS_PLI_CALL_STATEMENT, cs.TS_PLI_FETCH_STATEMENT):
++        entry = call_node.child_by_field_name(cs.TS_PLI_FIELD_ENTRY)
++        return pli_reference_name(entry) if entry is not None else None
++    # A parenthesised reference in an expression is a function call or an
++    # array subscript; the grammar can't tell them apart. Hand back the name
++    # either way: only names that resolve to a known procedure become edges.
++    if not any(c.type == cs.TS_PLI_ARGUMENT for c in call_node.children):
++        return None
++    parent = call_node.parent
++    if parent is not None and parent.type == cs.TS_PLI_CALL_STATEMENT:
++        return None
++    if (
++        parent is not None
++        and parent.type == cs.TS_PLI_ASSIGNMENT_STATEMENT
++        and parent.named_children
++        and parent.named_children[0] == call_node
++    ):
++        return None
++    return pli_reference_name(call_node)
+diff --git a/codebase_rag/parsers/utils.py b/codebase_rag/parsers/utils.py
+index fd79c9697..70ec1de0b 100644
+--- a/codebase_rag/parsers/utils.py
++++ b/codebase_rag/parsers/utils.py
+@@ -1547,6 +1547,10 @@ def _resolve_method_name(
+         from .dart import dart_get_name
+ 
+         return dart_get_name(method_node) or None
++    if language == cs.SupportedLanguage.PLI:
++        from ..language_spec import pli_label
++
++        return pli_label(method_node)
+     if (method_name_node := method_node.child_by_field_name(cs.FIELD_NAME)) is None:
+         # A JS/TS class-field arrow / fn-expr (`helper = () => ...`) has no name
+         # field on the function node; take the binding name from the enclosing
+@@ -2272,6 +2276,21 @@ def _name_span(node: Node, name: str) -> tuple[int, int] | None:
+     if direct is not None and direct.text == encoded:
+         return direct.start_byte, direct.end_byte
+ 
++    # A PL/I procedure is named by the label in front of it (`main: proc;`),
++    # stored uppercased, so the body search below can only miss -- after
++    # walking the whole procedure.
++    parent = node.parent
++    if parent is not None and parent.type == cs.TS_PLI_LABELED_STATEMENT:
++        for prefix in parent.children:
++            label = prefix.child_by_field_name(cs.TS_PLI_FIELD_LABEL)
++            if (
++                label is not None
++                and label.text
++                and label.text.upper() == encoded.upper()
++            ):
++                return label.start_byte, label.end_byte
++        return None
++
+     stack = [node]
+     while stack:
+         current = stack.pop(0)
+diff --git a/codebase_rag/queries/highlights/db2.scm b/codebase_rag/queries/highlights/db2.scm
+new file mode 100644
+index 000000000..b21785ba7
+--- /dev/null
++++ b/codebase_rag/queries/highlights/db2.scm
+@@ -0,0 +1,3 @@
++; tree-sitter-db2 has no attributes that act as modifiers or decorators. cgr
++; needs a highlights query per language, so this one only names comments.
++(comment) @comment
+diff --git a/codebase_rag/queries/highlights/hlasm.scm b/codebase_rag/queries/highlights/hlasm.scm
+new file mode 100644
+index 000000000..3ca0444c4
+--- /dev/null
++++ b/codebase_rag/queries/highlights/hlasm.scm
+@@ -0,0 +1,3 @@
++; tree-sitter-hlasm has no attributes that act as modifiers or decorators. cgr
++; needs a highlights query per language, so this one only names comments.
++(comment) @comment
+diff --git a/codebase_rag/queries/highlights/jcl.scm b/codebase_rag/queries/highlights/jcl.scm
+new file mode 100644
+index 000000000..677c758bb
+--- /dev/null
++++ b/codebase_rag/queries/highlights/jcl.scm
+@@ -0,0 +1,3 @@
++; tree-sitter-jcl has no attributes that act as modifiers or decorators. cgr
++; needs a highlights query per language, so this one only names comments.
++(comment) @comment
+diff --git a/codebase_rag/queries/highlights/pli.scm b/codebase_rag/queries/highlights/pli.scm
+new file mode 100644
+index 000000000..74d9da281
+--- /dev/null
++++ b/codebase_rag/queries/highlights/pli.scm
+@@ -0,0 +1,7 @@
++; tree-sitter-pli's in-place build ships no HIGHLIGHTS_QUERY, and its own
++; highlights.scm tags every header keyword (PROC, RETURNS, FIXED...). Only
++; the attributes that say how a procedure behaves count as modifiers:
++; RECURSIVE, REORDER, ... and the OPTIONS list (MAIN, FETCHABLE, ...).
++(procedure_heading (simple_attribute) @keyword.modifier)
++(procedure_heading
++  (options_attribute (paren_group (identifier) @keyword.modifier)))
+diff --git a/codebase_rag/structural_delta.py b/codebase_rag/structural_delta.py
+index 2d5fd0197..a73b63793 100644
+--- a/codebase_rag/structural_delta.py
++++ b/codebase_rag/structural_delta.py
+@@ -40,7 +40,7 @@ from .dead_code import (
+ )
+ from .duplicates import _jaccard
+ from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
+-from .language_spec import get_language_for_extension
++from .language_spec import get_language_for_path
+ from .parser_loader import load_parsers
+ from .types_defs import PropertyDict, ReingestReport, ResultRow
+ from .utils.source_encoding import grammar_bytes
+@@ -679,7 +679,7 @@ def _renames(
+ 
+ 
+ def _language(path: str) -> cs.SupportedLanguage | None:
+-    return get_language_for_extension(Path(path).suffix) if path else None
++    return get_language_for_path(Path(path)) if path else None
+ 
+ 
+ def _params_moved(old: Definition, new: Definition) -> bool:
+@@ -1286,7 +1286,7 @@ def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
+ 
+ 
+ def _python_source(repo_root: Path, path: str) -> str | None:
+-    if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
++    if get_language_for_path(Path(path)) != cs.SupportedLanguage.PYTHON:
+         return None
+     try:
+         return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
+diff --git a/codebase_rag/tests/test_mainframe.py b/codebase_rag/tests/test_mainframe.py
+new file mode 100644
+index 000000000..e7098502c
+--- /dev/null
++++ b/codebase_rag/tests/test_mainframe.py
+@@ -0,0 +1,212 @@
++# IMS / MVS z/OS repositories: JCL jobs and procedures, IMS MFS screens
++# (HLASM), Db2 DDL and the PL/I programs that tie them together, linked as
++# CALLS between their definitions.
++from pathlib import Path
++from unittest.mock import MagicMock
++
++import pytest
++
++from codebase_rag.config import settings
++from codebase_rag.parser_loader import load_parsers
++from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
++
++JOB = """\
++//ABJOB01 JOB (ACCT),CLASS=A
++//S1      EXEC PGM=ABMAIN01
++//S2      EXEC PGM=DFSRRC00,PARM='BMP,ABBMP001,ABPSB01'
++//S3      EXEC IMSBATCH,MBR=ABDLI001,PSB=X
++//S4      EXEC PROC=MYPROC
++//S5      EXEC ABPRC01
++//S6      EXEC PGM=IKJEFT01
++//SYSTSIN DD *
++  DSN SYSTEM(DB2P)
++  RUN PROGRAM(ABDB2001) PLAN(ABPLAN)
++  END
++/*
++//MYPROC  PROC
++//P1      EXEC PGM=ABMAIN01
++//        PEND
++//        INCLUDE MEMBER=ABINC01
++"""
++
++SCREEN = """\
++CUSTFMT  FMT
++         DEV   TYPE=(3270,2),FEAT=IGNORE
++         DIV   TYPE=INOUT
++         DPAGE CURSOR=((3,20))
++CUSTNO   DFLD  POS=(3,20),LTH=8
++         FMTEND
++CUSTI    MSG   TYPE=INPUT,SOR=(CUSTFMT,IGNORE),NXT=CUSTO
++         SEG
++         MFLD  CUSTNO,LTH=8
++         MSGEND
++CUSTO    MSG   TYPE=OUTPUT,SOR=(CUSTFMT,IGNORE)
++         SEG
++         MFLD  CUSTNO,LTH=8
++         MSGEND
++         END
++"""
++
++DDL = """\
++CREATE TABLE PROD.CUSTOMER (ID INTEGER NOT NULL, NAME CHAR(20));
++CREATE TABLE PROD.ORDERS (ID INTEGER NOT NULL,
++  CUST INTEGER REFERENCES PROD.CUSTOMER);
++CREATE VIEW PROD.CUSTV AS SELECT ID FROM PROD.CUSTOMER;
++"""
++
++PROGRAM = """
++ ABMAIN01: PROC OPTIONS(MAIN);
++   DCL MODNAME CHAR(8) INIT('CUSTO   ');
++   EXEC SQL SELECT NAME INTO :N FROM PROD.CUSTOMER WHERE ID = 1;
++   CALL SHOW;
++ SHOW: PROC;
++   EXEC SQL UPDATE ORDERS SET CUST = 2;
++ END SHOW;
++ END ABMAIN01;
++"""
++
++
++def _project(temp_repo: Path, files: dict[str, str]) -> Path:
++    project = temp_repo / "zos"
++    for name, text in files.items():
++        path = project / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(text, encoding="utf-8")
++    return project
++
++
++def _calls(mock_ingestor: MagicMock) -> set[tuple[str, str]]:
++    return {
++        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
++    }
++
++
++def _run(project: Path, mock_ingestor: MagicMock) -> None:
++    parsers, _ = load_parsers()
++    for language in ("jcl", "hlasm", "db2", "pli"):
++        if language not in parsers:
++            pytest.skip(f"{language} parser not available")
++    run_updater(project, mock_ingestor)
++
++
++@pytest.fixture
++def members(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.setattr(settings, "PLI_EXTENSIONLESS_MEMBERS", True)
++
++
++def test_definitions(temp_repo: Path, mock_ingestor: MagicMock) -> None:
++    project = _project(
++        temp_repo,
++        {"jobs/abjob01.jcl": JOB, "mfs/cust.mfs": SCREEN, "ddl/tables.ddl": DDL},
++    )
++    _run(project, mock_ingestor)
++
++    functions = get_node_names(mock_ingestor, "Function")
++    assert {
++        "zos.jobs.abjob01.ABJOB01",
++        "zos.jobs.abjob01.MYPROC",
++        "zos.mfs.cust.CUSTFMT",
++        "zos.mfs.cust.CUSTI",
++        "zos.mfs.cust.CUSTO",
++        "zos.ddl.tables.CUSTOMER",
++        "zos.ddl.tables.ORDERS",
++        "zos.ddl.tables.CUSTV",
++    } <= functions, functions
++    assert "zos.mfs.cust.CUSTNO" not in functions
++
++
++def test_jobs_run_programs_and_procedures(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    program = " {name}: PROC OPTIONS(MAIN);\n END {name};\n"
++    project = _project(
++        temp_repo,
++        {
++            "jobs/abjob01.jcl": JOB,
++            "procs/abprc01.jcl": "//ABPRC01 PROC\n//P1 EXEC PGM=ABMAIN01\n",
++            "procs/abinc01.jcl": "//STEPX EXEC PGM=ABMAIN01\n",
++            **{
++                f"src/{name.lower()}.pli": program.format(name=name)
++                for name in ("ABMAIN01", "ABBMP001", "ABDLI001", "ABDB2001")
++            },
++        },
++    )
++    _run(project, mock_ingestor)
++
++    calls = _calls(mock_ingestor)
++    job = "zos.jobs.abjob01.ABJOB01"
++    assert (job, "zos.src.abmain01.ABMAIN01") in calls
++    assert (job, "zos.src.abbmp001.ABBMP001") in calls
++    assert (job, "zos.src.abdli001.ABDLI001") in calls
++    assert (job, "zos.src.abdb2001.ABDB2001") in calls
++    assert (job, "zos.jobs.abjob01.MYPROC") in calls
++    assert (job, "zos.procs.abprc01.ABPRC01") in calls
++    assert ("zos.jobs.abjob01.MYPROC", "zos.src.abmain01.ABMAIN01") in calls
++    assert ("zos.procs.abprc01.ABPRC01", "zos.src.abmain01.ABMAIN01") in calls
++
++    imports = {
++        (c.args[0][2], c.args[2][2])
++        for c in get_relationships(mock_ingestor, "IMPORTS")
++    }
++    assert ("zos.jobs.abjob01", "zos.procs.abinc01") in imports
++
++
++def test_screens_and_tables(temp_repo: Path, mock_ingestor: MagicMock) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "mfs/cust.mfs": SCREEN,
++            "ddl/tables.ddl": DDL,
++            "src/abmain01.pli": PROGRAM,
++        },
++    )
++    _run(project, mock_ingestor)
++
++    calls = _calls(mock_ingestor)
++    assert ("zos.mfs.cust.CUSTI", "zos.mfs.cust.CUSTFMT") in calls
++    assert ("zos.mfs.cust.CUSTI", "zos.mfs.cust.CUSTO") in calls
++    assert ("zos.ddl.tables.CUSTV", "zos.ddl.tables.CUSTOMER") in calls
++    assert ("zos.ddl.tables.ORDERS", "zos.ddl.tables.CUSTOMER") in calls
++    main = "zos.src.abmain01.ABMAIN01"
++    assert (main, "zos.mfs.cust.CUSTO") in calls
++    assert (main, "zos.ddl.tables.CUSTOMER") in calls
++    assert ("zos.src.abmain01.SHOW", "zos.ddl.tables.ORDERS") in calls
++    assert (main, "zos.src.abmain01.SHOW") in calls
++
++
++def test_extensionless_members_route_by_third_letter(
++    temp_repo: Path, mock_ingestor: MagicMock, members: None
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "JCL/ABJ00001": "//ABJ00001 JOB (ACCT)\n//S1 EXEC PGM=ABP00001\n",
++            "MFS/ABF00001": SCREEN,
++            "DDL/ABT00001": DDL,
++            "SRC/ABP00001": PROGRAM.replace("ABMAIN01", "ABP00001"),
++        },
++    )
++    _run(project, mock_ingestor)
++
++    calls = _calls(mock_ingestor)
++    main = "zos.SRC.ABP00001.ABP00001"
++    assert ("zos.JCL.ABJ00001.ABJ00001", main) in calls
++    assert (main, "zos.MFS.ABF00001.CUSTO") in calls
++    assert (main, "zos.DDL.ABT00001.CUSTOMER") in calls
++
++
++def test_assembler_copy_is_an_import(temp_repo: Path, mock_ingestor: MagicMock) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "asm/main.asm": "         COPY  REGS\nLBL      DC    F'1'\n         END\n",
++            "maclib/regs.asm": "R1       EQU   1\n",
++        },
++    )
++    _run(project, mock_ingestor)
++
++    imports = {
++        (c.args[0][2], c.args[2][2])
++        for c in get_relationships(mock_ingestor, "IMPORTS")
++    }
++    assert ("zos.asm.main", "zos.maclib.regs") in imports
+diff --git a/codebase_rag/tests/test_pli.py b/codebase_rag/tests/test_pli.py
+new file mode 100644
+index 000000000..0d2f05938
+--- /dev/null
++++ b/codebase_rag/tests/test_pli.py
+@@ -0,0 +1,433 @@
++# PL/I: label-named procedures, entries and packages, CALL statements and
++# function references, %INCLUDE / EXEC SQL INCLUDE, fixed-format margins and
++# extensionless z/OS member names.
++from pathlib import Path
++from unittest.mock import MagicMock
++
++import pytest
++
++from codebase_rag.config import settings
++from codebase_rag.tests.conftest import get_node_names, get_relationships, run_updater
++from codebase_rag.utils.pli_margins import blank_fixed_format_margins
++
++SKIP = "pli"
++
++
++def _project(temp_repo: Path, files: dict[str, str]) -> Path:
++    project = temp_repo / "pli_proj"
++    for name, text in files.items():
++        path = project / name
++        path.parent.mkdir(parents=True, exist_ok=True)
++        path.write_text(text, encoding="utf-8")
++    return project
++
++
++def _edges(mock_ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
++    return {
++        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, rel_type)
++    }
++
++
++def _targets(mock_ingestor: MagicMock, rel_type: str) -> set[str]:
++    return {target for _, target in _edges(mock_ingestor, rel_type)}
++
++
++def test_procedures_and_entries_are_named_by_label(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "main.pli": """
++hello: proc options(main);
++  put skip list('hi');
++end hello;
++
++other: procedure(n);
++  dcl n fixed bin(31);
++alt: entry(n);
++end other;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    functions = get_node_names(mock_ingestor, "Function")
++    assert "pli_proj.main.HELLO" in functions
++    assert "pli_proj.main.OTHER" in functions
++    assert any(qn.endswith(".ALT") for qn in functions), functions
++
++
++def test_package_is_a_class(temp_repo: Path, mock_ingestor: MagicMock) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "pkg.pli": """
++mathpkg: package exports(square);
++  square: proc(x) returns(fixed bin(31));
++    dcl x fixed bin(31);
++    return(x * x);
++  end square;
++end mathpkg;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert "pli_proj.pkg.MATHPKG" in get_node_names(mock_ingestor, "Class")
++
++
++def test_package_procedures_are_methods(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "pkg.pli": """
++mathpkg: package exports(square);
++  square: proc(x) returns(fixed bin(31));
++    dcl x fixed bin(31);
++    return(x * x);
++  end square;
++end mathpkg;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert "pli_proj.pkg.MATHPKG.SQUARE" in get_node_names(mock_ingestor, "Method")
++
++
++def test_calls_resolve_case_insensitively_within_and_across_files(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "main.pli": """
++main: proc options(main);
++  dcl arr(10) fixed bin(31);
++  dcl r fixed bin(31);
++  call Helper(1);
++  r = twice(arr(2));
++  arr(3) = 0;
++end main;
++
++helper: proc(n);
++  dcl n fixed bin(31);
++end helper;
++""",
++            "lib.pli": """
++twice: proc(n) returns(fixed bin(31));
++  dcl n fixed bin(31);
++  return(n * 2);
++end twice;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    targets = _targets(mock_ingestor, "CALLS")
++    assert "pli_proj.main.HELPER" in targets
++    assert "pli_proj.lib.TWICE" in targets
++    assert not any(target.endswith(".ARR") for target in targets), targets
++
++
++def test_call_source_is_the_enclosing_procedure(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "main.pli": """
++main: proc options(main);
++  call helper;
++end main;
++
++helper: proc;
++end helper;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert ("pli_proj.main.MAIN", "pli_proj.main.HELPER") in _edges(
++        mock_ingestor, "CALLS"
++    )
++
++
++def test_fetch_links_to_the_fetched_procedure(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "main.pli": "main: proc options(main);\n  fetch dynpgm;\nend main;\n",
++            "dynpgm.pli": "dynpgm: proc;\nend dynpgm;\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert ("pli_proj.main.MAIN", "pli_proj.dynpgm.DYNPGM") in _edges(
++        mock_ingestor, "CALLS"
++    )
++
++
++def test_a_repository_larger_than_the_ast_cache_keeps_every_edge(
++    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    # Past the cache size, files are parsed twice and their trees evicted
++    # (and re-parsed for the call pass) instead of all being held at once.
++    files = {
++        f"p{i}.pli": f"p{i}: proc;\n  call p{i + 1};\nend p{i};\n" for i in range(5)
++    }
++    files["p5.pli"] = "p5: proc;\nend p5;\n"
++    files["copy.pli"] = "dcl x fixed;\n"
++    files["p0.pli"] = "%include copy;\n" + files["p0.pli"]
++    project = _project(temp_repo, files)
++    monkeypatch.setattr(settings, "CACHE_MAX_ENTRIES", 2)
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert _edges(mock_ingestor, "CALLS") == {
++        (f"pli_proj.p{i}.P{i}", f"pli_proj.p{i + 1}.P{i + 1}") for i in range(5)
++    }
++    assert _edges(mock_ingestor, "IMPORTS") == {("pli_proj.p0", "pli_proj.copy")}
++
++
++def test_calls_through_external_entry_declarations_resolve(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "src/main.pli": """
++MAIN: PROC OPTIONS(MAIN);
++   DCL SUBP ENTRY(FIXED BIN(31), CHAR(20)) EXTERNAL;
++   DCL FUNC ENTRY(FIXED BIN(31)) RETURNS(FIXED BIN(31)) EXT;
++   DCL R FIXED BIN(31);
++   CALL SUBP(1, 'HELLO');
++   R = FUNC(2);
++END MAIN;
++""",
++            "lib/subp.pli": "SUBP: PROC(N, S);\nEND SUBP;\n",
++            "lib/func.pli": "FUNC: PROC(N) RETURNS(FIXED BIN(31));\nEND FUNC;\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert _edges(mock_ingestor, "CALLS") == {
++        ("pli_proj.src.main.MAIN", "pli_proj.lib.subp.SUBP"),
++        ("pli_proj.src.main.MAIN", "pli_proj.lib.func.FUNC"),
++    }
++
++
++def test_includes_steer_call_resolution(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "src/main.pli": "%include utils;\nmain: proc;\n  call util1;\nend main;\n",
++            "copy/utils.pli": "util1: proc;\nend util1;\n",
++            "other/aaa.pli": "util1: proc;\nend util1;\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    calls = _edges(mock_ingestor, "CALLS")
++    assert ("pli_proj.src.main.MAIN", "pli_proj.copy.utils.UTIL1") in calls
++    assert ("pli_proj.src.main.MAIN", "pli_proj.other.aaa.UTIL1") not in calls
++
++
++def test_nested_procedures_own_their_calls(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "main.pli": """
++outer: proc options(main);
++  call inner;
++  begin;
++    call last;
++  end;
++
++inner: proc;
++    call last;
++  end inner;
++end outer;
++
++last: proc;
++end last;
++""",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert ("pli_proj.main.OUTER", "pli_proj.main.INNER") in _edges(
++        mock_ingestor, "DEFINES"
++    )
++    calls = _edges(mock_ingestor, "CALLS")
++    assert ("pli_proj.main.OUTER", "pli_proj.main.INNER") in calls
++    assert ("pli_proj.main.OUTER", "pli_proj.main.LAST") in calls
++    assert ("pli_proj.main.INNER", "pli_proj.main.LAST") in calls
++
++
++def test_includes_resolve_to_member_modules(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "src/main.pli": """
++%include common;
++%include syslib(layout);
++main: proc options(main);
++  exec sql include sqlca;
++end main;
++""",
++            "src/common.pli": "dcl shared fixed bin(31) external;\n",
++            "copy/layout.pli": "dcl 1 rec, 2 key char(8);\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    imports = _edges(mock_ingestor, "IMPORTS")
++    assert ("pli_proj.src.main", "pli_proj.src.common") in imports
++    assert ("pli_proj.src.main", "pli_proj.copy.layout") in imports
++    assert any(target.endswith("SQLCA") for _, target in imports), imports
++
++
++def test_includes_prefer_the_member_nearest_the_includer(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo,
++        {
++            "app/one/main.pli": "%include common;\nmain: proc;\nend main;\n",
++            "app/one/COMMON.pli": "dcl a fixed bin;\n",
++            "app/two/common.pli": "dcl b fixed bin;\n",
++            "lib/common.pli": "dcl c fixed bin;\n",
++            "app/two/user.pli": "%include common;\nuser: proc;\nend user;\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    imports = _edges(mock_ingestor, "IMPORTS")
++    assert ("pli_proj.app.one.main", "pli_proj.app.one.COMMON") in imports
++    assert ("pli_proj.app.two.user", "pli_proj.app.two.common") in imports
++
++
++def test_extensionless_members_are_pli_when_enabled(
++    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr(settings, "PLI_EXTENSIONLESS_MEMBERS", True)
++    project = _project(
++        temp_repo,
++        {
++            "src/ABMAIN01": """
++%INCLUDE ABCOPY01;
++ABMAIN01: PROC OPTIONS(MAIN);
++  CALL ABSUB001(1);
++END ABMAIN01;
++""",
++            "src/ABSUB001": "ABSUB001: PROC(N);\nEND ABSUB001;\n",
++            "copy/ABCOPY01": "DCL A FIXED BIN(31);\n",
++            "src/ABJOB001": "//ABJOB001 JOB\n",
++            "src/ABFMSK01": "         DFHMSD TYPE=MAP\n",
++            "src/ABTTAB01": "TABLE\n",
++            "Makefile": "all:\n",
++        },
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    modules = get_node_names(mock_ingestor, "Module")
++    assert {"pli_proj.src.ABMAIN01", "pli_proj.src.ABSUB001"} <= modules
++    assert not any(qn.endswith(".Makefile") for qn in modules), modules
++    # J/F/T members are indexed too, as JCL, HLASM and Db2 (test_mainframe.py).
++    assert "pli_proj.src.ABJOB001.ABJOB001" in get_node_names(mock_ingestor, "Function")
++    assert "pli_proj.src.ABSUB001.ABSUB001" in _targets(mock_ingestor, "CALLS")
++    assert ("pli_proj.src.ABMAIN01", "pli_proj.copy.ABCOPY01") in _edges(
++        mock_ingestor, "IMPORTS"
++    )
++
++
++def test_extensionless_members_are_ignored_by_default(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    project = _project(
++        temp_repo, {"src/ABMAIN01": "ABMAIN01: PROC OPTIONS(MAIN);\nEND ABMAIN01;\n"}
++    )
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert not get_node_names(mock_ingestor, "Function")
++
++
++def _fixed(code: str, sequence: str, carriage: str = " ") -> str:
++    return f"{carriage}{code:<71}{sequence:>8}"
++
++
++def test_fixed_format_procedures_parse(
++    temp_repo: Path, mock_ingestor: MagicMock
++) -> None:
++    lines = [
++        _fixed("*PROCESS MAR(2,72,1);"[1:], "00000100", carriage="*"),
++        _fixed("MAIN: PROC OPTIONS(MAIN);", "00000200", carriage="1"),
++        _fixed("  CALL HELPER;", "00000300"),
++        _fixed("END MAIN;", "00000400"),
++        _fixed("HELPER: PROC;", "00000500", carriage="-"),
++        _fixed("END HELPER;", "00000600"),
++    ]
++    project = _project(temp_repo, {"fixed.pli": "\n".join(lines) + "\n"})
++    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
++
++    assert {"pli_proj.fixed.MAIN", "pli_proj.fixed.HELPER"} <= get_node_names(
++        mock_ingestor, "Function"
++    )
++    assert "pli_proj.fixed.HELPER" in _targets(mock_ingestor, "CALLS")
++
++
++def test_margins_blanked_keep_byte_offsets() -> None:
++    source = "\n".join(
++        [
++            _fixed("*PROCESS NOMAP;"[1:], "00000100", carriage="*"),
++            _fixed("A: PROC; /* ¬= */", "00000200", carriage="1"),
++            _fixed("END A;", "00000300"),
++        ]
++    ).encode("utf-8")
++    source = source.replace(b"\n", b"\r\n")
++
++    blanked = blank_fixed_format_margins(source)
++
++    assert len(blanked) == len(source)
++    lines = blanked.decode("utf-8").split("\r\n")
++    assert lines[0].startswith("*PROCESS NOMAP;")
++    assert lines[1].startswith(" A: PROC; /* ¬= */")
++    assert all(not line[72:].strip() for line in lines)
++    assert b"0000" not in blanked
++
++
++def test_margins_kept_for_free_format_source() -> None:
++    free = b"hello: proc options(main);\n  put skip list('hi');\nend hello;\n"
++    long_line = b"  x = 1;" + b" " * 70 + b"/* longer than 80 */\n"
++    indented = b"  a: proc;\n" + b"    y = 2;" + b" " * 62 + b"z = 3;\n"
++
++    assert blank_fixed_format_margins(free) is free
++    assert blank_fixed_format_margins(long_line) is long_line
++    assert blank_fixed_format_margins(indented).endswith(b"z = 3;\n")
++
++
++def test_truncation_check_finds_the_label_without_searching_the_body() -> None:
++    # The name is the uppercased label in front of the procedure, so a search
++    # of the procedure's own subtree for it found nothing, after walking the
++    # whole body: most of the indexing time of a large file.
++    from codebase_rag import constants as cs
++    from codebase_rag.parser_loader import load_parsers
++    from codebase_rag.parsers.utils import _name_span
++
++    parsers, _ = load_parsers()
++    source = b"main: proc;\n  dcl x fixed bin;\nend main;\n"
++    tree = parsers[cs.SupportedLanguage.PLI].parse(source)
++    procedure = tree.root_node.children[0].children[-1]
++    assert procedure.type == "procedure_statement"
++    assert _name_span(procedure, "MAIN") == (0, 4)
+diff --git a/codebase_rag/tests/test_rename_op.py b/codebase_rag/tests/test_rename_op.py
+index d76ff82c3..a6f8d1917 100644
+--- a/codebase_rag/tests/test_rename_op.py
++++ b/codebase_rag/tests/test_rename_op.py
+@@ -294,8 +294,8 @@ def test_a_decorated_definition_renames_its_def_token_not_the_decorator(
+     graph = _index(temp_repo, mock_ingestor)
+     if not grammar:
+         monkeypatch.setattr(
+-            "codebase_rag.editing.rename.get_language_for_extension",
+-            lambda _suffix: None,
++            "codebase_rag.editing.rename.get_language_for_path",
++            lambda _path: None,
+         )
+     report = rename(
+         temp_repo, graph.fetch_all, graph.project, f"{graph.project}.mod.fetch", "load"
+diff --git a/codebase_rag/tools/ast_grep_service.py b/codebase_rag/tools/ast_grep_service.py
+index 295de813e..d00326785 100644
+--- a/codebase_rag/tools/ast_grep_service.py
++++ b/codebase_rag/tools/ast_grep_service.py
+@@ -17,7 +17,7 @@ from loguru import logger
+ 
+ from .. import constants as cs
+ from ..config import load_ignore_patterns
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
+ from ..utils.path_utils import is_symlink_entry, should_skip_path
+ 
+@@ -104,7 +104,7 @@ class AstGrepService:
+     ) -> tuple[str, str] | None:
+         # (rel_posix, ast_grep_lang) if the file is one ast-grep can parse
+         # and passes the ignore rules / language filter, else None.
+-        lang = get_language_for_extension(abs_path.suffix)
++        lang = get_language_for_path(abs_path)
+         ast_grep_lang = (
+             cs.AST_GREP_LANGUAGES.get(lang)
+             if lang is not None
+diff --git a/codebase_rag/trace/dispatch_site.py b/codebase_rag/trace/dispatch_site.py
+index 7cb5759d5..a5749807c 100644
+--- a/codebase_rag/trace/dispatch_site.py
++++ b/codebase_rag/trace/dispatch_site.py
+@@ -23,7 +23,7 @@ from pathlib import Path
+ from tree_sitter import Node
+ 
+ from .. import constants as cs
+-from ..language_spec import get_language_for_extension
++from ..language_spec import get_language_for_path
+ from ..parser_loader import load_parsers
+ from ..parsers.utils import node_site_properties, safe_decode_text, unparenthesized
+ from ..types_defs import PropertyDict
+@@ -204,7 +204,7 @@ def locate_dispatch_literal(
+ 
+ def _python_root(file_path: Path) -> Node | None:
+     """Parsed root of a Python file, or None when it is not one or unreadable."""
+-    if get_language_for_extension(file_path.suffix) != cs.SupportedLanguage.PYTHON:
++    if get_language_for_path(file_path) != cs.SupportedLanguage.PYTHON:
+         return None
+     try:
+         source = file_path.read_bytes()
+diff --git a/codebase_rag/utils/path_utils.py b/codebase_rag/utils/path_utils.py
+index c390c0f82..a20379250 100644
+--- a/codebase_rag/utils/path_utils.py
++++ b/codebase_rag/utils/path_utils.py
+@@ -264,6 +264,29 @@ def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
+     return os.path.islink(path)
+ 
+ 
++_MEMBER_NAME = re.compile(r"[A-Z@#$][A-Z0-9@#$]{6,7}")
++# The third character of a member name says what the member holds in the
++# extensionless layout; anything else is PL/I.
++_MEMBER_MARKERS = {
++    "J": cs.SupportedLanguage.JCL,
++    "F": cs.SupportedLanguage.HLASM,
++    "T": cs.SupportedLanguage.DB2,
++}
++
++
++def member_language(name: str) -> cs.SupportedLanguage | None:
++    """The language of an extensionless z/OS member, None if `name` is none."""
++    if _MEMBER_NAME.fullmatch(name) is None:
++        return None
++    return _MEMBER_MARKERS.get(name[2], cs.SupportedLanguage.PLI)
++
++
++def pli_extensionless_members() -> bool:
++    from ..config import settings
++
++    return settings.PLI_EXTENSIONLESS_MEMBERS
++
++
+ def is_ignored_filename(name: str) -> bool:
+     """Whether a filename is a machine-generated artefact, by its ending.
+ 
+@@ -276,6 +299,12 @@ def is_ignored_filename(name: str) -> bool:
+     in the graph -- `~` was live for the watcher and dead for the indexer
+     (issue #1636).
+     """
++    if (
++        "." not in name
++        and pli_extensionless_members()
++        and member_language(name) is None
++    ):
++        return True
+     return name.endswith(cs.IGNORE_FILENAME_ENDINGS)
+ 
+ 
+diff --git a/codebase_rag/utils/pli_margins.py b/codebase_rag/utils/pli_margins.py
+new file mode 100644
+index 000000000..56b5b5bf6
+--- /dev/null
++++ b/codebase_rag/utils/pli_margins.py
+@@ -0,0 +1,64 @@
++"""Blank the margins of fixed-format PL/I before tree-sitter-pli parses it.
++
++Mainframe PL/I is often fixed-format: column 1 holds a carriage-control
++character and columns 73-80 a sequence number, and the grammar reads both as
++code. Overwriting them with spaces keeps every byte offset, so line and column
++positions in the graph still point into the file on disk.
++"""
++
++_FIXED_LINE_LENGTH = 80
++_SEQUENCE_COLUMN = 72
++_CARRIAGE_CONTROL = frozenset(" 01-+")
++# `*PROCESS` / `%PROCESS` compiler options must start in column 1.
++_PROCESS_DIRECTIVES = ("*PROCESS", "%PROCESS")
++
++
++def blank_fixed_format_margins(source: bytes) -> bytes:
++    lines = source.split(b"\n")
++    texts = [
++        line.removesuffix(b"\r").decode("utf-8", errors="surrogateescape")
++        for line in lines
++    ]
++    code = [text for text in texts if text.strip()]
++    if not code or any(len(text) > _FIXED_LINE_LENGTH for text in texts):
++        return source
++    if not all(_is_process(text) or text[0] in _CARRIAGE_CONTROL for text in code):
++        return source
++
++    numbered = sum(1 for text in code if text[_SEQUENCE_COLUMN:].strip())
++    # Real sequence numbers sit on (nearly) every line.
++    blank_sequence = numbered * 10 >= len(code) * 9
++
++    blanked = [
++        _blank_line(line, text, blank_sequence) for line, text in zip(lines, texts)
++    ]
++    result = b"\n".join(blanked)
++    # Callers check `is source` to learn whether the parsed view differs.
++    return source if result == source else result
++
++
++def _is_process(text: str) -> bool:
++    return text.upper().startswith(_PROCESS_DIRECTIVES)
++
++
++def _blank_line(line: bytes, text: str, blank_sequence: bool) -> bytes:
++    carriage_return = b"\r" if line.endswith(b"\r") else b""
++    first, middle, sequence = (
++        text[:1],
++        text[1:_SEQUENCE_COLUMN],
++        text[_SEQUENCE_COLUMN:],
++    )
++    if not _is_process(text):
++        first = _spaces(first)
++    if blank_sequence:
++        sequence = _spaces(sequence)
++    return _encode(first + middle + sequence) + carriage_return
++
++
++def _spaces(text: str) -> str:
++    # One space per byte, so a multi-byte character keeps its byte width.
++    return " " * len(_encode(text))
++
++
++def _encode(text: str) -> bytes:
++    return text.encode("utf-8", errors="surrogateescape")
+diff --git a/codebase_rag/utils/source_encoding.py b/codebase_rag/utils/source_encoding.py
+index 44c99ff1f..84b16e650 100644
+--- a/codebase_rag/utils/source_encoding.py
++++ b/codebase_rag/utils/source_encoding.py
+@@ -24,6 +24,7 @@ from loguru import logger
+ 
+ from .. import constants as cs
+ from .. import logs as ls
++from .pli_margins import blank_fixed_format_margins
+ 
+ _CODING_COOKIE = re.compile(cs.PY_CODING_COOKIE_PATTERN)
+ _BLANK_OR_COMMENT_LINE = re.compile(cs.PY_CODING_BLANK_LINE_PATTERN)
+@@ -215,6 +216,8 @@ def grammar_bytes(
+     ASCII-compatible (the reason `_declared_codec` refuses a `utf-16`
+     cookie), so a wide `.py` is left as the bytes it was before (#3153 review).
+     """
++    if language == cs.SupportedLanguage.PLI:
++        return blank_fixed_format_margins(source)
+     if language != cs.SupportedLanguage.PYTHON:
+         if (wide := decode_wide_source(source, path)) is not None:
+             return wide.encode(cs.ENCODING_UTF8, errors="surrogatepass")
+diff --git a/docs/architecture/graph-schema.md b/docs/architecture/graph-schema.md
+index c79f219dc..9423955cd 100644
+--- a/docs/architecture/graph-schema.md
++++ b/docs/architecture/graph-schema.md
+@@ -423,6 +423,10 @@ The function- and class-defining AST node types captured per language (auto-gene
+ - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `macro_definition`, `struct_item`, `trait_item`, `type_item`, `union_item`
+ - **TypeScript (TSX)**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+ - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
++- **Db2 SQL**: `create_alias_statement`, `create_table_statement`, `create_view_statement`
++- **HLASM**: `statement`
++- **JCL**: `job_statement`, `proc_statement`
++- **PL/I**: `entry_statement`, `package_statement`, `procedure_statement`
+ - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
+ - **SQL (PostgreSQL)**: `create_function`
+ <!-- /SECTION:language_mappings -->
+diff --git a/docs/architecture/language-support.md b/docs/architecture/language-support.md
+index 095cb502c..b75ed542b 100644
+--- a/docs/architecture/language-support.md
++++ b/docs/architecture/language-support.md
+@@ -27,6 +27,10 @@ Run `cgr language list-languages` to see every language below, its tier, and whe
+ | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions, macro_rules! macros |
+ | TypeScript (TSX) | Fully Supported | .tsx | ✓ | ✓ | ✓ | - | All TypeScript features plus JSX elements and components |
+ | TypeScript | Fully Supported | .ts, .mts, .cts | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
++| Db2 SQL | In Development | .ddl, .db2 | ✓ | - | ✓ | - | Db2 for z/OS tables and views from CREATE statements as functions; PL/I EXEC SQL statements and views call the tables they name |
++| HLASM | In Development | .mfs, .asm, .hlasm, .mlc | ✓ | - | ✓ | - | IMS MFS formats (FMT) and messages (MSG) as functions, a message calling its SOR format and NXT message; PL/I string literals naming them become calls |
++| JCL | In Development | .jcl, .cntl | ✓ | - | ✓ | - | JOBs and in-stream or cataloged PROCs as functions calling the programs their steps run (PGM=, IMS DFSRRC00 PARM=, MBR=, DSN RUN PROGRAM) and the procedures they execute, INCLUDE members as imports |
++| PL/I | In Development | .pli, .pl1, .pco | ✓ | ✓ | ✓ | - | Procedures, ENTRY points and PACKAGEs (as classes) named by their labels, CALL statements and function references to known procedures, %INCLUDE resolution to members, fixed-format margins blanked before parsing, extensionless z/OS member names (opt-in) |
+ | Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
+ | SQL (PostgreSQL) | In Development | .sql | ✓ | - | ✓ | - | Stored functions (CREATE FUNCTION), each one a dead-code root, schema-qualified names, invocations between routines, and the DDL that runs a routine by name (trigger EXECUTE FUNCTION, aggregate SFUNC/FINALFUNC, cast WITH FUNCTION, operator FUNCTION, type INPUT/OUTPUT, HANDLER/VALIDATOR, SUPPORT). CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only |
+ <!-- /SECTION:supported_languages -->
+diff --git a/evals/polyglot.py b/evals/polyglot.py
+index 6d3fa1104..5ec03e1a3 100644
+--- a/evals/polyglot.py
++++ b/evals/polyglot.py
+@@ -214,6 +214,23 @@ POLYGLOT_SOURCES: dict[str, str] = {
+         "function helper(x)\n    return x + 1\nend\n\n"
+         "function run()\n    return helper(1)\nend\n"
+     ),
++    "payroll.pli": (
++        "helper: proc(x) returns(fixed bin(31));\n"
++        "  dcl x fixed bin(31);\n"
++        "  return(x + 1);\n"
++        "end helper;\n\n"
++        "run: proc;\n"
++        "  call helper(1);\n"
++        "end run;\n"
++    ),
++    "payroll.jcl": "//PAYJOB   JOB (ACCT)\n//S1       EXEC PGM=PAYROLL\n",
++    "payroll.mfs": (
++        "PAYFMT   FMT\n"
++        "         FMTEND\n"
++        "PAYOUT   MSG   TYPE=OUTPUT,SOR=(PAYFMT)\n"
++        "         MSGEND\n"
++    ),
++    "payroll.ddl": "CREATE TABLE PAYROLL (ID INTEGER);\n",
+     # the cross-language collision trio: same basename, three languages.
+     "shapes.rs": _RS_SHAPES,
+     "shapes.cpp": _CPP_SHAPES,
+diff --git a/fuzz/build_corpus.py b/fuzz/build_corpus.py
+index ca089c57a..5f51d9b63 100644
+--- a/fuzz/build_corpus.py
++++ b/fuzz/build_corpus.py
+@@ -95,6 +95,38 @@ SOURCES: dict[str, str] = {
+         "using LinearAlgebra\n\nfunction greet(name)\n    return name\nend\n\n"
+         'greet("x")\n'
+     ),
++    "pli": (
++        "%include common;\n"
++        "greeter: package exports(greet);\n"
++        "  greet: proc(name) returns(char(8) varying);\n"
++        "    dcl name char(8) varying;\n"
++        "    return(name);\n"
++        "  end greet;\n"
++        "end greeter;\n\n"
++        "main: proc options(main);\n"
++        "  call greet('x');\n"
++        "end main;\n"
++    ),
++    "jcl": (
++        "//ABJOB01 JOB (ACCT),CLASS=A\n"
++        "//S1      EXEC PGM=ABMAIN01\n"
++        "//MYPROC  PROC\n"
++        "//P1      EXEC PGM=DFSRRC00,PARM='BMP,ABMAIN01'\n"
++        "//        PEND\n"
++        "//        INCLUDE MEMBER=COMMON\n"
++    ),
++    "hlasm": (
++        "CUSTFMT  FMT\n"
++        "         DEV   TYPE=(3270,2)\n"
++        "         FMTEND\n"
++        "CUSTI    MSG   TYPE=INPUT,SOR=(CUSTFMT,IGNORE),NXT=CUSTO\n"
++        "         MSGEND\n"
++        "         END\n"
++    ),
++    "db2": (
++        "CREATE TABLE PROD.CUSTOMER (ID INTEGER NOT NULL);\n"
++        "CREATE VIEW PROD.CUSTV AS SELECT ID FROM PROD.CUSTOMER;\n"
++    ),
+ }
+ 
+ # Degenerate inputs worth keeping as seeds in their own right: each has
+diff --git a/fuzz/corpus/fuzz_parse_source/db2.bin b/fuzz/corpus/fuzz_parse_source/db2.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..24a56665869396f44ab6f72e762048c36c9beea9
+GIT binary patch
+literal 107
+zcmZ<`a&-)GRS0o(@^MuN2=aH)a}Es-@%MENQqb^pQSkH&admeMQt<N+QSb}(@zJ#A
+ng6atKbPY#n2vcwjRtR?Wadi$+@N`jd3-b3xNP<kW=3)T=`xYDt
+
+literal 0
+HcmV?d00001
+
+diff --git a/fuzz/corpus/fuzz_parse_source/edge_bad_byte_between_defs.bin b/fuzz/corpus/fuzz_parse_source/edge_bad_byte_between_defs.bin
+index 094dacc75d93873d253ca049f1e41cce46422b59..725edc4cf865097b1e9c3be42d25fb15f7ce7d5b 100644
+GIT binary patch
+delta 6
+NcmdPbpP<Lc2LJ@+0W1Ij
+
+delta 6
+NcmdPbpP<Lc1pox$0Vn_f
+
+diff --git a/fuzz/corpus/fuzz_parse_source/edge_truncated_identifier.bin b/fuzz/corpus/fuzz_parse_source/edge_truncated_identifier.bin
+index c6244b32d7efc0d263da44e251e163f8e59f6fa0..14c0c8dc8b8133458530049633d4ef4c97c99554 100644
+GIT binary patch
+delta 6
+Ncmb1<nIO%`2LJ=x0P_F<
+
+delta 6
+Ncmb1<nIO%`1pour0Pg?*
+
+diff --git a/fuzz/corpus/fuzz_parse_source/edge_truncated_identifier_tail.bin b/fuzz/corpus/fuzz_parse_source/edge_truncated_identifier_tail.bin
+index 7821f568c6721dc97a916a203a04838a6511ce72..d5427eda5df2dfe52181f0aa5e0cc33946b28469 100644
+GIT binary patch
+delta 6
+Ncmb1^o*>1@2LJ=j0Pp|+
+
+delta 6
+Ncmb1^o*>1@1poud0PFw&
+
+diff --git a/fuzz/corpus/fuzz_parse_source/go.bin b/fuzz/corpus/fuzz_parse_source/go.bin
+index b988edba412dbee261d721e0c96c664718be4f24..37c5985515b5b4201a3ef20d1c2625be4e67e95c 100644
+GIT binary patch
+delta 8
+PcmZ3)xQKDWLPk~q4H^P|
+
+delta 8
+PcmZ3)xQKDWLPiz<4H*J`
+
+diff --git a/fuzz/corpus/fuzz_parse_source/hlasm.bin b/fuzz/corpus/fuzz_parse_source/hlasm.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..a3fa31f424f899e80738ae7b6b4e0f9fb60a90fc
+GIT binary patch
+literal 145
+zcmZ<`4GwYh4N*{V^9|urfB_fRFa-sLkjMa6TMc6)a|0bCO@ySIZ-}d(3l~VICrE>D
+zusck#r(Zy5h)%G7kgWzt+RZma$J5=<Kgd;6$1ftp79{46FvvI99b^#53@`?9*Z>?m
+BAFlua
+
+literal 0
+HcmV?d00001
+
+diff --git a/fuzz/corpus/fuzz_parse_source/java.bin b/fuzz/corpus/fuzz_parse_source/java.bin
+index 2beb5dc3cdd8a700b756e540046e4902070ace4c..931252d427c89727360c99ac1fa0ab70486a76e9 100644
+GIT binary patch
+delta 8
+PcmdnPxQB7VZbo(h4%PzB
+
+delta 8
+PcmdnPxQB7VZbnuB4%7n7
+
+diff --git a/fuzz/corpus/fuzz_parse_source/javascript.bin b/fuzz/corpus/fuzz_parse_source/javascript.bin
+index 76592e9b7e9e06f794f8929a397c0aaef09ddb2c..51b6cb5033f10158a1083a0bcf07986f958dd183 100644
+GIT binary patch
+delta 8
+PcmbQiID>J*bVd#U408fw
+
+delta 8
+PcmbQiID>J*bVfD+3~>Ts
+
+diff --git a/fuzz/corpus/fuzz_parse_source/jcl.bin b/fuzz/corpus/fuzz_parse_source/jcl.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e14251948c189febad3a7c16f8226cbce0abbc4
+GIT binary patch
+literal 168
+zcmdPbcXaadcQP<k@bY(3&~S8i4$;(c_Hhgjwsqvv*AF&S00Y+uS7(I)cVAmaCtpWT
+zKLbN9eSP1^fFOTo1qBevrLP}=uGGaXI4H>3z(6O!G04|e-N`pV2c}z{OJ5&su7ZL>
+hfUBPi64%qu*(cP+Rl(QQ*U2@=*4f|J*WZte69AP9C9nVh
+
+literal 0
+HcmV?d00001
+
+diff --git a/fuzz/corpus/fuzz_parse_source/julia.bin b/fuzz/corpus/fuzz_parse_source/julia.bin
+index 4fe44493fa130ed9579d0ce41816d872a2664d8c..cb7d7e417484a62ee365aff727a115071fb9b50a 100644
+GIT binary patch
+delta 6
+NcmebFp5VpE1po$V0ek=e
+
+delta 6
+NcmebFp5VpE4gdyb0eJub
+
+diff --git a/fuzz/corpus/fuzz_parse_source/lua.bin b/fuzz/corpus/fuzz_parse_source/lua.bin
+index 20bc9ee4826231cbeb591d3ff60ca37b59f41695..76a50715a5077988e964f3a85d39920c855a5183 100644
+GIT binary patch
+delta 8
+PcmZo*Y+#&F&&Uk`3f=-9
+
+delta 8
+PcmZo*Y+#&F&&UA)3flr3
+
+diff --git a/fuzz/corpus/fuzz_parse_source/php.bin b/fuzz/corpus/fuzz_parse_source/php.bin
+index adfddf472c6d0461fb88fec832abe0d01ba186fd..e0f6cf926cd01500904435e62998e1e158a9f5fe 100644
+GIT binary patch
+delta 8
+PcmX@ic$jg*Ax0hm4^jf?
+
+delta 8
+PcmX@ic$jg*Ax2IB4^IN+
+
+diff --git a/fuzz/corpus/fuzz_parse_source/pli.bin b/fuzz/corpus/fuzz_parse_source/pli.bin
+new file mode 100644
+index 0000000000000000000000000000000000000000..b0be8a3964eb8e1fe9cc84c8c191c888c7365c64
+GIT binary patch
+literal 227
+zcmY$*%uCKGO-WTq&d<%w&$H%AFG@`<NiDKcC`e4sPE1c#NUbQyFDfb40840Eb15i*
+zSyl=KMfu4Zd5O8HnhHg!C8b4q#Tv;OiA5R~nhIr!MU|O(>0s3g3Mt7s3Ltd~Xwo3F
+z6rg$`27yFU^HLx-SaZRdsYTXYT)Byvc@SF_@(W5b^Ye-|Ktf<kk`r@sAi6ZvE7Ub1
+KT0yebT)Y4Z+Da+_
+
+literal 0
+HcmV?d00001
+
+diff --git a/fuzz/corpus/fuzz_parse_source/python.bin b/fuzz/corpus/fuzz_parse_source/python.bin
+index 89b57032a96a1fd8a24efca2430cd1fe4d2d282c..8465e929db9d6fa292de304672a7f86e6d75318c 100644
+GIT binary patch
+delta 8
+PcmZo?Y-gO%#>fW%3s?d+
+
+delta 8
+PcmZo?Y-gO%#>fQ#3seF!
+
+diff --git a/fuzz/corpus/fuzz_parse_source/rust.bin b/fuzz/corpus/fuzz_parse_source/rust.bin
+index 13d18ea7fc8762c2438616a03c50c23a0eb597ea..152d4bb142fa20cd38715e4877545adb3a0d457f 100644
+GIT binary patch
+delta 8
+PcmZ3-xQ=ncT1I{V4e$c2
+
+delta 8
+PcmZ3-xQ=ncT1IXF4eSD_
+
+diff --git a/fuzz/corpus/fuzz_parse_source/scala.bin b/fuzz/corpus/fuzz_parse_source/scala.bin
+index 34f66b673676787ff2a80f4dcce1ce640a0c0be4..93d685fbb18518d86734292f628af0205c5f5f37 100644
+GIT binary patch
+delta 8
+PcmdnNxPx)Rc18gJ4x0kY
+
+delta 8
+PcmdnNxPx)Rc19im4wnMQ
+
+diff --git a/fuzz/corpus/fuzz_parse_source/sql.bin b/fuzz/corpus/fuzz_parse_source/sql.bin
+index ce007f2813822162bf81ff6e5d55b4271e1c0d3e..e3f6a21aed31d70f33602c5a2d0ecc3c3a318951 100644
+GIT binary patch
+delta 8
+PcmZ3*xQcPYN=88d4Xy&B
+
+delta 8
+PcmZ3*xQcPYN=9A)4XOg3
+
+diff --git a/fuzz/corpus/fuzz_parse_source/tsx.bin b/fuzz/corpus/fuzz_parse_source/tsx.bin
+index 0821861b41a3535000acb92bc1268bced8a0472f..2ef8b560b407aac78a90917c4f57e8ae39d262b3 100644
+GIT binary patch
+delta 8
+PcmbQmIE!(@OhzF944(pX
+
+delta 8
+PcmbQmIE!(@Oh!Hc44VRP
+
+diff --git a/fuzz/corpus/fuzz_parse_source/typescript.bin b/fuzz/corpus/fuzz_parse_source/typescript.bin
+index 86605fa38732b55b8586af6ad1278b852c149127..5bebac2c24a06caa29ef3bac9b623c917fe57b40 100644
+GIT binary patch
+delta 8
+PcmdnMxPfuPdPZRY4i*Bo
+
+delta 8
+PcmdnMxPfuPdPaT#4iW;g
+
+diff --git a/grammars/tree-sitter-db2 b/grammars/tree-sitter-db2
+new file mode 160000
+index 000000000..9418b7cce
+--- /dev/null
++++ b/grammars/tree-sitter-db2
+@@ -0,0 +1 @@
++Subproject commit 9418b7cceade25038ebe31b6944016597b5b6bf4
+diff --git a/grammars/tree-sitter-hlasm b/grammars/tree-sitter-hlasm
+new file mode 160000
+index 000000000..b7a0fd2a0
+--- /dev/null
++++ b/grammars/tree-sitter-hlasm
+@@ -0,0 +1 @@
++Subproject commit b7a0fd2a0888bbefad7a513c407a7f3c206cf1ab
+diff --git a/grammars/tree-sitter-jcl b/grammars/tree-sitter-jcl
+new file mode 160000
+index 000000000..0876984c9
+--- /dev/null
++++ b/grammars/tree-sitter-jcl
+@@ -0,0 +1 @@
++Subproject commit 0876984c9c2a51130cd7dec5315c3c734ffda0ad
+diff --git a/grammars/tree-sitter-pli b/grammars/tree-sitter-pli
+new file mode 160000
+index 000000000..4b4dc00df
+--- /dev/null
++++ b/grammars/tree-sitter-pli
+@@ -0,0 +1 @@
++Subproject commit 4b4dc00df841d6e00644d5aba8676e57c8797300

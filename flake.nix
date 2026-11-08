@@ -9,7 +9,7 @@
     {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          packages = [ ];
+          packages = [ pkgs.python312 pkgs.nodejs_22 ];
         };
       });
     };

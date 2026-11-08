@@ -1,0 +1,107 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PL/I",
+  "scopeName": "source.pli",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#sql"
+    },
+    {
+      "name": "keyword.control.directive.pli",
+      "match": "(?i)%\\s*[A-Z_@#$][A-Z0-9_@#$]*"
+    },
+    {
+      "name": "entity.name.function.pli",
+      "match": "(?i)^\\s*([A-Z_@#$][A-Z0-9_@#$]*)\\s*(?=:\\s*(PROC|PROCEDURE|PACKAGE|ENTRY)\\b)"
+    },
+    {
+      "name": "entity.name.label.pli",
+      "match": "(?i)^\\s*[A-Z_@#$][A-Z0-9_@#$]*\\s*(?=:(?!=))"
+    },
+    {
+      "name": "keyword.control.pli",
+      "match": "(?i)\\b(OTHERWISE|PROCEDURE|DOWNTHRU|RESIGNAL|ITERATE|PACKAGE|RELEASE|REPEAT|RETURN|REVERT|SELECT|SIGNAL|UPTHRU|BEGIN|ENTRY|FETCH|LEAVE|OTHER|UNTIL|WHILE|CALL|ELSE|EXIT|GOTO|LOOP|PROC|STOP|THEN|WHEN|END|BY|DO|GO|IF|ON|TO)\\b"
+    },
+    {
+      "name": "keyword.other.statement.pli",
+      "match": "(?i)\\b(ALLOCATE|DECLARE|DEFAULT|DISPLAY|REWRITE|ASSERT|ATTACH|DELETE|DETACH|FORMAT|LOCATE|ALLOC|CLOSE|DELAY|WRITE|FREE|OPEN|READ|WAIT|DCL|DFT|GET|PUT)\\b"
+    },
+    {
+      "name": "storage.type.pli",
+      "match": "(?i)\\b(NONASSIGNABLE|ENVIRONMENT|CONTROLLED|NONVARYING|SEQUENTIAL|AUTOMATIC|CHARACTER|CONDITION|CONNECTED|DIMENSION|FETCHABLE|NOEXECOPS|PARAMETER|PRECISION|RECURSIVE|REDUCIBLE|REENTRANT|STRUCTURE|UNALIGNED|EXTERNAL|INTERNAL|POSITION|RESERVED|UNSIGNED|VARIABLE|VARYINGZ|WIDECHAR|ALIGNED|BUILTIN|BYVALUE|COMPLEX|DECIMAL|DEFINED|GENERIC|GRAPHIC|INITIAL|LIMITED|OPTIONS|ORDINAL|PICTURE|POINTER|RETURNS|VARYING|BINARY|BYADDR|FORMAT|HANDLE|OFFSET|OUTPUT|RECORD|SIGNED|STATIC|STREAM|UPDATE|BASED|FIXED|FLOAT|INPUT|KEYED|LABEL|PRINT|REFER|UNION|VALUE|AREA|AUTO|CHAR|FILE|INIT|LIKE|MAIN|PREC|REAL|TASK|TYPE|BIN|BIT|CTL|DEC|DEF|DIM|ENV|EXT|INT|PIC|POS|PTR|VAR)\\b"
+    },
+    {
+      "name": "constant.numeric.pli",
+      "match": "(?i)\\b\\d+(\\.\\d*)?(E[+-]?\\d+)?[BI]?\\b"
+    },
+    {
+      "name": "keyword.operator.pli",
+      "match": "\\|\\||\u00ac=|\\^=|<=|>=|->|=|<|>|\\+|-|\\*\\*|\\*|/|&|\\||\u00ac|\\^"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.block.pli",
+      "begin": "/\\*",
+      "end": "\\*/"
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.pli",
+          "begin": "'",
+          "end": "'(?!')(?i:[BX]4?|B[34]|GX?|WX?|[MU])?",
+          "patterns": [
+            {
+              "name": "constant.character.escape.pli",
+              "match": "''"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.pli",
+          "begin": "\"",
+          "end": "\"(?!\")(?i:[BX]4?|B[34]|GX?|WX?|[MU])?",
+          "patterns": [
+            {
+              "name": "constant.character.escape.pli",
+              "match": "\"\""
+            }
+          ]
+        }
+      ]
+    },
+    "sql": {
+      "name": "meta.embedded.sql.pli",
+      "begin": "(?i)\\bEXEC\\s+(SQL|CICS)\\b",
+      "end": ";",
+      "beginCaptures": {
+        "0": {
+          "name": "keyword.control.pli"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "name": "keyword.other.sql.pli",
+          "match": "(?i)\\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|INTO|VALUES|SET|AND|OR|NOT|NULL|ORDER|GROUP|BY|HAVING|JOIN|ON|DECLARE|CURSOR|FOR|OPEN|CLOSE|FETCH|COMMIT|ROLLBACK|INCLUDE|WITH|AS|DISTINCT|UNION|ALL|EXISTS|IN|IS|LIKE|BETWEEN|END-EXEC)\\b"
+        },
+        {
+          "name": "variable.other.host.pli",
+          "match": ":[A-Za-z_@#$][A-Za-z0-9_@#$.]*"
+        }
+      ]
+    }
+  }
+}

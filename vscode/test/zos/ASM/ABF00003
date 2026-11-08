@@ -1,0 +1,5 @@
+ABF00003 CSECT
+         COPY  ABF00009
+         LR    R1,R2
+         BR    R14
+         END
