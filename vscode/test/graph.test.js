@@ -103,3 +103,12 @@ test("the whole graph holds modules, procedures and their links for Show Graph",
   const main = /** @type {import("../src/graph.js").GraphNode} */ (whole.nodes.find((n) => n.name === "MAIN"));
   assert.deepEqual([main.kind, main.path, main.line], ["function", "shop/main.pli", 1]);
 });
+
+test("SQL uses plain ? parameters, which the Node of VS Code 1.105 binds; it skips ?1", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const dir = join(import.meta.dirname, "..", "src");
+  for (const file of await readdir(dir)) {
+    const text = await readFile(join(dir, file), "utf8");
+    assert.doesNotMatch(text, /[=(,|] *\?\d/, file);
+  }
+});

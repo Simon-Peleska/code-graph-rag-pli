@@ -163,7 +163,8 @@ function call(name, args) {
         `SELECT DISTINCT r.kind, r.detail, f.path, r.line, c.name AS caller
          FROM links l JOIN refs r ON r.id = l.ref JOIN files f ON f.id = r.file LEFT JOIN symbols c ON c.id = r.caller
          LEFT JOIN symbols t ON t.id = l.target_symbol JOIN files tf ON tf.id = l.target_file
-         WHERE t.name = ?1 OR (l.target_symbol IS NULL AND tf.member = ?1) ORDER BY f.path, r.line`,
+         WHERE t.name = ? OR (l.target_symbol IS NULL AND tf.member = ?) ORDER BY f.path, r.line`,
+        args.name.toUpperCase(),
         args.name.toUpperCase(),
       )
     );

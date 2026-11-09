@@ -415,10 +415,11 @@ export class Graph {
   cursorSites(path, line, word) {
     return this.all(
       `SELECT f.path, r.line, r.col, r.end_col AS endCol, r.detail FROM refs r JOIN files f ON f.id = r.file
-       WHERE r.kind = 'cursor' AND r.file = (SELECT id FROM files WHERE path = ?1) AND r.name = ?2
-         AND EXISTS (SELECT 1 FROM refs h WHERE h.file = r.file AND h.kind = 'cursor' AND h.name = ?2 AND h.line = ?3)
+       WHERE r.kind = 'cursor' AND r.file = (SELECT id FROM files WHERE path = ?) AND r.name = ?
+         AND EXISTS (SELECT 1 FROM refs h WHERE h.file = r.file AND h.kind = 'cursor' AND h.name = ? AND h.line = ?)
        ORDER BY r.line`,
       path,
+      word.toUpperCase(),
       word.toUpperCase(),
       line,
     );
@@ -729,10 +730,11 @@ export class Graph {
     );
     const runs = /** @type {{ psb: string, how: string, batch: number }[]} */ (
       this.all(
-        `SELECT name AS psb, 'transaction program' AS how, 0 AS batch FROM symbols WHERE kind = 'psb' AND name = ?1
+        `SELECT name AS psb, 'transaction program' AS how, 0 AS batch FROM symbols WHERE kind = 'psb' AND name = ?
          UNION ALL
          SELECT s.psb, coalesce(j.name, '?') || ' step ' || coalesce(s.name, '?'), s.parm LIKE 'DLI,%'
-         FROM steps s LEFT JOIN symbols j ON j.id = s.job WHERE s.program = ?1 AND s.psb IS NOT NULL`,
+         FROM steps s LEFT JOIN symbols j ON j.id = s.job WHERE s.program = ? AND s.psb IS NOT NULL`,
+        program,
         program,
       )
     );
@@ -776,10 +778,11 @@ export class Graph {
     const format = sor?.name ?? name;
     const screens = /** @type {{ id: number, kind: string, name: string, path: string, line: number }[]} */ (
       this.all(
-        `SELECT s.id, s.kind, s.name, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'format' AND s.name = ?1
+        `SELECT s.id, s.kind, s.name, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'format' AND s.name = ?
          UNION ALL
          SELECT DISTINCT m.id, m.kind, m.name, f.path, m.line FROM symbols m JOIN refs r ON r.caller = m.id AND r.kind = 'screen' JOIN files f ON f.id = m.file
-         WHERE m.kind = 'message' AND r.name = ?1`,
+         WHERE m.kind = 'message' AND r.name = ?`,
+        format,
         format,
       )
     );
@@ -817,12 +820,17 @@ export class Graph {
       this.all(
         `SELECT s.id AS statement, s.kind, s.detail, a.mode, a.name, a.value, NULL AS operator, NULL AS other, p.name AS caller, f.path, s.line
          FROM accesses a JOIN statements s ON s.id = a.statement JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
-         WHERE (a.name = ?1 OR a.name LIKE '%.' || ?1) AND a.mode IN ('write', 'arg')
+         WHERE (a.name = ? OR a.name LIKE '%.' || ?) AND a.mode IN ('write', 'arg')
          UNION ALL
          SELECT s.id, s.kind, s.detail, 'compare', c.left, NULL, c.operator, c.right, p.name, f.path, s.line
          FROM comparisons c JOIN statements s ON s.id = c.statement JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
-         WHERE c.left = ?1 OR c.left LIKE '%.' || ?1 OR c.right = ?1 OR c.right LIKE '%.' || ?1
+         WHERE c.left = ? OR c.left LIKE '%.' || ? OR c.right = ? OR c.right LIKE '%.' || ?
          ORDER BY 10, 11 LIMIT 500`,
+        name,
+        name,
+        name,
+        name,
+        name,
         name,
       )
     );
@@ -854,7 +862,8 @@ export class Graph {
     const variables = /** @type {{ id: number, qualified: string, parameter: number | null, scope: string | null, path: string, line: number }[]} */ (
       this.all(
         `SELECT v.id, v.qualified, v.parameter, s.name AS scope, f.path, v.line FROM variables v JOIN files f ON f.id = v.file LEFT JOIN symbols s ON s.id = v.scope
-         WHERE v.qualified = ?1 OR v.qualified LIKE '%.' || ?1 ORDER BY f.path, v.line LIMIT 100`,
+         WHERE v.qualified = ? OR v.qualified LIKE '%.' || ? ORDER BY f.path, v.line LIMIT 100`,
+        name,
         name,
       )
     );
@@ -910,16 +919,18 @@ export class Graph {
     return /** @type {{ what: string, name: string | null, kind: string | null, detail: string | null, target: string | null, text: string, caller: string | null, path: string, line: number }[]} */ (
       this.all(
         `SELECT 'procedure' AS what, s.name, NULL AS kind, NULL AS detail, NULL AS target, s.comment AS text, NULL AS caller, f.path, s.line
-         FROM symbols s JOIN files f ON f.id = s.file WHERE s.comment LIKE '%' || ?1 || '%'
+         FROM symbols s JOIN files f ON f.id = s.file WHERE s.comment LIKE '%' || ? || '%'
          UNION ALL
          SELECT 'variable', v.qualified, NULL, NULL, NULL, v.comment, NULL, f.path, v.line
-         FROM variables v JOIN files f ON f.id = v.file WHERE v.comment LIKE '%' || ?1 || '%'
+         FROM variables v JOIN files f ON f.id = v.file WHERE v.comment LIKE '%' || ? || '%'
          UNION ALL
          SELECT 'literal', NULL, s.kind, s.detail,
            (SELECT a.name FROM accesses a WHERE a.statement = s.id AND a.mode = 'write' LIMIT 1), l.text, p.name, f.path, s.line
          FROM literals l JOIN statements s ON s.id = l.statement JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
-         WHERE l.text LIKE '%' || ?1 || '%'
+         WHERE l.text LIKE '%' || ? || '%'
          ORDER BY 1 DESC, 8, 9 LIMIT 500`,
+        text,
+        text,
         text,
       )
     );
