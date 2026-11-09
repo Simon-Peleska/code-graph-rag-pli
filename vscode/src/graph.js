@@ -3,6 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { MAIN_OPTIONS } from "./source.js";
 
 /** @typedef {import("node:sqlite").DatabaseSync} DatabaseSync */
 /** @typedef {import("node:sqlite").StatementSync} StatementSync */
@@ -582,7 +583,7 @@ export class Graph {
   psbLayout(name) {
     const psbName =
       /** @type {{ psb: string } | undefined} */ (
-        this.db.prepare(`SELECT r.name AS psb FROM symbols t JOIN refs r ON r.caller = t.id AND r.kind = 'psb' WHERE t.kind = 'transaction' AND t.name = ?`).get(name)
+        this.all(`SELECT r.name AS psb FROM symbols t JOIN refs r ON r.caller = t.id AND r.kind = 'psb' WHERE t.kind = 'transaction' AND t.name = ?`, name)[0]
       )?.psb ?? name;
     const psbs = /** @type {{ id: number, name: string, detail: string | null, path: string, line: number }[]} */ (
       this.all(`SELECT s.id, s.name, s.detail, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'psb' AND s.name = ? ORDER BY f.path`, psbName)
@@ -654,7 +655,7 @@ export class Graph {
     }
     const psbs = [...byName.values()].map((psb) => {
       const gen = /** @type {{ id: number, detail: string | null } | undefined} */ (
-        this.db.prepare(`SELECT id, detail FROM symbols WHERE kind = 'psb' AND name = ? ORDER BY id LIMIT 1`).get(psb.name)
+        this.all(`SELECT id, detail FROM symbols WHERE kind = 'psb' AND name = ? ORDER BY id LIMIT 1`, psb.name)[0]
       );
       const pcbs = /** @type {{ position: number, type: string, name: string | null, dbd: string | null, procopt: string | null }[]} */ (
         gen ? this.all(`SELECT position, type, name, dbd, procopt FROM pcbs WHERE psb = ? ORDER BY position`, gen.id) : []
@@ -690,8 +691,9 @@ export class Graph {
         format,
       )
     );
-    const fieldsOf = this.db.prepare(
+    const fieldsOf = /** @param {number} id */ (id) => this.all(
       `SELECT name, dfld, row, col, length, segment, offset, label, literal, attributes FROM mfs_fields WHERE screen = ? ORDER BY id`,
+      id,
     );
     const users = /** @type {{ name: string, path: string, line: number }[]} */ (
       this.all(
@@ -706,7 +708,7 @@ export class Graph {
       screens: screens.map((s) => ({
         ...s,
         fields: /** @type {{ name: string | null, dfld: string | null, row: number | null, col: number | null, length: number | null, segment: number | null, offset: number | null, label: string | null, literal: string | null, attributes: string }[]} */ (
-          fieldsOf.all(s.id)
+          fieldsOf(s.id)
         ),
       })),
     };
@@ -733,7 +735,7 @@ export class Graph {
       )
     );
     // Each ancestor with the branch of it the path comes through.
-    const ancestors = this.db.prepare(
+    const ancestors = /** @param {number} id */ (id) => this.all(
       `WITH RECURSIVE up(id, via, depth) AS (
          SELECT parent, branch, 0 FROM statements WHERE id = ?
          UNION ALL
@@ -741,10 +743,11 @@ export class Graph {
        )
        SELECT s.kind, s.detail, up.via, p.detail AS subject FROM up JOIN statements s ON s.id = up.id
        LEFT JOIN statements p ON p.id = s.parent ORDER BY up.depth DESC`,
+      id,
     );
     return sites.map((site) => ({
       ...site,
-      guards: /** @type {{ kind: string, detail: string | null, via: string | null, subject: string | null }[]} */ (ancestors.all(site.statement)),
+      guards: /** @type {{ kind: string, detail: string | null, via: string | null, subject: string | null }[]} */ (ancestors(site.statement)),
     }));
   }
 
@@ -764,7 +767,7 @@ export class Graph {
       )
     );
     // The other side of an assignment, a literal, or a statement other than an assignment.
-    const moves = this.db.prepare(
+    const moves = /** @param {number} id */ (id) => this.all(
       `SELECT me.mode, CASE WHEN me.through IS NOT NULL THEN me.name END AS copy, o.name, ov.qualified, me.value, s.kind, c.name AS caller, f.path, s.line
        FROM accesses me JOIN statements s ON s.id = me.statement JOIN files f ON f.id = s.file LEFT JOIN symbols c ON c.id = s.caller
        LEFT JOIN accesses o ON s.kind = 'assignment' AND o.statement = me.statement AND NOT (o.variable IS me.variable AND o.through IS me.through)
@@ -772,16 +775,18 @@ export class Graph {
        LEFT JOIN variables ov ON ov.id = o.variable
        WHERE me.variable = ? AND me.mode IN ('read', 'write') AND (o.id IS NOT NULL OR me.mode = 'write')
        ORDER BY f.path, s.line`,
+      id,
     );
-    const passes = this.db.prepare(
+    const passes = /** @param {number} id */ (id) => this.all(
       `SELECT a.position, s.detail AS callee, pv.qualified AS parameter, c.name AS caller, f.path, s.line
        FROM accesses a JOIN statements s ON s.id = a.statement JOIN files f ON f.id = s.file LEFT JOIN symbols c ON c.id = s.caller
        LEFT JOIN refs r ON r.file = s.file AND r.line = s.line AND r.kind = 'call' AND r.name = s.detail
        LEFT JOIN links l ON l.ref = r.id
        LEFT JOIN variables pv ON pv.scope = l.target_symbol AND pv.parameter = a.position AND pv.level = 1
        WHERE a.variable = ? AND a.mode = 'arg' ORDER BY f.path, s.line`,
+      id,
     );
-    const receives = this.db.prepare(
+    const receives = /** @param {number} id */ (id) => this.all(
       `SELECT a.name, av.qualified, c.name AS caller, f.path, s.line
        FROM variables p JOIN links l ON l.target_symbol = p.scope JOIN refs r ON r.id = l.ref AND r.kind = 'call'
        JOIN statements s ON s.file = r.file AND s.line = r.line AND s.kind = 'call' AND s.detail = r.name
@@ -789,15 +794,16 @@ export class Graph {
        LEFT JOIN variables av ON av.id = a.variable
        JOIN files f ON f.id = s.file LEFT JOIN symbols c ON c.id = s.caller
        WHERE p.id = ? ORDER BY f.path, s.line`,
+      id,
     );
     return variables.map((v) => ({
       ...v,
       moves: /** @type {{ mode: string, copy: string | null, name: string | null, qualified: string | null, value: string | null, kind: string, caller: string | null, path: string, line: number }[]} */ (
-        moves.all(v.id)
+        moves(v.id)
       ),
-      passes: /** @type {{ position: number, callee: string | null, parameter: string | null, caller: string | null, path: string, line: number }[]} */ (passes.all(v.id)),
+      passes: /** @type {{ position: number, callee: string | null, parameter: string | null, caller: string | null, path: string, line: number }[]} */ (passes(v.id)),
       receives: /** @type {{ name: string, qualified: string | null, caller: string | null, path: string, line: number }[]} */ (
-        v.parameter ? receives.all(v.id) : []
+        v.parameter ? receives(v.id) : []
       ),
     }));
   }
@@ -877,7 +883,7 @@ export class Graph {
         path: symbol.path,
         line: symbol.line,
         end: symbol.end,
-        ...(/OPTIONS\([^)]*\bMAIN\b/.test(symbol.detail ?? "") && { mods: ["MAIN"] }),
+        ...(MAIN_OPTIONS.test(symbol.detail ?? "") && { mods: ["MAIN"] }),
       });
     }
     // Parents are inserted before their children, so their positions are known.

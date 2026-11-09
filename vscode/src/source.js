@@ -5,6 +5,9 @@
 
 /** @typedef {"pli" | "jcl" | "hlasm" | "db2"} Language */
 
+/** A procedure detail of OPTIONS(MAIN). */
+export const MAIN_OPTIONS = /OPTIONS\s*\([^)]*\bMAIN\b/i;
+
 /** @type {Record<string, Language>} */
 const EXTENSIONS = {
   ".pli": "pli", ".pl1": "pli", ".pco": "pli", ".inc": "pli",

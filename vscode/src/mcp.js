@@ -263,9 +263,9 @@ function call(name, args) {
   if (name === "dli") {
     const { calls, psbs } = open().programDli(args.program.toUpperCase());
     if (calls.length === 0) return `${args.program} makes no DL/I calls of its own.`;
-    /** @param {(typeof calls)[number]} c @param {string} pcb */
-    const line = (c, pcb) =>
-      `  ${c.function ?? "?"}${c.path ? ` ${/^ = (I\/O PCB|PCB \d+ TP)/.test(pcb) ? "MOD " : ""}${c.path}` : ""} on ${c.pcb ?? "?"}${pcb} I/O area ${c.io_area ?? "-"} in ${c.caller ?? "the file"}: ${c.file}:${c.line}`;
+    /** @param {(typeof calls)[number]} c @param {string} pcb @param {boolean} [message] a message PCB, whose path is a destination */
+    const line = (c, pcb, message = false) =>
+      `  ${c.function ?? "?"}${c.path ? ` ${message ? "MOD " : ""}${c.path}` : ""} on ${c.pcb ?? "?"}${pcb} I/O area ${c.io_area ?? "-"} in ${c.caller ?? "the file"}: ${c.file}:${c.line}`;
     if (psbs.length === 0) {
       return [`${args.program} runs under no known PSB.`, ...calls.map((c) => line(c, c.pcb_parameter ? ` (parameter ${c.pcb_parameter})` : ""))].join("\n");
     }
@@ -275,10 +275,10 @@ function call(name, args) {
         ...calls.map((c) => {
           if (!c.pcb_parameter) return line(c, "");
           const position = c.pcb_parameter - (psb.ioPcb ? 1 : 0);
-          if (position === 0) return line(c, " = I/O PCB");
+          if (position === 0) return line(c, " = I/O PCB", true);
           const pcb = psb.pcbs.find((p) => p.position === position);
           if (!pcb) return line(c, ` = PCB ${position}, not in the PSB`);
-          return line(c, ` = PCB ${position} ${pcb.type}${pcb.name ? ` ${pcb.name}` : ""}${pcb.dbd ? ` DBD ${pcb.dbd}` : ""}${pcb.procopt ? ` PROCOPT=${pcb.procopt}` : ""}`);
+          return line(c, ` = PCB ${position} ${pcb.type}${pcb.name ? ` ${pcb.name}` : ""}${pcb.dbd ? ` DBD ${pcb.dbd}` : ""}${pcb.procopt ? ` PROCOPT=${pcb.procopt}` : ""}`, pcb.type === "TP");
         }),
       ])
       .join("\n");
@@ -351,7 +351,9 @@ function call(name, args) {
       .join("\n\n");
   }
   if (name === "query_graph") {
-    const rows = open().db.prepare(args.sql).all().slice(0, 500);
+    // A query over every access can return millions of rows; only the first 500 are read.
+    const rows = [];
+    for (const row of open().db.prepare(args.sql).iterate()) if (rows.push(row) >= 500) break;
     return JSON.stringify(rows);
   }
   throw new Error(`no tool ${name}`);

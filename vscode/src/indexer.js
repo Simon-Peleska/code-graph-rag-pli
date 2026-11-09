@@ -14,7 +14,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Language, Parser } from "web-tree-sitter";
-import { blankMargins, languageOf, sqlOperation } from "./source.js";
+import { MAIN_OPTIONS, blankMargins, languageOf, sqlOperation } from "./source.js";
 import { mfsFields } from "./mfs.js";
 
 /** @typedef {import("web-tree-sitter").Node} Node */
@@ -646,7 +646,10 @@ export function openGraph(path) {
   if (version?.value !== INDEXER_VERSION) {
     // An older indexer's graph lacks tables and columns, and unchanged files
     // would never get the facts this one reads: it is built again.
-    db.exec("DROP TABLE IF EXISTS links; DROP TABLE IF EXISTS literals; DROP TABLE IF EXISTS comparisons; DROP TABLE IF EXISTS accesses; DROP TABLE IF EXISTS statements; DROP TABLE IF EXISTS refs; DROP TABLE IF EXISTS variables; DROP TABLE IF EXISTS dli_calls; DROP TABLE IF EXISTS mfs_fields; DROP TABLE IF EXISTS segment_fields; DROP TABLE IF EXISTS segments; DROP TABLE IF EXISTS sensegs; DROP TABLE IF EXISTS pcbs; DROP TABLE IF EXISTS sql_columns; DROP TABLE IF EXISTS columns; DROP TABLE IF EXISTS file_io; DROP TABLE IF EXISTS dds; DROP TABLE IF EXISTS steps; DROP TABLE IF EXISTS symbols; DROP TABLE IF EXISTS files");
+    db.exec("PRAGMA foreign_keys = OFF");
+    for (const { name } of /** @type {{ name: string }[]} */ (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('meta') AND name NOT LIKE 'sqlite_%'").all())) {
+      db.exec(`DROP TABLE "${name}"`);
+    }
     db.prepare("INSERT INTO meta (name, value) VALUES ('indexer_version', ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value").run(INDEXER_VERSION);
   }
   db.exec(SCHEMA);
@@ -1102,8 +1105,6 @@ function readPli(root, file, db2) {
   const cursors = new Map();
   /** @type {Map<number, string[]>} each procedure's parameters, by its position in the symbols */
   const parameters = new Map();
-  /** @type {{ caller: number, entry: string, args: string[], line: number }[]} read once the declarations are known */
-  const dliCalls = [];
   /** @param {Node} node */
   const source = (node) => tidy(text.source.slice(node.startIndex - text.offset, node.endIndex - text.offset));
   /** @type {Set<string>} statement, name and mode of the accesses so far */
@@ -1241,7 +1242,12 @@ function readPli(root, file, db2) {
         if (name && DLI_ENTRIES.has(name)) {
           const list = node.namedChildren.find((c) => c?.type === "argument_list");
           const args = list?.namedChildren.map((c) => tidy(c?.text ?? "").toUpperCase()) ?? [];
-          dliCalls.push({ caller, entry: name, args, line: node.startPosition.row + 1 });
+          const [, pcb, ioArea] = dliArguments(name, args);
+          // Function, segments and PCB parameter come from declarations that may be in an include: resolveAccesses fills them in.
+          file.dliCalls.push({
+            caller, entry: name, function: null, pcb: pcb ?? null, pcbParameter: null, ioArea: ioArea ?? null,
+            segment: null, path: null, arguments: args.join(", "), line: node.startPosition.row + 1,
+          });
         }
         break;
       }
@@ -1299,17 +1305,17 @@ function readPli(root, file, db2) {
     }
   }
   // A parameter left undeclared has PL/I's default attributes.
+  const declared = new Set(file.variables.filter((v) => v.level === 1).map((v) => `${v.scope} ${v.name}`));
   for (const [scope, names] of parameters) {
     const symbol = file.symbols[scope];
     for (const [i, name] of names.entries()) {
-      if (file.variables.some((v) => v.scope === scope && v.name === name && v.level === 1)) continue;
+      if (declared.has(`${scope} ${name}`)) continue;
       file.variables.push({
         scope, parent: -1, level: 1, name, qualified: name, type: null, size: null, dims: null, storage: "PARAMETER",
         base: null, init: null, like: null, external: false, parameter: i + 1, attributes: "", line: symbol.line,
       });
     }
   }
-  for (const call of dliCalls) file.dliCalls.push(readDliCall(call));
 
   // A comment describes the procedure or declaration right below it, and a
   // declaration the comment after it on its line.
@@ -1389,29 +1395,6 @@ function readAccess(text, node, up, kind) {
   if (/^(FILE|TITLE)\b/.test(keyword)) return undefined;
   if (/^(INTO|KEYTO|SET)\b/.test(keyword) || kind === "get") return { mode: "write", value: null, position: null };
   return { mode: "read", value: null, position: null };
-}
-
-/**
- * A DL/I call as written. Its function, segments and PCB parameter come
- * from the declarations, which may be in an include: resolveAccesses
- * fills them in.
- * @param {{ caller: number, entry: string, args: string[], line: number }} call
- * @returns {ParsedDliCall}
- */
-function readDliCall(call) {
-  const [, pcb, ioArea] = dliArguments(call.entry, call.args);
-  return {
-    caller: call.caller,
-    entry: call.entry,
-    function: null,
-    pcb: pcb ?? null,
-    pcbParameter: null,
-    ioArea: ioArea ?? null,
-    segment: null,
-    path: null,
-    arguments: call.args.join(", "),
-    line: call.line,
-  };
 }
 
 /**
@@ -2281,7 +2264,7 @@ function resolveAccesses(db, files, failures) {
       const mains = new Set();
       for (const row of /** @type {{ id: number, parent: number | null, detail: string | null }[]} */ (parentsOf.all(file))) {
         parentOf.set(row.id, row.parent ?? 0);
-        if (/\bMAIN\b/i.test(row.detail ?? "")) mains.add(row.id);
+        if (MAIN_OPTIONS.test(row.detail ?? "")) mains.add(row.id);
       }
 
       /** A name's variable, seen from a scope. @param {string[]} parts @param {number} from @returns {VariableRow | undefined} */
