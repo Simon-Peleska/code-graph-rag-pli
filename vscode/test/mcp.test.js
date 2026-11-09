@@ -12,7 +12,7 @@ const facts = join(import.meta.dirname, "facts");
 const graphs = mkdtempSync(join(tmpdir(), "pli-graph-"));
 for (const root of [fixture, facts]) {
   const db = openGraph(join(graphs, `${basename(root)}.sqlite`));
-  sync(db, root, indexer);
+  await sync(db, root, indexer);
   db.close();
 }
 

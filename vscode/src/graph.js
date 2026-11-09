@@ -9,10 +9,12 @@ import { MAIN_OPTIONS } from "./source.js";
 /** @typedef {import("node:sqlite").StatementSync} StatementSync */
 
 /**
- * Lines from 1.
+ * Lines from 1, columns from 0.
  * @typedef {object} Target
  * @property {string} path
  * @property {number} line
+ * @property {number} [col]
+ * @property {number} [endCol]
  */
 
 /**
@@ -75,7 +77,9 @@ import { MAIN_OPTIONS } from "./source.js";
  * @property {number} file
  * @property {number | null} symbol null for the file itself
  * @property {string} path
- * @property {number} line
+ * @property {number} line where the name stands, from 1
+ * @property {number} col from 0
+ * @property {string | null} name the definition's, null for a file
  */
 
 /**
@@ -251,10 +255,11 @@ export class Graph {
   }
 
   /**
-   * What `word` at `path`:`line` means. The indexer resolved the references
-   * themselves, so those on the line answer first, then those of the
-   * procedure around it, then the files the file includes. Plain name
-   * matches are the fallback, unless `byName` is false.
+   * What `word` at `path`:`line` means. A definition of it on the line means
+   * itself. The indexer resolved the references themselves, so those on the
+   * line answer next, then those of the procedure around it, then the files
+   * the file includes. Plain name matches are the fallback, unless `byName`
+   * is false.
    * @param {string} path
    * @param {number} line
    * @param {string} word
@@ -263,8 +268,19 @@ export class Graph {
    */
   named(path, line, word, byName) {
     const name = word.toUpperCase();
+    /** @type {Found[]} */
+    const defined = this.all(
+      `SELECT s.file, s.id AS symbol, f.path, s.name_line AS line, s.name_col AS col, s.name
+       FROM symbols s JOIN files f ON f.id = s.file WHERE f.path = ? AND s.name_line = ? AND s.name = ?`,
+      path,
+      line,
+      name,
+    );
+    if (defined.length > 0) {
+      return defined;
+    }
     const LINKED = `SELECT DISTINCT l.target_file AS file, l.target_symbol AS symbol, tf.path,
-        coalesce(ts.line, 1) AS line
+        coalesce(ts.name_line, 1) AS line, coalesce(ts.name_col, 0) AS col, ts.name
       FROM refs r JOIN links l ON l.ref = r.id JOIN files tf ON tf.id = l.target_file
       LEFT JOIN symbols ts ON ts.id = l.target_symbol`;
     /** @type {Found[]} */
@@ -295,7 +311,7 @@ export class Graph {
     }
     /** @type {Found[]} */
     const named = this.all(
-      `SELECT s.file, s.id AS symbol, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.name = ?`,
+      `SELECT s.file, s.id AS symbol, f.path, s.name_line AS line, s.name_col AS col, s.name FROM symbols s JOIN files f ON f.id = s.file WHERE s.name = ?`,
       name,
     );
     const sameFile = named.filter((found) => found.path === path);
@@ -311,7 +327,23 @@ export class Graph {
    * @returns {Target[]}
    */
   definitions(path, line, word, byName = true) {
-    return this.named(path, line, word, byName).map((found) => ({ path: found.path, line: found.line }));
+    const dataset = this.datasetAt(path, line, word);
+    if (dataset) {
+      // A dataset is defined where a job creates it; one nobody creates means itself.
+      const created = this.datasetSites(dataset).filter((site) => /^(NEW|MOD)/.test(site.disp ?? ""));
+      const here = this.datasetSites(dataset).filter((site) => site.path === path && site.line === line);
+      return (created.length > 0 ? created : here).map(({ path, line, col, endCol }) => ({ path, line, col, endCol }));
+    }
+    const cursor = this.cursorSites(path, line, word);
+    if (cursor.length > 0) {
+      return cursor.filter((site) => site.detail === "DECLARE").map(({ path, line, col, endCol }) => ({ path, line, col, endCol }));
+    }
+    return this.named(path, line, word, byName).map((found) => ({
+      path: found.path,
+      line: found.line,
+      col: found.col,
+      endCol: found.col + (found.name?.length ?? 0),
+    }));
   }
 
   /**
@@ -324,6 +356,14 @@ export class Graph {
    * @returns {Site[]}
    */
   references(path, line, word, byName = true) {
+    const dataset = this.datasetAt(path, line, word);
+    if (dataset) {
+      return this.datasetSites(dataset).map(({ path, line, col, endCol }) => ({ path, line, col, endLine: line, endCol }));
+    }
+    const cursor = this.cursorSites(path, line, word);
+    if (cursor.length > 0) {
+      return cursor.map(({ path, line, col, endCol }) => ({ path, line, col, endLine: line, endCol }));
+    }
     /** @type {Map<string, Site>} */
     const sites = new Map();
     for (const found of this.named(path, line, word, byName)) {
@@ -346,6 +386,55 @@ export class Graph {
       }
     }
     return [...sites.values()];
+  }
+
+  /**
+   * The dataset of a DD at `path`:`line` that `word` is a qualifier of:
+   * `PROD` or `KUNDEN` in `DSN=PROD.KUNDEN`.
+   * @param {string} path
+   * @param {number} line
+   * @param {string} word
+   * @returns {string | undefined}
+   */
+  datasetAt(path, line, word) {
+    const qualifier = word.toUpperCase();
+    const dsns = /** @type {{ dsn: string }[]} */ (
+      this.all(`SELECT d.dsn FROM dds d JOIN files f ON f.id = d.file WHERE f.path = ? AND d.dsn_line = ?`, path, line)
+    );
+    return dsns.find(({ dsn }) => dsn.split(".").includes(qualifier))?.dsn;
+  }
+
+  /**
+   * Every DECLARE, OPEN, FETCH and CLOSE of the cursor `word` names at
+   * `path`:`line`, in that file; none when it names no cursor there.
+   * @param {string} path
+   * @param {number} line
+   * @param {string} word
+   * @returns {{ path: string, line: number, col: number, endCol: number, detail: string }[]}
+   */
+  cursorSites(path, line, word) {
+    return this.all(
+      `SELECT f.path, r.line, r.col, r.end_col AS endCol, r.detail FROM refs r JOIN files f ON f.id = r.file
+       WHERE r.kind = 'cursor' AND r.file = (SELECT id FROM files WHERE path = ?1) AND r.name = ?2
+         AND EXISTS (SELECT 1 FROM refs h WHERE h.file = r.file AND h.kind = 'cursor' AND h.name = ?2 AND h.line = ?3)
+       ORDER BY r.line`,
+      path,
+      word.toUpperCase(),
+      line,
+    );
+  }
+
+  /**
+   * Where every DD names the dataset, at the name.
+   * @param {string} dsn
+   * @returns {{ path: string, line: number, col: number, endCol: number, disp: string | null }[]}
+   */
+  datasetSites(dsn) {
+    return this.all(
+      `SELECT f.path, d.dsn_line AS line, d.dsn_col AS col, d.dsn_col + length(d.dsn) AS endCol, d.disp
+       FROM dds d JOIN files f ON f.id = d.file WHERE d.dsn = ? ORDER BY f.path, d.line`,
+      dsn,
+    );
   }
 
   /**
@@ -393,9 +482,9 @@ export class Graph {
     }
     rows.push(...missing.sort(byLabel));
 
-    const targets = /** @type {{ kind: string, detail: string | null, id: number, name: string, file: number, path: string, line: number, language: string }[]} */ (
+    const targets = /** @type {{ kind: string, detail: string | null, id: number, name: string, file: number, path: string, line: number, col: number, language: string }[]} */ (
       this.all(
-        `SELECT r.kind, r.detail, ts.id, ts.name, ts.file, tf.path, ts.line, tf.language FROM refs r
+        `SELECT r.kind, r.detail, ts.id, ts.name, ts.file, tf.path, ts.name_line AS line, ts.name_col AS col, tf.language FROM refs r
          JOIN links l ON l.ref = r.id JOIN symbols ts ON ts.id = l.target_symbol JOIN files tf ON tf.id = ts.file
          WHERE r.file = ? AND ts.file != r.file ORDER BY r.id`,
         row.module,
@@ -406,7 +495,7 @@ export class Graph {
     /** @type {Map<number, TreeRow>} */
     const calls = new Map();
     for (const target of targets) {
-      const place = { path: target.path, line: target.line };
+      const place = { path: target.path, line: target.line, col: target.col, endCol: target.col + target.name.length };
       if (target.language === "db2") {
         let table = tables.get(target.id);
         if (!table) {
@@ -456,9 +545,9 @@ export class Graph {
       )
     ).map((file) => this.row(row, "includedBy", fileName(file.path), file.id, { path: file.path, line: 1 }));
 
-    const callers = /** @type {{ caller: number | null, callerName: string | null, callerLine: number | null, file: number, path: string, line: number, callee: string, calleeId: number, detail: string | null }[]} */ (
+    const callers = /** @type {{ caller: number | null, callerName: string | null, file: number, path: string, line: number, col: number, endCol: number, callee: string, calleeId: number, detail: string | null }[]} */ (
       this.all(
-        `SELECT r.caller, cs.name AS callerName, cs.line AS callerLine, r.file, f.path, r.line,
+        `SELECT r.caller, cs.name AS callerName, r.file, f.path, r.line, r.col, r.end_col AS endCol,
            ts.name AS callee, ts.id AS calleeId, r.detail
          FROM links l JOIN symbols ts ON ts.id = l.target_symbol JOIN refs r ON r.id = l.ref
          JOIN files f ON f.id = r.file LEFT JOIN symbols cs ON cs.id = r.caller
@@ -476,7 +565,8 @@ export class Graph {
       let call = calls.get(key);
       if (!call) {
         const label = `${caller.callerName ?? fileName(caller.path)} → ${caller.callee}`;
-        const place = { path: caller.path, line: caller.callerLine ?? caller.line };
+        // The row opens the caller's first use of the callee, not the caller's start.
+        const place = { path: caller.path, line: caller.line, col: caller.col, endCol: caller.endCol };
         call = { row: this.row(row, "calledBy", label, caller.file, place), operations: new Set() };
         calls.set(key, call);
       }
@@ -590,8 +680,10 @@ export class Graph {
     );
     const users = /** @type {{ kind: string, name: string, path: string, line: number }[]} */ (
       this.all(
-        `SELECT c.kind, c.name, f.path, r.line FROM refs r JOIN files f ON f.id = r.file LEFT JOIN symbols c ON c.id = r.caller
-         WHERE r.kind = 'psb' AND r.name = ? ORDER BY f.path, r.line`,
+        // A transaction's PSB is named on its APPLCTN, several lines up.
+        `SELECT c.kind, c.name, f.path, CASE c.kind WHEN 'transaction' THEN c.line ELSE r.line END AS line
+         FROM refs r JOIN files f ON f.id = r.file LEFT JOIN symbols c ON c.id = r.caller
+         WHERE r.kind = 'psb' AND r.name = ? ORDER BY f.path, line`,
         psbName,
       )
     );

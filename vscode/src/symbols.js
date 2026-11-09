@@ -74,6 +74,7 @@ import {
  * @property {string} code
  * @property {Declaration[]} declarations
  * @property {Use[]} uses
+ * @property {Map<number, Set<string>>} sqlNames the names in each SQL statement, host variables left out, by the statement's start
  * @property {Table[]} tables
  */
 
@@ -85,6 +86,29 @@ import {
  * @property {Analysis} analysis
  * @property {number} scope
  */
+
+/**
+ * The procedures of a file, sorted by first line, and for each line (from 1)
+ * the index of the innermost one holding it, -1 for none.
+ * @typedef {object} Procedures
+ * @property {Definition[]} list
+ * @property {Int32Array} innermost
+ */
+
+/**
+ * What one lookup has learned so far: a file's text, procedures, includes
+ * and tables, and what is visible inside each procedure. Find All References resolves every use of
+ * a name in every includer, so asking the graph per use took seconds.
+ * @typedef {object} Memo
+ * @property {Map<string, Analysis | undefined>} analyses
+ * @property {Map<string, Procedures>} procedures
+ * @property {Map<string, { path: string, line: number }[]>} included
+ * @property {Map<string, { table: Table, analysis: Analysis }[]>} tables
+ * @property {Map<string, Visible[]>} visible
+ */
+
+/** @returns {Memo} */
+const newMemo = () => ({ analyses: new Map(), procedures: new Map(), included: new Map(), tables: new Map(), visible: new Map() });
 
 const LIKE = /\bLIKE\s+((?:[A-Za-z@#$_][A-Za-z0-9@#$_]*\s*\.\s*)*([A-Za-z@#$_][A-Za-z0-9@#$_]*))/i;
 
@@ -99,13 +123,26 @@ export class Symbols {
     this.#sources = sources;
   }
 
-  // Parses a file once per text it has.
+  // Parses a file once per text it has, and reads it once per lookup.
   /**
    * @param {string} path
+   * @param {Memo} [memo]
+   * @param {string | undefined} [text] the file's text, when already read
    * @returns {Analysis | undefined}
    */
-  #analysis(path) {
-    const text = this.#sources.read(path);
+  #analysis(path, memo, text) {
+    if (memo?.analyses.has(path)) return memo.analyses.get(path);
+    const analysis = this.#parse(path, text ?? this.#sources.read(path));
+    memo?.analyses.set(path, analysis);
+    return analysis;
+  }
+
+  /**
+   * @param {string} path
+   * @param {string | undefined} text
+   * @returns {Analysis | undefined}
+   */
+  #parse(path, text) {
     if (text === undefined) {
       return undefined;
     }
@@ -116,12 +153,18 @@ export class Symbols {
     const language = languageOf(path);
     /** @type {Analysis} */
     const analysis = {
-      path, text, language, lines: new Lines(text), code: text, declarations: [], uses: [], tables: [],
+      path, text, language, lines: new Lines(text), code: text, declarations: [], uses: [], sqlNames: new Map(), tables: [],
     };
     if (language === "pli") {
       analysis.code = pliCode(text);
       analysis.declarations = pliDeclarations(analysis.code);
       analysis.uses = pliUses(analysis.code);
+      for (const use of analysis.uses) {
+        if (!use.sql || use.host) continue;
+        const names = analysis.sqlNames.get(use.sql.start) ?? new Set();
+        names.add(use.name);
+        analysis.sqlNames.set(use.sql.start, names);
+      }
     } else if (language === "hlasm") {
       for (const statement of hlasmStatements(text)) {
         const label = statement.label;
@@ -161,21 +204,45 @@ export class Symbols {
     };
   }
 
-  // The innermost of `blocks` holding `line` (from 1).
   /**
-   * @param {Definition[]} blocks
+   * @param {string} path
+   * @param {Memo} memo
+   * @returns {Procedures}
+   */
+  #procedures(path, memo) {
+    const known = memo.procedures.get(path);
+    if (known) return known;
+    const list = this.#sources.blocks(path).sort((a, b) => a.line - b.line);
+    const innermost = new Int32Array(list.reduce((last, b) => Math.max(last, b.end), 0) + 1).fill(-1);
+    // Sorted by first line, a nested procedure comes after the one around it and overwrites its lines.
+    list.forEach((block, i) => innermost.fill(i, block.line, block.end + 1));
+    const procedures = { list, innermost };
+    memo.procedures.set(path, procedures);
+    return procedures;
+  }
+
+  /**
+   * @param {string} path
+   * @param {Memo} memo
+   */
+  #included(path, memo) {
+    let included = memo.included.get(path);
+    if (!included) {
+      included = this.#sources.includedFiles(path);
+      memo.included.set(path, included);
+    }
+    return included;
+  }
+
+  // The innermost procedure holding `line` (from 1).
+  /**
+   * @param {Procedures} procedures
    * @param {number} line
    * @returns {Definition | undefined}
    */
-  #block(blocks, line) {
-    /** @type {Definition | undefined} */
-    let found;
-    for (const block of blocks) {
-      if (block.line <= line && line <= block.end && (!found || block.line >= found.line)) {
-        found = block;
-      }
-    }
-    return found;
+  #block(procedures, line) {
+    const i = procedures.innermost[line] ?? -1;
+    return i < 0 ? undefined : procedures.list[i];
   }
 
   // Every declaration visible at `line` (from 1) of `path`: its own, local
@@ -184,16 +251,17 @@ export class Symbols {
   /**
    * @param {string} path
    * @param {number} line
+   * @param {Memo} memo
    * @returns {Visible[]}
    */
-  #visible(path, line) {
-    const own = this.#analysis(path);
+  #visible(path, line, memo) {
+    const own = this.#analysis(path, memo);
     if (!own) {
       return [];
     }
     /** @type {Visible[]} */
     const result = [];
-    const blocks = this.#sources.blocks(path);
+    const blocks = this.#procedures(path, memo);
     /** @param {Definition | undefined} block */
     const inside = (block) => !block || (block.line <= line && line <= block.end);
     for (const declaration of own.declarations) {
@@ -206,21 +274,21 @@ export class Symbols {
      * @param {number} scope
      */
     const include = (file, scope) => {
-      for (const included of this.#sources.includedFiles(file)) {
+      for (const included of this.#included(file, memo)) {
         if (seen.has(included.path)) continue;
         seen.add(included.path);
-        const analysis = this.#analysis(included.path);
+        const analysis = this.#analysis(included.path, memo);
         for (const declaration of analysis?.declarations ?? []) {
           result.push({ declaration, analysis: /** @type {Analysis} */ (analysis), scope });
         }
         include(included.path, scope);
       }
     };
-    for (const included of this.#sources.includedFiles(path)) {
+    for (const included of this.#included(path, memo)) {
       const block = this.#block(blocks, included.line);
       if (!inside(block) || seen.has(included.path)) continue;
       seen.add(included.path);
-      const analysis = this.#analysis(included.path);
+      const analysis = this.#analysis(included.path, memo);
       for (const declaration of analysis?.declarations ?? []) {
         result.push({ declaration, analysis: /** @type {Analysis} */ (analysis), scope: block?.line ?? 0 });
       }
@@ -268,14 +336,13 @@ export class Symbols {
   /**
    * @param {Analysis} analysis
    * @param {Use} use
+   * @param {Memo} memo
    * @returns {Symbol[]}
    */
-  #columns(analysis, use) {
-    const tables = this.#tablesUsed(analysis.path);
-    const named = new Set(
-      analysis.uses.filter((u) => u.sql?.start === use.sql?.start && !u.host).map((u) => u.name),
-    );
-    const inStatement = tables.filter(({ table }) => named.has(table.name));
+  #columns(analysis, use, memo) {
+    const tables = this.#tablesUsed(analysis.path, memo);
+    const named = analysis.sqlNames.get(use.sql?.start ?? -1);
+    const inStatement = tables.filter(({ table }) => named?.has(table.name));
     return (inStatement.length > 0 ? inStatement : tables).flatMap(({ table, analysis: ddl }) =>
       table.columns
         .filter((column) => column.name === use.name)
@@ -286,14 +353,19 @@ export class Symbols {
   // The tables `path` uses, read from their DDL.
   /**
    * @param {string} path
+   * @param {Memo} memo
    * @returns {{ table: Table, analysis: Analysis }[]}
    */
-  #tablesUsed(path) {
-    return this.#sources.tablesOf(path).flatMap((definition) => {
-      const ddl = this.#analysis(definition.path);
+  #tablesUsed(path, memo) {
+    const known = memo.tables.get(path);
+    if (known) return known;
+    const tables = this.#sources.tablesOf(path).flatMap((definition) => {
+      const ddl = this.#analysis(definition.path, memo);
       const table = ddl?.tables.find((t) => t.name === definition.name.toUpperCase());
       return table && ddl ? [{ table, analysis: ddl }] : [];
     });
+    memo.tables.set(path, tables);
+    return tables;
   }
 
   /**
@@ -308,19 +380,19 @@ export class Symbols {
   /**
    * @param {Analysis} analysis
    * @param {Use} use
-   * @param {Map<string, Visible[]>} [memo]
+   * @param {Memo} memo
    * @returns {Symbol[]}
    */
   #definitionsOf(analysis, use, memo) {
     if (use.sql && !use.host) {
-      return this.#columns(analysis, use);
+      return this.#columns(analysis, use, memo);
     }
     const line = analysis.lines.at(use.start).line + 1;
-    const key = `${analysis.path}:${this.#block(this.#sources.blocks(analysis.path), line)?.line ?? 0}`;
-    let visible = memo?.get(key);
+    const key = `${analysis.path}:${this.#block(this.#procedures(analysis.path, memo), line)?.line ?? 0}`;
+    let visible = memo.visible.get(key);
     if (!visible) {
-      visible = this.#visible(analysis.path, line);
-      memo?.set(key, visible);
+      visible = this.#visible(analysis.path, line, memo);
+      memo.visible.set(key, visible);
     }
     return this.#resolve(visible, use.name, use.qualifiers).map((v) => this.#symbol(v.analysis, v.declaration));
   }
@@ -349,7 +421,7 @@ export class Symbols {
       return [];
     }
     const use = this.#useAt(analysis, offset);
-    return use ? this.#definitionsOf(analysis, use) : [];
+    return use ? this.#definitionsOf(analysis, use, newMemo()) : [];
   }
 
   // Every place that uses what the name at `offset` of `path` declares,
@@ -363,29 +435,28 @@ export class Symbols {
   references(path, offset) {
     /** @type {Map<string, Site>} */
     const sites = new Map();
-    /** @type {Map<string, Visible[]>} */
-    const memo = new Map();
+    const memo = newMemo();
     for (const target of this.definitions(path, offset)) {
       /** @param {Symbol} s */
       const same = (s) => s.path === target.path && s.line === target.line && s.col === target.col;
       /** @type {string[]} */
       let files;
       if (target.kind === "column") {
-        const ddl = this.#analysis(target.path);
+        const ddl = this.#analysis(target.path, memo);
         const at = ddl?.lines.offset(target.line, target.col);
         const table = ddl?.tables.find((t) => t.columns.some((c) => c.start === at));
         files = table ? this.#sources.tableUsers(target.path, table.name) : [];
-      } else if (this.#block(this.#sources.blocks(target.path), target.line + 1)) {
+      } else if (this.#block(this.#procedures(target.path, memo), target.line + 1)) {
         files = [target.path];
       } else {
         files = this.#includersOf(target.path);
       }
       for (const file of files) {
-        const text = this.#sources.read(file);
+        const text = memo.analyses.get(file)?.text ?? this.#sources.read(file);
         if (!text?.toUpperCase().includes(target.name)) {
           continue;
         }
-        const analysis = /** @type {Analysis} */ (this.#analysis(file));
+        const analysis = /** @type {Analysis} */ (this.#analysis(file, memo, text));
         const declared = new Set(analysis.declarations.map((d) => d.start));
         for (const use of analysis.uses) {
           if (use.name !== target.name || declared.has(use.start)) continue;
@@ -433,7 +504,8 @@ export class Symbols {
     let start = offset;
     while (start > 0 && isNameChar(code[start - 1])) start--;
     const line = analysis.lines.at(offset).line + 1;
-    const visible = this.#visible(path, line);
+    const memo = newMemo();
+    const visible = this.#visible(path, line, memo);
 
     if (analysis.language === "pli") {
       const qualifiers = qualifiersBefore(code, start).names;
@@ -456,7 +528,7 @@ export class Symbols {
         return { context: "host", symbols: this.#innermost(visible) };
       }
       if (statement) {
-        const columns = this.#tablesUsed(path).flatMap(({ table, analysis: ddl }) =>
+        const columns = this.#tablesUsed(path, memo).flatMap(({ table, analysis: ddl }) =>
           table.columns.map((c) => this.#symbol(ddl, { ...c, parent: { ...table, level: 1, attributes: "" } }, "column")),
         );
         return { context: "sql", symbols: columns };

@@ -1,13 +1,15 @@
 // The facts the indexer reads for reconstructing what programs do, on
 // test/facts: a small IMS application written like the real thing.
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Graph } from "../src/graph.js";
 import { indexed } from "./indexed.js";
 
 const root = join(import.meta.dirname, "facts");
-const db = indexed(root);
+const db = await indexed(root);
 
 /** @param {string} sql @param {...any} params */
 const rows = (sql, ...params) => db.prepare(sql).all(...params).map((row) => ({ ...row }));
@@ -441,4 +443,39 @@ test("comments describe procedures and declarations, literals are kept with thei
       { kind: "display", line: 20, text: "KDP00009 ENDE" },
     ],
   );
+});
+
+const graph = new Graph(db, root);
+/** @param {{ path: string, line: number, col?: number, endCol?: number }[]} sites */
+const spans = (sites) => sites.map((s) => `${s.path}:${s.line}:${s.col}-${s.endCol}`).sort();
+
+test("every relation goes from the name to the name, both ways", () => {
+  /** @type {[string, number, string, string[], string[]][]} where, the name, its definitions, its references */
+  const cases = [
+    ["SRC/KDP00001", 13, "PRUEFEN", ["SRC/KDP00001:14:1-8"], ["SRC/KDP00001:13:8-15"]],
+    ["SRC/KDP00004", 8, "KUNDE", ["INCLUDE/KDT00001:1:18-23"], ["SRC/KDP00004:14:64-69", "SRC/KDP00004:7:22-27", "SRC/KDP00004:8:51-56", "SRC/KDP00004:9:24-29"]],
+    ["MFS/KDF00001", 19, "KDF001O", ["MFS/KDF00001:19:0-7"], ["MFS/KDF00001:14:50-57", "SRC/KDP00005:28:36-43"]],
+    ["MFS/KDF00001", 1, "KDF001", ["MFS/KDF00001:1:0-6"], ["MFS/KDF00001:14:31-37", "MFS/KDF00001:19:32-38"]],
+    ["IMS/KDPSB01", 6, "KUNDE", ["IMS/KDDBD01:3:20-25"], ["IMS/KDPSB01:6:21-26"]],
+    ["IMS/KDPSB01", 4, "KDDBD01", ["IMS/KDDBD01:1:20-27"], ["IMS/KDPSB01:4:31-38"]],
+    ["IMS/KDSYSDEF", 4, "KDP00001", ["SRC/KDP00001:1:1-9"], ["IMS/KDSYSDEF:4:21-29", "JCL/KDJOB01:2:39-47", "JCL/KDJOB02:5:29-37"]],
+    ["SRC/KDP00004", 17, "C1", ["SRC/KDP00004:13:20-22"], ["SRC/KDP00004:13:20-22", "SRC/KDP00004:16:17-19", "SRC/KDP00004:17:18-20", "SRC/KDP00004:18:18-20"]],
+    ["JCL/KDJOB02", 3, "AUSZUG", ["JCL/KDJOB01:5:18-32"], ["JCL/KDJOB01:5:18-32", "JCL/KDJOB02:3:18-32"]],
+  ];
+  for (const [path, line, word, definitions, references] of cases) {
+    const [first] = definitions;
+    const [definedIn, definedAt] = [first.split(":")[0], Number(first.split(":")[1])];
+    assert.deepEqual(spans(graph.definitions(path, line, word, false)), definitions, `definition of ${word} at ${path}:${line}`);
+    assert.deepEqual(spans(graph.references(path, line, word, false)), references, `references of ${word} at ${path}:${line}`);
+    // From the definition, the same references.
+    assert.deepEqual(spans(graph.references(definedIn, definedAt, word, false)), references, `references of ${word} at its definition`);
+  }
+});
+
+test("a ß before a name does not shift its column", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "pli-sharp-s-"));
+  // ß uppercases to SS, one character more.
+  writeFileSync(join(folder, "STRASSE"), " STRASSE: PROC;\n   EXEC SQL SELECT 'STRAßE' INTO :A FROM PROD.ORT;\n END STRASSE;\n");
+  const refs = (await indexed(folder)).prepare("SELECT name, line, col, end_col AS endCol FROM refs WHERE kind = 'table'").all();
+  assert.deepEqual(refs.map((r) => ({ ...r })), [{ name: "ORT", line: 2, col: 46, endCol: 49 }]);
 });

@@ -26,9 +26,9 @@ function folder() {
   return { root, db };
 }
 
-test("a file the indexer fails on is logged and skipped, and the rest is read", () => {
+test("a file the indexer fails on is logged and skipped, and the rest is read", async () => {
   const { root, db } = folder();
-  const result = sync(db, root, /** @type {any} */ (failing));
+  const result = await sync(db, root, /** @type {any} */ (failing));
   assert.deepEqual(result.failures.map((f) => [f.path, f.code, f.error.split("\n")[0]]), [["BAD", "PLG022E", "Error: boom"]]);
   assert.deepEqual(
     db.prepare("SELECT path, failure IS NOT NULL AS failed, (SELECT count(*) FROM symbols s WHERE s.file = f.id) AS symbols FROM files f ORDER BY path").all().map((r) => ({ ...r })),
@@ -39,15 +39,15 @@ test("a file the indexer fails on is logged and skipped, and the rest is read", 
     ],
   );
   // Not read again until it changes; then it gets its facts.
-  assert.equal(sync(db, root, /** @type {any} */ (failing)).changed, 0);
+  assert.equal((await sync(db, root, /** @type {any} */ (failing))).changed, 0);
   writeFileSync(join(root, "BAD"), " BAD: PROC;\n   CALL GOOD;\n END BAD;\n");
-  assert.deepEqual(sync(db, root, /** @type {any} */ (failing)).failures, []);
+  assert.deepEqual((await sync(db, root, /** @type {any} */ (failing))).failures, []);
   assert.deepEqual({ ...db.prepare("SELECT failure, (SELECT count(*) FROM symbols s WHERE s.file = f.id) AS symbols FROM files f WHERE path = 'BAD'").get() }, { failure: null, symbols: 1 });
 });
 
-test("syntax the grammar does not know is counted, and what follows is still read", () => {
+test("syntax the grammar does not know is counted, and what follows is still read", async () => {
   const { root, db } = folder();
-  const result = sync(db, root, indexer);
+  const result = await sync(db, root, indexer);
   assert.deepEqual(result.syntaxErrors, [{ path: "ODD", count: 2, line: 3 }]);
   assert.deepEqual(
     db.prepare("SELECT path, syntax_errors, error_line FROM files ORDER BY path").all().map((r) => ({ ...r })),
@@ -61,4 +61,24 @@ test("syntax the grammar does not know is counted, and what follows is still rea
     db.prepare("SELECT r.name, r.line FROM refs r JOIN files f ON f.id = r.file WHERE f.path = 'ODD' AND r.kind = 'call'").all().map((r) => ({ ...r })),
     [{ name: "GOOD", line: 4 }],
   );
+});
+
+test("a changed include re-matches the accesses of the unchanged files using it, and a changed file gets its own", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-resync-"));
+  writeFileSync(join(root, "KDREC"), " DCL 1 KD_REC,\n   2 KD_NR CHAR(8);\n");
+  writeFileSync(join(root, "KDMAIN"), " KDMAIN: PROC;\n   %INCLUDE KDREC;\n   KD_NR = 'X';\n END KDMAIN;\n");
+  const db = openGraph(join(root, ".graph.sqlite"));
+  const matched = () =>
+    db
+      .prepare("SELECT a.name, v.line FROM accesses a JOIN statements s ON s.id = a.statement JOIN files f ON f.id = s.file LEFT JOIN variables v ON v.id = a.variable WHERE f.path = 'KDMAIN'")
+      .all()
+      .map((r) => ({ ...r }));
+  await sync(db, root, indexer);
+  assert.deepEqual(matched(), [{ name: "KD_NR", line: 2 }]);
+  writeFileSync(join(root, "KDREC"), " DCL 1 KD_REC,\n   2 KD_ART CHAR(1),\n   2 KD_NR CHAR(8);\n");
+  await sync(db, root, indexer, { paths: ["KDREC"] });
+  assert.deepEqual(matched(), [{ name: "KD_NR", line: 3 }]);
+  writeFileSync(join(root, "KDMAIN"), " KDMAIN: PROC;\n   %INCLUDE KDREC;\n   KD_ART = 'G';\n   KD_NR = 'X';\n END KDMAIN;\n");
+  await sync(db, root, indexer, { paths: ["KDMAIN"] });
+  assert.deepEqual(matched(), [{ name: "KD_ART", line: 2 }, { name: "KD_NR", line: 3 }]);
 });

@@ -52,7 +52,7 @@ for (const name of readdirSync("grammars").filter((n) => n.endsWith(".wasm") || 
 }
 
 await build({
-  entryPoints: { extension: "src/extension.js", worker: "src/worker.js", mcp: "src/mcp.js" },
+  entryPoints: { extension: "src/extension.js", worker: "src/worker.js", parser: "src/parser.js", mcp: "src/mcp.js" },
   outdir: "out",
   outExtension: { ".js": ".cjs" },
   bundle: true,

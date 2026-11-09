@@ -8,10 +8,10 @@ export const indexer = await createIndexer(grammarsIn(join(import.meta.dirname, 
 
 /**
  * @param {string} root
- * @returns {import("node:sqlite").DatabaseSync}
+ * @returns {Promise<import("node:sqlite").DatabaseSync>}
  */
-export function indexed(root) {
+export async function indexed(root) {
   const db = openGraph(join(mkdtempSync(join(tmpdir(), "pli-graph-")), "graph.sqlite"));
-  sync(db, root, indexer);
+  await sync(db, root, indexer);
   return db;
 }

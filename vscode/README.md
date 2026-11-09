@@ -108,7 +108,8 @@ thread in the extension parses the sources with tree-sitter grammars compiled
 to WebAssembly (`grammars/`, built by `build-grammars.sh` from the
 `tree-sitter-*` checkouts next to this repository) and keeps one SQLite
 graph per workspace folder in the extension's workspace storage. The
-extension only reads it.
+extension only reads it. A sync of 100 files or more parses them in up to
+three more threads while the worker writes.
 
 - The first sync of a workspace reads every file once: about 8 seconds and
   350 MB of memory for 20,000 files, giving a 60 MB graph.
@@ -139,17 +140,22 @@ can read it while VS Code runs:
   `syntax_errors` counts the places the grammar could not read (from
   `error_line` on; facts there may be missing), `failure` says why reading
   the file failed, which leaves it without facts until it changes.
-- `symbols(id, file, parent, kind, name, qualifier, detail, comment, line, end_line)`:
+- `symbols(id, file, parent, kind, name, qualifier, detail, comment, line, end_line, name_line, name_col)`:
   procedures, packages, jobs, procedures in JCL, formats, messages, tables,
-  views, aliases, PSBs, DBDs and IMS transactions; `parent` is the enclosing
-  symbol, `detail` a procedure's `OPTIONS(...)` and `RETURNS(...)`, or the
-  operands of a PSB, DBD or transaction (with its `APPLCTN`'s `PSB=` and
-  `PGMTYPE=`).
+  views, aliases, PSBs, DBDs, a DBD's segments and IMS transactions; `parent`
+  is the enclosing symbol, `detail` a procedure's `OPTIONS(...)` and
+  `RETURNS(...)`, or the operands of a PSB, DBD or transaction (with its
+  `APPLCTN`'s `PSB=` and `PGMTYPE=`). `line`-`end_line` is the whole
+  definition, `name_line` and `name_col` (from 0) where its name stands, which
+  Go to Definition lands on.
 - `refs(id, file, caller, kind, name, qualifier, detail, line, col, end_line, end_col)`:
-  every call, fetch, include, program, procedure, table, screen, PSB and
-  DBD reference, `caller` being the symbol it is in. A transaction refers
-  to its PSB and to the program named like it, a PSB to the DBDs of its
-  PCBs.
+  every call, fetch, include, program, procedure, table, screen, PSB, DBD,
+  segment and cursor reference, `caller` being the symbol it is in. The
+  span is the name itself, not the statement around it. A transaction
+  refers to its PSB and to the program named like it (on its `APPLCTN`), a
+  PSB to the DBDs of its PCBs and to the segments of its `SENSEG`s (the DBD in
+  `qualifier`). A `cursor` is an SQL cursor's `DECLARE`, `OPEN`, `FETCH` or
+  `CLOSE` (in `detail`); cursors belong to their file and are not linked.
 - `links(ref, target_file, target_symbol)`: what a reference resolved to, one
   row per target; none when it did not resolve. Includes link to a file only.
 - `file_io(id, file, caller, operation, name, record, key, title, statement, line)`:
@@ -223,8 +229,8 @@ can read it while VS Code runs:
   JCL `EXEC`, `job` being its job or procedure. `program` is what runs: `PGM=`,
   `MBR=`, or for `DFSRRC00` the program in its `PARM`, where `psb` comes from
   too (or from `PSB=`).
-- `dds(id, file, step, name, dsn, member, disp, attributes, line)`: every DD
-  statement. `dsn` without the PDS member or GDG generation, which go to
+- `dds(id, file, step, name, dsn, member, disp, attributes, line, dsn_line, dsn_col)`: every DD
+  statement, with where its `dsn` stands. `dsn` without the PDS member or GDG generation, which go to
   `member` (`+1`, `0`, `KDMEMBER`); `disp` as written (`NEW,CATLG,DELETE`,
   `SHR`), `NEW` when a DSN has none. A concatenation repeats the DD name;
   `//STEP.DD` overrides belong to the step running the procedure.
@@ -260,6 +266,9 @@ can read it while VS Code runs:
   `SELECT path, syntax_errors, error_line FROM files WHERE syntax_errors > 0`
   lists them all.
 - `PLG024E` resolving a file's field accesses failed; they stay unresolved.
+- `PLG025E` a parser thread stopped (crashed or ran out of memory) while
+  reading a file; the sync goes on without that file's facts. Please report
+  it with the file.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

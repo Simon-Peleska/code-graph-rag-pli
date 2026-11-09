@@ -13,7 +13,7 @@ import { indexed } from "./indexed.js";
 
 // test/zos is a small z/OS repository of extensionless members.
 const fixture = join(import.meta.dirname, "zos");
-const graph = new Graph(indexed(fixture), fixture);
+const graph = new Graph(await indexed(fixture), fixture);
 const symbols = new Symbols(graph);
 
 /**

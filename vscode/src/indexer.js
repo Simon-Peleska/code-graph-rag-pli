@@ -5,13 +5,15 @@
 //
 //   const indexer = await createIndexer(grammars);
 //   const db = openGraph("graph.sqlite");
-//   sync(db, root, indexer);  // after start and whenever files change
+//   await sync(db, root, indexer);  // after start and whenever files change
 //
 // A sync re-reads only files whose size or time changed, then re-links only
 // the references whose meaning those files can have changed.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { Language, Parser } from "web-tree-sitter";
 import { MAIN_OPTIONS, blankMargins, languageOf, sqlOperation } from "./source.js";
@@ -22,7 +24,7 @@ import { mfsFields } from "./mfs.js";
 /**
  * procedure, package: PL/I; job, proc: JCL; format, message: MFS;
  * table, view, alias: Db2.
- * @typedef {"procedure" | "package" | "job" | "proc" | "format" | "message" | "table" | "view" | "alias" | "psb" | "dbd" | "transaction"} SymbolKind
+ * @typedef {"procedure" | "package" | "job" | "proc" | "format" | "message" | "table" | "view" | "alias" | "psb" | "dbd" | "segment" | "transaction"} SymbolKind
  */
 
 /**
@@ -34,6 +36,8 @@ import { mfsFields } from "./mfs.js";
  * @property {string | null} qualifier a Db2 object's schema: PROD in PROD.CUSTOMER
  * @property {number} line
  * @property {number} endLine
+ * @property {number} nameLine where the name stands, for Go to Definition
+ * @property {number} nameCol columns from 0
  * @property {string | null} [detail] a procedure's OPTIONS and RETURNS, a gen's or transaction's operands
  * @property {string | null} [comment] a procedure's: the comments right above it
  */
@@ -43,7 +47,9 @@ import { mfsFields } from "./mfs.js";
  * call, fetch: PL/I CALL and FETCH. invoke: PL/I `name(...)` in an
  * expression, a function call or an array element. program, procedure: what
  * a JCL step runs. screen: an MFS format or message. table: a Db2 table.
- * @typedef {"include" | "call" | "fetch" | "invoke" | "program" | "procedure" | "screen" | "table" | "psb" | "dbd"} RefKind
+ * cursor: an SQL cursor's DECLARE, OPEN, FETCH or CLOSE (in detail), never
+ * linked: a cursor is the file's own.
+ * @typedef {"include" | "call" | "fetch" | "invoke" | "program" | "procedure" | "screen" | "table" | "psb" | "dbd" | "segment" | "cursor"} RefKind
  */
 
 /**
@@ -104,6 +110,8 @@ import { mfsFields } from "./mfs.js";
  * @property {string | null} disp as written without parentheses, NEW when a DSN has none
  * @property {string} attributes the operands as written
  * @property {number} line
+ * @property {number | null} dsnLine where the dsn stands, for Find All References
+ * @property {number | null} dsnCol columns from 0
  */
 
 /**
@@ -295,12 +303,12 @@ import { mfsFields } from "./mfs.js";
 /**
  * @typedef {object} Failure
  * @property {string} path
- * @property {"PLG022E" | "PLG024E"} code PLG022E: reading the file failed; PLG024E: resolving its accesses failed
+ * @property {"PLG022E" | "PLG024E" | "PLG025E"} code PLG022E: reading the file failed; PLG024E: resolving its accesses failed; PLG025E: the thread parsing it stopped
  * @property {string} error
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 12;
+const INDEXER_VERSION = 13;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -329,7 +337,9 @@ CREATE TABLE IF NOT EXISTS symbols (
   detail TEXT,
   comment TEXT,
   line INTEGER NOT NULL,
-  end_line INTEGER NOT NULL
+  end_line INTEGER NOT NULL,
+  name_line INTEGER NOT NULL,
+  name_col INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS symbols_file ON symbols(file);
 CREATE INDEX IF NOT EXISTS symbols_name ON symbols(name);
@@ -411,7 +421,9 @@ CREATE TABLE IF NOT EXISTS dds (
   member TEXT,
   disp TEXT,
   attributes TEXT NOT NULL,
-  line INTEGER NOT NULL
+  line INTEGER NOT NULL,
+  dsn_line INTEGER,
+  dsn_col INTEGER
 );
 CREATE INDEX IF NOT EXISTS dds_file ON dds(file);
 CREATE INDEX IF NOT EXISTS dds_step ON dds(step);
@@ -634,6 +646,14 @@ export async function createIndexer(grammars) {
   };
 }
 
+// A first sync loads millions of rows. Keeping these indexes up to date row
+// by row took a quarter of it; built once at the end they cost seconds. No
+// cascading delete needs them, so a file failing midway stays cheap.
+const NAME_INDEXES = ["symbols_name", "refs_name", "variables_name", "accesses_name", "sql_columns_column", "sql_columns_host"];
+// Only the matching of names writes accesses, and nothing is deleted meanwhile.
+const ACCESS_INDEXES = ["accesses_statement", "accesses_variable", "accesses_through"];
+const INDEXES = SCHEMA.match(/^CREATE INDEX .*;$/gm) ?? [];
+
 /**
  * Opens the graph, creating its tables if needed.
  * @param {string} path
@@ -661,13 +681,15 @@ export function openGraph(path) {
  * to those files and folders (relative, forward slashes), as a file watcher
  * reports them. Files named like members, without an extension, count as
  * PL/I, JCL, MFS or Db2 unless `members` is false.
+ * With `parsers`, a sync of many files parses them in worker threads
+ * running `parsers.script` (src/parser.js, or out/parser.cjs in the bundle).
  * @param {DatabaseSync} db
  * @param {string} root
  * @param {Indexer} indexer
- * @param {{ paths?: string[], members?: boolean, onProgress?: (progress: Progress) => void }} [options]
- * @returns {SyncResult}
+ * @param {{ paths?: string[], members?: boolean, onProgress?: (progress: Progress) => void, parsers?: { script: string, grammars: Grammars } }} [options]
+ * @returns {Promise<SyncResult>}
  */
-export function sync(db, root, indexer, options = {}) {
+export async function sync(db, root, indexer, options = {}) {
   const onProgress = options.onProgress ?? (() => {});
   const started = performance.now();
 
@@ -721,10 +743,10 @@ export function sync(db, root, indexer, options = {}) {
   const deleteFile = db.prepare("DELETE FROM files WHERE id = ?");
   const insertFile = db.prepare("INSERT INTO files (path, language, member, mtime, size, syntax_errors, error_line, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   const insertSymbol = db.prepare(
-    "INSERT INTO symbols (file, parent, kind, name, qualifier, detail, comment, line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO symbols (file, parent, kind, name, qualifier, detail, comment, line, end_line, name_line, name_col) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const insertStep = db.prepare("INSERT INTO steps (file, job, name, program, procedure, psb, parm, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-  const insertDd = db.prepare("INSERT INTO dds (file, step, name, dsn, member, disp, attributes, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  const insertDd = db.prepare("INSERT INTO dds (file, step, name, dsn, member, disp, attributes, line, dsn_line, dsn_col) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const insertFileIo = db.prepare("INSERT INTO file_io (file, caller, operation, name, record, key, title, statement, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const insertSqlColumn = db.prepare(
     "INSERT INTO sql_columns (file, caller, operation, cursor, schema, table_name, column_name, usage, host, expression, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -741,7 +763,12 @@ export function sync(db, root, indexer, options = {}) {
     "INSERT INTO dli_calls (file, caller, entry, function, pcb, pcb_parameter, io_area, segment, path, arguments, line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const insertStatement = db.prepare("INSERT INTO statements (file, caller, parent, kind, branch, label, detail, line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-  const insertAccess = db.prepare("INSERT INTO accesses (statement, name, mode, value, position) VALUES (?, ?, ?, ?, ?)");
+  // A file's accesses wait here, one row per file, until they are matched
+  // to their variables and written once, matched: written row by row and
+  // then updated, they were the slowest part of a sync.
+  db.exec("CREATE TEMP TABLE IF NOT EXISTS pending_accesses (file INTEGER PRIMARY KEY, accesses TEXT NOT NULL)");
+  const insertPending = db.prepare("INSERT INTO pending_accesses (file, accesses) VALUES (?, ?)");
+  const deletePending = db.prepare("DELETE FROM pending_accesses WHERE file = ?");
   const insertComparison = db.prepare("INSERT INTO comparisons (statement, left, operator, right) VALUES (?, ?, ?, ?)");
   const insertLiteral = db.prepare("INSERT INTO literals (statement, text) VALUES (?, ?)");
   const insertVariable = db.prepare(
@@ -757,8 +784,17 @@ export function sync(db, root, indexer, options = {}) {
   const failures = [];
   /** @type {{ path: string, count: number, line: number }[]} */
   const syntaxErrors = [];
+  const fresh = !options.paths && known.size === 0;
+  // Parsing is most of a sync's time and needs no database, so many files
+  // go to threads while this one writes. A few are faster here than
+  // starting the threads, which load the grammars first.
+  const pool = options.parsers && changed.length >= PARALLEL_FROM ? startParsers(options.parsers.script, options.parsers.grammars, PARSER_THREADS) : null;
+  /** @type {Promise<ParseReply>[]} */
+  const ahead = [];
+  let parsing = 0;
   db.exec("BEGIN");
   try {
+    if (fresh) for (const name of NAME_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`);
     for (const [done, path] of [...removed, ...changed.map(([path]) => path)].entries()) {
       if (done % 200 === 0) onProgress({ phase: "parse", done, total });
       const old = known.get(path);
@@ -774,10 +810,18 @@ export function sync(db, root, indexer, options = {}) {
       // until it changes again. Cheaper than a savepoint per file.
       let file = 0;
       try {
-        const text = readFileSync(join(root, path), "utf-8");
-        let language = /** @type {keyof Grammars} */ (languageOf(path));
-        if (language === "pli" && IMS_GEN.test(text.slice(0, 4000))) language = "hlasm";
-        const parsed = parseFile(indexer, language, text);
+        let parse;
+        if (pool) {
+          const at = parsing++;
+          for (let k = at; k < Math.min(at + 2 * PARSER_THREADS, changed.length); k++) ahead[k] ??= pool.parse(root, changed[k][0]);
+          const reply = await ahead[at];
+          delete ahead[at];
+          if ("error" in reply) throw Object.assign(new Error(reply.error), { stack: reply.error, code: reply.code });
+          parse = reply;
+        } else {
+          parse = readAndParse(indexer, root, path);
+        }
+        const { language, parsed } = parse;
         file = Number(insertFile.run(path, language, memberOf(path), stat.mtime, stat.size, parsed.syntaxErrors, parsed.errorLine, null).lastInsertRowid);
         if (parsed.syntaxErrors > 0) syntaxErrors.push({ path, count: parsed.syntaxErrors, line: parsed.errorLine ?? 0 });
         /** @type {number[]} */
@@ -785,7 +829,7 @@ export function sync(db, root, indexer, options = {}) {
         for (const symbol of parsed.symbols) {
           names.add(symbol.name);
           const parent = symbol.parent < 0 ? null : symbolIds[symbol.parent];
-          const id = insertSymbol.run(file, parent, symbol.kind, symbol.name, symbol.qualifier, symbol.detail ?? null, symbol.comment ?? null, symbol.line, symbol.endLine).lastInsertRowid;
+          const id = insertSymbol.run(file, parent, symbol.kind, symbol.name, symbol.qualifier, symbol.detail ?? null, symbol.comment ?? null, symbol.line, symbol.endLine, symbol.nameLine, symbol.nameCol).lastInsertRowid;
           symbolIds.push(Number(id));
         }
         /** @type {number[]} */
@@ -820,7 +864,7 @@ export function sync(db, root, indexer, options = {}) {
           stepIds.push(Number(insertStep.run(file, job, step.name, step.program, step.procedure, step.psb, step.parm, step.line).lastInsertRowid));
         }
         for (const dd of parsed.dds) {
-          insertDd.run(file, dd.step < 0 ? null : stepIds[dd.step], dd.name, dd.dsn, dd.member, dd.disp, dd.attributes, dd.line);
+          insertDd.run(file, dd.step < 0 ? null : stepIds[dd.step], dd.name, dd.dsn, dd.member, dd.disp, dd.attributes, dd.line, dd.dsnLine, dd.dsnCol);
         }
         for (const io of parsed.fileIo) {
           insertFileIo.run(file, io.caller < 0 ? null : symbolIds[io.caller], io.operation, io.name, io.record, io.key, io.title, io.statement, io.line);
@@ -853,7 +897,14 @@ export function sync(db, root, indexer, options = {}) {
           const parent = st.parent < 0 ? null : statementIds[st.parent];
           statementIds.push(Number(insertStatement.run(file, caller, parent, st.kind, st.branch, st.label, st.detail, st.line, st.endLine).lastInsertRowid));
         }
-        for (const a of parsed.accesses) insertAccess.run(statementIds[a.statement], a.name, a.mode, a.value, a.position);
+        if (parsed.accesses.length) {
+          /** @type {PendingAccess[]} */
+          const pending = parsed.accesses.map((a) => {
+            const caller = parsed.statements[a.statement].caller;
+            return [statementIds[a.statement], caller < 0 ? null : symbolIds[caller], a.name, a.mode, a.value, a.position];
+          });
+          insertPending.run(file, JSON.stringify(pending));
+        }
         for (const c of parsed.comparisons) insertComparison.run(statementIds[c.statement], c.left, c.operator, c.right);
         for (const l of parsed.literals) insertLiteral.run(statementIds[l.statement], l.text);
         for (const ref of parsed.refs) {
@@ -862,19 +913,25 @@ export function sync(db, root, indexer, options = {}) {
         }
         added.push(file);
       } catch (error) {
-        if (file) deleteFile.run(file);
+        if (file) {
+          deleteFile.run(file);
+          deletePending.run(file);
+        }
         const failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
-        failures.push({ path, code: "PLG022E", error: failure });
+        failures.push({ path, code: error instanceof Error && "code" in error && error.code === "PLG025E" ? "PLG025E" : "PLG022E", error: failure });
         added.push(Number(insertFile.run(path, languageOf(path) ?? "pli", memberOf(path), stat.mtime, stat.size, 0, null, failure).lastInsertRowid));
         continue;
       }
     }
     const parsedAt = performance.now();
 
-    /** @type {RefRow[]} */
+    // A full sync streams the refs: held at once, millions of rows took gigabytes.
+    /** @type {Iterable<RefRow>} */
     let refs;
-    if (!options.paths && known.size === 0) {
-      refs = /** @type {RefRow[]} */ (db.prepare(`SELECT ${REF_COLUMNS} FROM refs`).all());
+    let relinked;
+    if (fresh) {
+      refs = /** @type {Iterable<RefRow>} */ (db.prepare(`SELECT ${REF_COLUMNS} FROM refs`).iterate());
+      relinked = /** @type {{ n: number }} */ (db.prepare("SELECT count(*) AS n FROM refs").get()).n;
     } else {
       const ofNames = db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE name IN (SELECT value FROM json_each(?))`);
       const ofFiles = db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE file IN (SELECT value FROM json_each(?))`);
@@ -884,15 +941,16 @@ export function sync(db, root, indexer, options = {}) {
         unique.set(row.id, row);
       }
       refs = [...unique.values()];
+      relinked = unique.size;
     }
-    onProgress({ phase: "link", done: 0, total: refs.length });
-    link(db, refs);
+    onProgress({ phase: "link", done: 0, total: relinked });
+    if (relinked > 0) link(db, refs);
     const linkedAt = performance.now();
     // A file's accesses can mean other variables when it changed, or when
     // an include it uses, directly or through another include, did.
     /** @type {number[]} */
     let toResolve;
-    if (!options.paths && known.size === 0) {
+    if (fresh) {
       toResolve = /** @type {{ id: number }[]} */ (db.prepare("SELECT id FROM files WHERE language = 'pli'").all()).map((f) => f.id);
     } else {
       const including = db.prepare(
@@ -907,16 +965,21 @@ export function sync(db, root, indexer, options = {}) {
       }
       toResolve = [...found];
     }
-    const resolved = resolveAccesses(db, toResolve, failures);
+    const pendingFiles = /** @type {{ file: number }[]} */ (db.prepare("SELECT file FROM pending_accesses").all()).map((r) => r.file);
+    toResolve = [...new Set([...toResolve, ...pendingFiles])];
+    if (fresh) for (const name of ACCESS_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`);
+    const resolved = resolveAccesses(db, toResolve, failures, fresh);
+    db.exec("DELETE FROM pending_accesses");
+    for (const index of INDEXES) db.exec(index);
     if (total > 0) {
       db.exec(`INSERT INTO meta (name, value) VALUES ('graph_version', 1)
                ON CONFLICT (name) DO UPDATE SET value = value + 1`);
     }
     db.exec("COMMIT");
-    onProgress({ phase: "link", done: refs.length, total: refs.length });
+    onProgress({ phase: "link", done: relinked, total: relinked });
     return {
       changed: total,
-      relinked: refs.length,
+      relinked,
       resolved,
       parseMs: Math.round(parsedAt - started),
       linkMs: Math.round(linkedAt - parsedAt),
@@ -926,8 +989,103 @@ export function sync(db, root, indexer, options = {}) {
     };
   } catch (error) {
     db.exec("ROLLBACK");
+    db.exec("DELETE FROM pending_accesses");
     throw error;
+  } finally {
+    pool?.close();
   }
+}
+
+/**
+ * @typedef {{ language: keyof Grammars, parsed: ParsedFile }} Parse
+ * @typedef {Parse | { error: string, code?: "PLG025E" }} ParseReply
+ */
+
+/**
+ * Reads a file and parses it in its language.
+ * @param {Indexer} indexer
+ * @param {string} root
+ * @param {string} path
+ * @returns {Parse}
+ */
+export function readAndParse(indexer, root, path) {
+  const text = readFileSync(join(root, path), "utf-8");
+  let language = /** @type {keyof Grammars} */ (languageOf(path));
+  if (language === "pli" && IMS_GEN.test(text.slice(0, 4000))) language = "hlasm";
+  return { language, parsed: parseFile(indexer, language, text) };
+}
+
+const PARALLEL_FROM = 100;
+// One core stays with the writing thread and one with the editor. Each
+// thread holds the grammars and its largest tree, about 200 MB, and RAM is
+// tighter than cores on the laptops this runs on.
+const PARSER_THREADS = Math.max(1, Math.min(3, availableParallelism() - 2));
+
+/**
+ * Starts `size` threads running `script`, each parsing the files it is sent.
+ * A reply never rejects: a failure is `{ error }`, so replies can wait
+ * ahead unawaited.
+ * @param {string} script
+ * @param {Grammars} grammars
+ * @param {number} size
+ */
+function startParsers(script, grammars, size) {
+  /** @type {Map<number, (reply: ParseReply) => void>} */
+  const waiting = new Map();
+  let nextId = 0;
+  let closing = false;
+  /** @typedef {{ worker: Worker, jobs: Map<number, { root: string, path: string }> }} Thread */
+  /** @type {Thread[]} */
+  const threads = [];
+  /** @param {Thread} thread @param {number} id @param {{ root: string, path: string }} job */
+  const send = (thread, id, job) => {
+    thread.jobs.set(id, job);
+    thread.worker.postMessage({ id, ...job });
+  };
+  const start = () => {
+    /** @type {Thread} */
+    const thread = { worker: new Worker(script, { workerData: { grammars } }), jobs: new Map() };
+    thread.worker.on("message", (/** @type {{ id: number } & ParseReply} */ { id, ...reply }) => {
+      thread.jobs.delete(id);
+      waiting.get(id)?.(reply);
+      waiting.delete(id);
+    });
+    // A thread works through its files in order, so the first it had
+    // killed it: that one fails like an unreadable file, and a new thread
+    // takes the rest.
+    let why = "";
+    thread.worker.on("error", (error) => (why = error.stack ?? error.message));
+    thread.worker.on("exit", (code) => {
+      if (closing) return;
+      const [first, ...rest] = thread.jobs;
+      if (first) {
+        waiting.get(first[0])?.({ error: `The parser thread stopped with exit code ${code}: ${why}`, code: "PLG025E" });
+        waiting.delete(first[0]);
+      }
+      const next = start();
+      threads.splice(threads.indexOf(thread), 1, next);
+      for (const [id, job] of rest) send(next, id, job);
+    });
+    return thread;
+  };
+  for (let i = 0; i < size; i++) threads.push(start());
+  return {
+    /**
+     * @param {string} root
+     * @param {string} path
+     * @returns {Promise<ParseReply>}
+     */
+    parse(root, path) {
+      const id = nextId++;
+      const thread = threads.reduce((least, t) => (t.jobs.size < least.jobs.size ? t : least));
+      send(thread, id, { root, path });
+      return new Promise((resolve) => waiting.set(id, resolve));
+    },
+    close() {
+      closing = true;
+      for (const thread of threads) void thread.worker.terminate();
+    },
+  };
 }
 
 /**
@@ -1011,17 +1169,48 @@ function syntaxErrorsIn(root) {
  * @param {string | null} [qualifier]
  */
 function addRef(file, caller, kind, name, site, detail = null, qualifier = null) {
-  file.refs.push({
-    caller,
-    kind,
-    name,
-    qualifier,
-    detail,
-    line: site.startPosition.row + 1,
-    col: site.startPosition.column,
-    endLine: site.endPosition.row + 1,
-    endCol: site.endPosition.column,
-  });
+  // Find All References lands on the name, not at the start of the
+  // statement naming it: `KUNDE` in `EXEC SQL SELECT ... FROM PROD.KUNDE`.
+  const at = nameIn(site, name);
+  if (!at) {
+    file.refs.push({
+      caller, kind, name, qualifier, detail,
+      line: site.startPosition.row + 1, col: site.startPosition.column,
+      endLine: site.endPosition.row + 1, endCol: site.endPosition.column,
+    });
+    return;
+  }
+  file.refs.push({ caller, kind, name, qualifier, detail, line: at.line, col: at.col, endLine: at.line, endCol: at.col + name.length });
+}
+
+/** @param {number} code a character code, NaN past either end */
+const isNameChar = (code) =>
+  (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95 || code === 64 || code === 35 || code === 36;
+
+/**
+ * Where `name` first stands in the site's text as a whole word.
+ * @param {Node} site
+ * @param {string} name
+ * @returns {{ line: number, col: number } | null} line from 1, column from 0
+ */
+function nameIn(site, name) {
+  // indexOf, not a regex: a case-insensitive regex with lookbehind cost 7 µs a call, 1.2 s a sync.
+  const text = site.text;
+  let upper = text.toUpperCase();
+  // ß uppercases to SS, which would shift every column after it.
+  if (upper.length !== text.length) upper = text.replace(/[a-z]/g, (c) => c.toUpperCase());
+  const wanted = name.toUpperCase();
+  let at = upper.indexOf(wanted);
+  while (at >= 0 && (isNameChar(upper.charCodeAt(at - 1)) || isNameChar(upper.charCodeAt(at + wanted.length)))) {
+    at = upper.indexOf(wanted, at + 1);
+  }
+  if (at < 0) return null;
+  const before = text.slice(0, at);
+  const lineStart = before.lastIndexOf("\n");
+  return {
+    line: site.startPosition.row + 1 + (before.match(/\n/g)?.length ?? 0),
+    col: lineStart < 0 ? site.startPosition.column + at : at - lineStart - 1,
+  };
 }
 
 /**
@@ -1034,7 +1223,13 @@ function addRef(file, caller, kind, name, site, detail = null, qualifier = null)
  * @returns {number} its position in the file's symbols
  */
 function addSymbol(file, parent, kind, name, site, qualifier = null) {
-  file.symbols.push({ parent, kind, name, qualifier, line: site.startPosition.row + 1, endLine: site.endPosition.row + 1 });
+  // The definition's span starts at the statement; Go to Definition lands on the name.
+  const at = nameIn(site, name);
+  file.symbols.push({
+    parent, kind, name, qualifier,
+    line: site.startPosition.row + 1, endLine: site.endPosition.row + 1,
+    nameLine: at?.line ?? site.startPosition.row + 1, nameCol: at?.col ?? site.startPosition.column,
+  });
   return file.symbols.length - 1;
 }
 
@@ -1228,6 +1423,10 @@ function readPli(root, file, db2) {
               addRef(file, caller, "table", table.name, node, sqlOperation(node.text, table.name) ?? null, table.qualifier);
             }
             readSql(tree.rootNode, file, caller, cursors, language.startPosition.row + 1);
+            const first = tree.rootNode.namedChildren[0];
+            const verb = first && CURSOR_STATEMENTS[first.type];
+            const cursor = verb && (first.childForFieldName("cursor") ?? first.childForFieldName("name"))?.text.toUpperCase();
+            if (verb && cursor) addRef(file, caller, "cursor", cursor, node, verb);
             tree.delete();
           }
         }
@@ -1680,10 +1879,13 @@ function readJcl(root, file) {
         // `//STEP2.EIN DD` overrides EIN in the procedure STEP2 runs; a nameless DD continues a concatenation.
         const name = written ? written.slice(written.lastIndexOf(".") + 1) : (file.dds.at(-1)?.name ?? "");
         /** @type {ParsedDd} */
-        const dd = { step: file.steps.length - 1, name, dsn: null, member: null, disp: null, attributes: operandsText(statement), line: statement.startPosition.row + 1 };
+        const dd = { step: file.steps.length - 1, name, dsn: null, member: null, disp: null, attributes: operandsText(statement), line: statement.startPosition.row + 1, dsnLine: null, dsnCol: null };
         for (const [key, value] of jclParameters(statement)) {
           if (key === "DSN" || key === "DSNAME") {
-            dd.dsn = (value.namedChildren[0]?.text ?? value.text).toUpperCase();
+            const dsn = value.namedChildren[0] ?? value;
+            dd.dsn = dsn.text.toUpperCase();
+            dd.dsnLine = dsn.startPosition.row + 1;
+            dd.dsnCol = dsn.startPosition.column;
             const inParentheses = value.namedChildren[1];
             if (inParentheses) dd.member = inParentheses.text.replace(/^\(|\)$/g, "").toUpperCase();
           } else if (key === "DISP") {
@@ -1735,11 +1937,11 @@ const valueNumber = (value) => (value && /^\d+$/.test(value) ? Number(value) : n
  */
 function readHlasm(root, file) {
   // A PSB's PCBs come before the PSBGEN that names it.
-  /** @type {{ pcb: number, statement: Node }[]} */
+  /** @type {{ pcb: number, statement: Node, sensegs: { name: string, statement: Node }[] }[]} */
   let pcbsOfPsb = [];
   let dbd = -1;
-  /** @type {{ psb: string | null, type: string | null }} the APPLCTN the TRANSACTs below belong to */
-  let application = { psb: null, type: null };
+  /** @type {{ psb: string | null, type: string | null, statement: Node | null }} the APPLCTN the TRANSACTs below belong to */
+  let application = { psb: null, type: null, statement: null };
   for (const statement of root.namedChildren) {
     if (statement?.type !== "statement") continue;
     const operation = fieldText(statement, "operation").toUpperCase();
@@ -1754,7 +1956,7 @@ function readHlasm(root, file) {
       const line = statement.startPosition.row + 1;
       const attributes = [...keys].map(([key, value]) => `${key}=${value}`).join(",");
       if (operation === "PCB") {
-        pcbsOfPsb.push({ pcb: file.pcbs.length, statement });
+        pcbsOfPsb.push({ pcb: file.pcbs.length, statement, sensegs: [] });
         file.pcbs.push({
           psb: -1,
           position: pcbsOfPsb.length,
@@ -1768,15 +1970,19 @@ function readHlasm(root, file) {
       } else if (operation === "SENSEG" && name && file.pcbs.length) {
         const parent = valueWords(keys.get("PARENT"))[0] ?? null;
         file.sensegs.push({ pcb: file.pcbs.length - 1, name, parent: parent === "0" ? null : parent, procopt: keys.get("PROCOPT") ?? null, line });
+        pcbsOfPsb[pcbsOfPsb.length - 1]?.sensegs.push({ name, statement });
       } else if (operation === "PSBGEN") {
         const psbName = valueWords(keys.get("PSBNAME"))[0];
         if (!psbName) continue;
         const psb = addSymbol(file, -1, "psb", psbName, statement);
         file.symbols[psb].detail = attributes;
-        for (const { pcb, statement: site } of pcbsOfPsb) {
+        for (const { pcb, statement: site, sensegs } of pcbsOfPsb) {
           file.pcbs[pcb].psb = psb;
           const target = file.pcbs[pcb].dbd;
-          if (target) addRef(file, psb, "dbd", target, site);
+          if (!target) continue;
+          addRef(file, psb, "dbd", target, site);
+          // A sensitive segment is a segment of the PCB's DBD.
+          for (const senseg of sensegs) addRef(file, psb, "segment", senseg.name, senseg.statement, null, target);
         }
         pcbsOfPsb = [];
       } else if (operation === "DBD" && name) {
@@ -1786,6 +1992,7 @@ function readHlasm(root, file) {
         const parent = valueWords(keys.get("PARENT"))[0] ?? null;
         const position = file.segments.filter((s) => s.dbd === dbd).length + 1;
         file.segments.push({ dbd, name, parent: parent === "0" ? null : parent, bytes: valueNumber(valueWords(keys.get("BYTES"))[0]), position, line });
+        addSymbol(file, dbd, "segment", name, statement);
       } else if (operation === "FIELD" && name && file.segments.length) {
         const words = valueWords(keys.get("NAME"));
         file.segmentFields.push({
@@ -1798,15 +2005,15 @@ function readHlasm(root, file) {
           line,
         });
       } else if (operation === "APPLCTN") {
-        application = { psb: valueWords(keys.get("PSB"))[0] ?? null, type: keys.get("PGMTYPE") ?? null };
+        application = { psb: valueWords(keys.get("PSB"))[0] ?? null, type: keys.get("PGMTYPE") ?? null, statement };
       } else if (operation === "TRANSACT") {
         // A transaction runs the program named like its application's PSB.
         for (const code of valueWords(keys.get("CODE"))) {
           const transaction = addSymbol(file, -1, "transaction", code, statement);
           file.symbols[transaction].detail = [application.psb && `PSB=${application.psb}`, application.type && `PGMTYPE=${application.type}`, attributes].filter(Boolean).join(",");
-          if (!application.psb) continue;
-          addRef(file, transaction, "psb", application.psb, statement);
-          addRef(file, transaction, "program", application.psb, statement);
+          if (!application.psb || !application.statement) continue;
+          addRef(file, transaction, "psb", application.psb, application.statement);
+          addRef(file, transaction, "program", application.psb, application.statement);
         }
       }
       continue;
@@ -1945,6 +2152,13 @@ const SQL_OPERATIONS = /** @type {Record<string, string>} */ ({
   delete_statement: "DELETE",
   declare_cursor_statement: "DECLARE",
   fetch_statement: "FETCH",
+});
+
+const CURSOR_STATEMENTS = /** @type {Record<string, string>} */ ({
+  declare_cursor_statement: "DECLARE",
+  open_statement: "OPEN",
+  fetch_statement: "FETCH",
+  close_statement: "CLOSE",
 });
 
 // The clauses that say how a column inside them is used.
@@ -2188,6 +2402,11 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  */
 
 /**
+ * An access as it waits to be matched: statement, caller, name, mode, value, position.
+ * @typedef {[number, number | null, string, string, string | null, number | null]} PendingAccess
+ */
+
+/**
  * @typedef {object} VariableRow
  * @property {number} id
  * @property {number | null} scope
@@ -2209,9 +2428,10 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  * @param {DatabaseSync} db
  * @param {number[]} files
  * @param {Failure[]} failures where a file whose resolution failed is added
+ * @param {boolean} fresh every access is still pending, so none is read back
  * @returns {number} accesses resolved
  */
-function resolveAccesses(db, files, failures) {
+function resolveAccesses(db, files, failures, fresh) {
   const variablesOf = db.prepare("SELECT id, scope, parent, name, qualified, like, init, base, parameter FROM variables WHERE file = ? ORDER BY id");
   const includesOf = db.prepare(
     "SELECT r.caller, l.target_file AS target FROM refs r JOIN links l ON l.ref = r.id WHERE r.file = ? AND r.kind = 'include' ORDER BY r.id",
@@ -2219,44 +2439,71 @@ function resolveAccesses(db, files, failures) {
   const parentsOf = db.prepare("SELECT id, parent, detail FROM symbols WHERE file = ?");
   const dliCallsOf = db.prepare("SELECT id, caller, entry, arguments FROM dli_calls WHERE file = ?");
   const updateDliCall = db.prepare("UPDATE dli_calls SET function = ?, pcb_parameter = ?, segment = ?, path = ? WHERE id = ?");
+  const pendingOf = db.prepare("SELECT accesses FROM pending_accesses WHERE file = ?");
+  const insert = db.prepare("INSERT INTO accesses (statement, name, mode, value, position, variable, through) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const accessesOf = db.prepare("SELECT a.id, a.name, s.caller FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ?");
   const clear = db.prepare("UPDATE accesses SET variable = NULL, through = NULL WHERE statement IN (SELECT id FROM statements WHERE file = ?) AND variable IS NOT NULL");
   const update = db.prepare("UPDATE accesses SET variable = ?, through = ? WHERE id = ?");
   const pathOf = db.prepare("SELECT path FROM files WHERE id = ?");
 
-  /** @type {Map<number, VariableRow[]>} an include's variables with those of the includes in it */
+  /** @typedef {Map<string, VariableRow[]>} ByName variables by their own name */
+  /** @param {ByName} byName @param {VariableRow} v */
+  const declare = (byName, v) => {
+    const list = byName.get(v.name);
+    if (list) list.push(v);
+    else byName.set(v.name, [v]);
+  };
+  // Built once per include and shared by every file including it: rebuilt
+  // per file, 25 copybooks of hundreds of fields took most of the time.
+  /** @type {Map<number, ByName[]>} an include's variables, and those of the includes in it */
   const included = new Map();
-  /** @param {number} file @param {Set<number>} seen */
+  /** @param {number} file @param {Set<number>} seen @returns {ByName[]} */
   const variablesIncluded = (file, seen) => {
     const known = included.get(file);
     if (known) return known;
-    const list = /** @type {VariableRow[]} */ (variablesOf.all(file));
+    /** @type {ByName} */
+    const own = new Map();
+    for (const v of /** @type {VariableRow[]} */ (variablesOf.all(file))) declare(own, v);
+    const tables = [own];
     seen.add(file);
     for (const include of /** @type {{ target: number }[]} */ (includesOf.all(file))) {
-      if (!seen.has(include.target)) list.push(...variablesIncluded(include.target, seen));
+      if (!seen.has(include.target)) tables.push(...variablesIncluded(include.target, seen));
     }
-    included.set(file, list);
-    return list;
+    included.set(file, tables);
+    return tables;
   };
 
+  /** @type {WeakMap<VariableRow, string[]>} `qualified` split, once it was needed */
+  const levelsOf = new WeakMap();
   let resolved = 0;
   for (const file of files) {
+    // A new file's accesses are written now; an unchanged one's, whose
+    // includes changed, are matched again in place.
+    const pending = /** @type {{ accesses: string } | undefined} */ (pendingOf.get(file));
+    const rows = pending ? /** @type {PendingAccess[]} */ (JSON.parse(pending.accesses)) : null;
+    const accesses = rows
+      ? rows.map(([, caller, name]) => ({ id: 0, name, caller }))
+      : fresh
+        ? []
+        : /** @type {{ id: number, name: string, caller: number | null }[]} */ (accessesOf.all(file));
+    /** @type {(VariableRow | undefined)[]} */
+    const variables = [];
+    /** @type {(number | null)[]} */
+    const throughs = [];
     // A bug on one odd file leaves its accesses unresolved, not the sync undone.
     try {
-      // The variables each scope declares, by their own name; 0 is the file's.
-      /** @type {Map<number, Map<string, VariableRow[]>>} */
+      // The variables each scope declares; 0 is the file's.
+      /** @type {Map<number, ByName[]>} */
       const scopes = new Map();
-      /** @param {number} scope @param {VariableRow} v */
-      const declare = (scope, v) => {
-        let byName = scopes.get(scope);
-        if (!byName) scopes.set(scope, (byName = new Map()));
-        const list = byName.get(v.name);
-        if (list) list.push(v);
-        else byName.set(v.name, [v]);
+      /** @param {number} scope */
+      const tablesOf = (scope) => {
+        let tables = scopes.get(scope);
+        if (!tables) scopes.set(scope, (tables = [new Map()]));
+        return tables;
       };
-      for (const v of /** @type {VariableRow[]} */ (variablesOf.all(file))) declare(v.scope ?? 0, v);
+      for (const v of /** @type {VariableRow[]} */ (variablesOf.all(file))) declare(tablesOf(v.scope ?? 0)[0], v);
       for (const include of /** @type {{ caller: number | null, target: number }[]} */ (includesOf.all(file))) {
-        for (const v of variablesIncluded(include.target, new Set([file]))) declare(include.caller ?? 0, v);
+        tablesOf(include.caller ?? 0).push(...variablesIncluded(include.target, new Set([file])));
       }
       /** @type {Map<number, number>} */
       const parentOf = new Map();
@@ -2271,9 +2518,16 @@ function resolveAccesses(db, files, failures) {
       const find = (parts, from) => {
         const last = parts[parts.length - 1];
         for (let scope = from; ; scope = parentOf.get(scope) ?? 0) {
-          const matches = (scopes.get(scope)?.get(last) ?? []).filter((v) => {
+          /** @type {VariableRow[]} */
+          const named = [];
+          for (const byName of scopes.get(scope) ?? []) {
+            const list = byName.get(last);
+            if (list) named.push(...list);
+          }
+          const matches = parts.length === 1 ? named : named.filter((v) => {
             // The qualifiers given must be the variable's, in order, but may skip levels.
-            const levels = v.qualified.split(".");
+            let levels = levelsOf.get(v);
+            if (!levels) levelsOf.set(v, (levels = v.qualified.split(".")));
             let at = 0;
             for (const part of parts.slice(0, -1)) {
               while (at < levels.length - 1 && levels[at] !== part) at++;
@@ -2287,8 +2541,7 @@ function resolveAccesses(db, files, failures) {
         }
       };
 
-      clear.run(file);
-      for (const access of /** @type {{ id: number, name: string, caller: number | null }[]} */ (accessesOf.all(file))) {
+      for (const access of accesses) {
         const parts = access.name.split(".");
         const scope = access.caller ?? 0;
         let variable = find(parts, scope);
@@ -2300,14 +2553,14 @@ function resolveAccesses(db, files, failures) {
           variable = find([...structure.like.split("."), ...parts.slice(i)], scope);
           if (variable) through = structure.id;
         }
-        if (!variable) continue;
-        update.run(variable.id, through, access.id);
-        resolved++;
+        variables.push(variable);
+        throughs.push(through);
       }
 
+      const dliCalls = /** @type {{ id: number, caller: number | null, entry: string, arguments: string }[]} */ (dliCallsOf.all(file));
       /** @type {Map<number, VariableRow>} each structure's first field */
       const firstFields = new Map();
-      for (const byName of scopes.values()) {
+      for (const byName of dliCalls.length ? [...scopes.values()].flat() : []) {
         for (const list of byName.values()) {
           for (const v of list) {
             const known = v.parent === null ? undefined : firstFields.get(v.parent);
@@ -2315,7 +2568,7 @@ function resolveAccesses(db, files, failures) {
           }
         }
       }
-      for (const call of /** @type {{ id: number, caller: number | null, entry: string, arguments: string }[]} */ (dliCallsOf.all(file))) {
+      for (const call of dliCalls) {
         const scope = call.caller ?? 0;
         /** A literal's value, or the INIT of the variable (of a structure, its first field's). @param {string | undefined} arg */
         const value = (arg) => {
@@ -2343,6 +2596,21 @@ function resolveAccesses(db, files, failures) {
       const path = /** @type {{ path: string }} */ (pathOf.get(file)).path;
       failures.push({ path, code: "PLG024E", error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
     }
+    if (rows) {
+      for (const [i, [statement, , name, mode, value, position]] of rows.entries()) {
+        const variable = variables[i];
+        insert.run(statement, name, mode, value, position, variable?.id ?? null, throughs[i] ?? null);
+        if (variable) resolved++;
+      }
+    } else if (!fresh) {
+      clear.run(file);
+      for (const [i, access] of accesses.entries()) {
+        const variable = variables[i];
+        if (!variable) continue;
+        update.run(variable.id, throughs[i], access.id);
+        resolved++;
+      }
+    }
   }
   return resolved;
 }
@@ -2350,10 +2618,9 @@ function resolveAccesses(db, files, failures) {
 /**
  * Replaces the links of these references with what they mean now.
  * @param {DatabaseSync} db
- * @param {RefRow[]} refs
+ * @param {Iterable<RefRow>} refs
  */
 function link(db, refs) {
-  if (refs.length === 0) return;
   // Everything a reference can mean, read whole: a few hundred ms for
   // 20,000 files, and one plain function for full and partial syncs.
   const files = /** @type {{ id: number, path: string, member: string, language: string }[]} */ (
@@ -2389,10 +2656,12 @@ function link(db, refs) {
   const psbs = new Map();
   /** @type {Map<string, SymbolRow[]>} */
   const dbds = new Map();
+  /** @type {Map<string, SymbolRow[]>} */
+  const segments = new Map();
   /** @type {Set<number>} the files of PSB and DBD gens, which no program is, though named like one */
   const genFiles = new Set();
   /** @type {Record<string, Map<string, SymbolRow[]> | undefined>} */
-  const definedBy = { format: screens, message: screens, table: tables, view: tables, alias: tables, psb: psbs, dbd: dbds };
+  const definedBy = { format: screens, message: screens, table: tables, view: tables, alias: tables, psb: psbs, dbd: dbds, segment: segments };
   for (const symbol of symbols) {
     symbolById.set(symbol.id, symbol);
     const list = symbolsOf.get(symbol.file);
@@ -2436,8 +2705,15 @@ function link(db, refs) {
     const best = Math.min(...definitions.map((s) => distance(from, s.file)));
     return definitions.filter((s) => distance(from, s.file) === best);
   };
+  /** @type {Map<number, Map<string, SymbolRow>>} each file's symbols by name, the first of a name */
+  const namedIn = new Map();
+  for (const [file, list] of symbolsOf) {
+    const byName = new Map();
+    for (const s of list) if (!byName.has(s.name)) byName.set(s.name, s);
+    namedIn.set(file, byName);
+  }
   /** @param {number} file @param {string} name */
-  const symbolNamed = (file, name) => symbolsOf.get(file)?.find((s) => s.name === name);
+  const symbolNamed = (file, name) => namedIn.get(file)?.get(name);
   /** @param {SymbolRow} symbol @returns {Target} */
   const at = (symbol) => ({ file: symbol.file, symbol: symbol.id });
 
@@ -2497,6 +2773,13 @@ function link(db, refs) {
         return nearest(psbs.get(ref.name) ?? [], ref.file).map(at);
       case "dbd":
         return nearest(dbds.get(ref.name) ?? [], ref.file).map(at);
+      case "segment": {
+        // A segment of the DBD the PCB names (in the qualifier).
+        const inDbd = (segments.get(ref.name) ?? []).filter((s) => s.parent !== null && symbolById.get(s.parent)?.name === ref.qualifier);
+        return inDbd.length ? nearest(inDbd, ref.file).map(at) : [];
+      }
+      case "cursor":
+        return [];
     }
     // A PL/I procedure of this file, then of a file it includes, then an
     // external one.

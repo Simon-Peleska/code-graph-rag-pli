@@ -271,7 +271,7 @@ function startWorker(context) {
         `linked ${result.relinked} references in ${result.linkMs} ms`,
     );
     for (const f of result.failures) {
-      const what = f.code === "PLG022E" ? "Reading" : "Resolving the fields of";
+      const what = f.code === "PLG024E" ? "Resolving the fields of" : "Reading";
       log.error(`[${f.code}] ${what} ${f.path} failed; its facts are missing. Please report it with the file.\n${f.error}`);
     }
     for (const e of result.syntaxErrors) {
@@ -496,7 +496,7 @@ function openText(folder, path) {
 /** @param {Symbol} s @returns {Place} */
 const symbolPlace = (s) => ({ path: s.path, line: s.line, col: s.col, endCol: s.endCol });
 /** @param {Target} t @returns {Place} */
-const targetPlace = (t) => ({ path: t.path, line: t.line - 1, col: 0 });
+const targetPlace = (t) => ({ path: t.path, line: t.line - 1, col: t.col ?? 0, endCol: t.endCol });
 
 /**
  * Where the name at `position` is defined: what the indexer resolved for
@@ -538,6 +538,7 @@ function definitionsAt(document, position) {
  * @returns {vscode.Location[]}
  */
 function provideDefinition(document, position) {
+  const started = Date.now();
   const found = definitionsAt(document, position);
   const where = locate(document.uri);
   if (!found || !where) {
@@ -545,7 +546,7 @@ function provideDefinition(document, position) {
   }
   const seen = new Set();
   const places = found.places.filter((p) => !seen.has(`${p.path}:${p.line}:${p.col}`) && seen.add(`${p.path}:${p.line}:${p.col}`));
-  log.info(`definition of ${found.word} at ${where.path}:${position.line + 1}: ${places.length} found by ${found.how}`);
+  log.info(`definition of ${found.word} at ${where.path}:${position.line + 1}: ${places.length} found by ${found.how} in ${Date.now() - started} ms`);
   // Ctrl+click on a definition shows its references instead, but only when
   // the definition VS Code gets back covers the cursor.
   if (places.some((p) => p.path === where.path && p.line === position.line)) {
@@ -778,12 +779,13 @@ function treeView(id, direction) {
  */
 async function open(folder, target) {
   const uri = vscode.Uri.joinPath(folder, target.path);
-  const position = new vscode.Position(target.line - 1, 0);
+  const start = new vscode.Position(target.line - 1, target.col ?? 0);
+  const end = new vscode.Position(target.line - 1, target.endCol ?? target.col ?? 0);
   if (uri.toString() !== vscode.window.activeTextEditor?.document.uri.toString()) {
     openedFromTree = uri.toString();
   }
   try {
-    await vscode.window.showTextDocument(uri, { selection: new vscode.Range(position, position), preserveFocus: true });
+    await vscode.window.showTextDocument(uri, { selection: new vscode.Range(start, end), preserveFocus: true });
   } catch (error) {
     const message = `[PLG004E] Opening ${target.path} failed: ${error}`;
     log.error(message);

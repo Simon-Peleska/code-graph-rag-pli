@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG024E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG025E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -45,9 +45,14 @@ The other languages are linked to PL/I and to each other:
 |---|---|---|
 | JCL (`.jcl`, `.cntl`) | `JOB`, named `PROC` | `PGM=X`, `MBR=X` (IMS procedures), the program and PSB in `PGM=DFSRRC00,PARM='BMP,X,PSB'`, `RUN PROGRAM(X)` in SYSTSIN data, `EXEC X` / `EXEC PROC=X` (in-stream or cataloged procedure) |
 | MFS (`.mfs`, `.asm`, `.hlasm`, `.mlc`) | `FMT`, `MSG` | `SOR=` format and `NXT=` message of a MSG |
-| PSB and DBD gens, IMS system definition | `PSBGEN`, `DBD`, `TRANSACT` | a PSB's DBDs; a transaction's PSB and the program named like it (from its `APPLCTN`) |
+| PSB and DBD gens, IMS system definition | `PSBGEN`, `DBD`, `SEGM`, `TRANSACT` | a PSB's DBDs and, by `SENSEG`, their segments; a transaction's PSB and the program named like it (on its `APPLCTN`) |
 | Db2 DDL (`.ddl`, `.db2`) | `CREATE TABLE` / `VIEW` / `ALIAS` | tables a view selects from, `REFERENCES` tables, the alias target |
-| PL/I | (above) | tables in `EXEC SQL` (with `SELECT`, `INSERT`, `UPDATE`, `DELETE`), MFS formats and messages named in string literals (`'CUSTO   '`) |
+| PL/I | (above) | tables in `EXEC SQL` (with `SELECT`, `INSERT`, `UPDATE`, `DELETE`), MFS formats and messages named in string literals (`'CUSTO   '`), a cursor's `DECLARE` from its `OPEN`, `FETCH` and `CLOSE` (in the same file) |
+
+A JCL dataset's definition is the DD creating it (`DISP=NEW` or `MOD`), and
+its references are every DD naming it. Every reference points at the name
+itself, and every definition at its name, so Go to Definition and Find All
+References land on the word, both ways.
 
 PSB, DBD and system definition sources are recognized by their first
 statement (`PSBGEN`, `PCB`, `DBD`, `SEGM`, `APPLCTN`, `TRANSACT`, ...), with

@@ -44,14 +44,14 @@ const FILES = {
   "PROD/DDL/KUNDE.ddl": table,
 };
 
-test("a name links to the nearest copy: local, subfolder, parent, sibling, then further out", () => {
+test("a name links to the nearest copy: local, subfolder, parent, sibling, then further out", async () => {
   const root = mkdtempSync(join(tmpdir(), "pli-stages-"));
   for (const [path, text] of Object.entries(FILES)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);
   }
   const db = openGraph(join(root, ".graph.sqlite"));
-  sync(db, root, indexer);
+  await sync(db, root, indexer);
   const links = db
     .prepare(
       `SELECT r.kind, r.name, t.path FROM refs r JOIN files f ON f.id = r.file JOIN links l ON l.ref = r.id JOIN files t ON t.id = l.target_file

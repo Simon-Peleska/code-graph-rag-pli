@@ -7,26 +7,26 @@ import { indexed } from "./indexed.js";
 /** @typedef {import("../src/graph.js").TreeRow} TreeRow */
 
 const fixture = join(import.meta.dirname, "fixture");
-const db = indexed(fixture);
+const db = await indexed(fixture);
 const graph = new Graph(db, fixture);
 
 /** @param {TreeRow[]} rows */
 const labels = (rows) => rows.map((row) => `${row.kind} ${row.label}${row.repeated ? " (repeated)" : ""}`);
 
 test("a call goes to the procedure the indexer resolved", () => {
-  assert.deepEqual(graph.definitions("shop/main.pli", 3, "helper"), [{ path: "shop/helper.pli", line: 1 }]);
+  assert.deepEqual(graph.definitions("shop/main.pli", 3, "helper"), [{ path: "shop/helper.pli", line: 1, col: 0, endCol: 6 }]);
 });
 
 test("a call to a nested procedure goes to it", () => {
-  assert.deepEqual(graph.definitions("shop/helper.pli", 4, "INNER"), [{ path: "shop/helper.pli", line: 2 }]);
+  assert.deepEqual(graph.definitions("shop/helper.pli", 4, "INNER"), [{ path: "shop/helper.pli", line: 2, col: 2, endCol: 7 }]);
 });
 
 test("an include member goes to the top of its file", () => {
-  assert.deepEqual(graph.definitions("shop/main.pli", 2, "shopdcl"), [{ path: "copy/shopdcl.pli", line: 1 }]);
+  assert.deepEqual(graph.definitions("shop/main.pli", 2, "shopdcl"), [{ path: "copy/shopdcl.pli", line: 1, col: 0, endCol: 0 }]);
 });
 
 test("a procedure name outside any call falls back to name lookup", () => {
-  assert.deepEqual(graph.definitions("copy/shopdcl.pli", 1, "report"), [{ path: "ABREPT01", line: 1 }]);
+  assert.deepEqual(graph.definitions("copy/shopdcl.pli", 1, "report"), [{ path: "ABREPT01", line: 1, col: 0, endCol: 6 }]);
 });
 
 test("unknown names have no definition", () => {
@@ -60,7 +60,7 @@ test("dependencies list includes, outside calls and unresolved names", () => {
     "unresolved CALL NOWHERE",
   ]);
   const helper = /** @type {TreeRow} */ (rows.find((row) => row.kind === "call"));
-  assert.deepEqual(helper.target, { path: "shop/helper.pli", line: 1 });
+  assert.deepEqual(helper.target, { path: "shop/helper.pli", line: 1, col: 0, endCol: 6 });
   // helper calls main back, which is already open above it.
   assert.deepEqual(labels(graph.dependencies(helper)), ["call CALL MAIN (repeated)"]);
 });
@@ -70,6 +70,12 @@ test("dependents list includers and outside callers", () => {
   assert.deepEqual(labels(graph.dependents(/** @type {TreeRow} */ (graph.root("shop/helper.pli")))), [
     "calledBy MAIN → HELPER",
     "calledBy REPORT → HELPER",
+  ]);
+  const callers = graph.dependents(/** @type {TreeRow} */ (graph.root("shop/helper.pli")));
+  // A caller's row opens the call, not the caller's first line.
+  assert.deepEqual(callers.map((row) => row.target), [
+    { path: "shop/main.pli", line: 3, col: 7, endCol: 13 },
+    { path: "ABREPT01", line: 2, col: 7, endCol: 13 },
   ]);
 });
 

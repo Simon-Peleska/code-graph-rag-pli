@@ -3,6 +3,7 @@
 // request at a time, in the order they come, and answers each with progress
 // messages and then its result or error.
 
+import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
 import { createIndexer, grammarsIn, openGraph, sync } from "./indexer.js";
 
@@ -23,14 +24,23 @@ import { createIndexer, grammarsIn, openGraph, sync } from "./indexer.js";
  */
 
 const port = /** @type {import("node:worker_threads").MessagePort} */ (parentPort);
-const ready = createIndexer(grammarsIn(workerData.grammars));
+const grammars = grammarsIn(workerData.grammars);
+const ready = createIndexer(grammars);
+const parsers = { script: join(workerData.grammars, "parser.cjs"), grammars };
 /** @type {Map<string, import("node:sqlite").DatabaseSync>} */
 const graphs = new Map();
 
 /** @param {SyncReply} reply */
 const reply = (reply) => port.postMessage(reply);
 
-port.on("message", async (/** @type {SyncRequest} */ request) => {
+// A sync waits for its parser threads; the next request waits for it.
+let queue = Promise.resolve();
+port.on("message", (/** @type {SyncRequest} */ request) => {
+  queue = queue.then(() => handle(request));
+});
+
+/** @param {SyncRequest} request */
+async function handle(request) {
   try {
     const indexer = await ready;
     let db = graphs.get(request.graph);
@@ -41,13 +51,14 @@ port.on("message", async (/** @type {SyncRequest} */ request) => {
     if (request.rebuild) {
       db.exec("DELETE FROM files");
     }
-    const result = sync(db, request.root, indexer, {
+    const result = await sync(db, request.root, indexer, {
       paths: request.paths,
       members: request.members,
+      parsers,
       onProgress: (progress) => reply({ id: request.id, progress }),
     });
     reply({ id: request.id, result });
   } catch (error) {
     reply({ id: request.id, error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
   }
-});
+}
