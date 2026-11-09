@@ -25,8 +25,12 @@ codes (`PLG004E`-`PLG024E`) are in [`vscode/README.md`](vscode/README.md).
   includes, so `ARR(2)` on an array links to nothing.
 - `%INCLUDE member`, `%INCLUDE ddname(member)` and `EXEC SQL INCLUDE member`
   are includes. A member is the file named `member` (with or without an
-  extension); when several are, the one sharing the most folders with the
-  includer.
+  extension); when several are, the nearest to the includer: its own
+  folder, then its subfolders (shallowest first), then the parent folder
+  and its subfolders, and so on outward; equal distances go by path. Dev
+  and prod copies side by side so each mean their own stage. The same
+  nearest rule picks among the files defining a program, procedure, screen,
+  table, PSB or DBD.
 - Fixed-format files (carriage control in column 1, sequence numbers in
   columns 73-80) are detected, and those columns are blanked before parsing.
   Lines and columns stay the same.

@@ -2,6 +2,15 @@
 
 ## The indexer (`vscode/src/indexer.js`)
 
+- **Same-named members are picked by folder distance, not shared prefix.**
+  Counting shared folders ties a file's own folder with its subfolders and a
+  parent with its siblings, and the alphabetical tie-break then picked
+  `DEV/SRC/A/KDINC` over `DEV/SRC/KDINC`. Screens, tables, PSBs and DBDs
+  linked to every definition, so a dev program also pointed at prod's. Both
+  use `distance()` in `link()` now (`test/stages.test.js`). Copies at equal
+  distance, like `SRC/DEV/X` and `SRC/PROD/X` seen from `INC/DEV`, still
+  tie.
+
 - **Names come from labels.** The grammar puts `MAIN: PROC;`'s name on the
   enclosing `labeled_statement`, not on the `procedure_statement`.
 - **Bodies need the grammar's `body` field** (tree-sitter-pli `4b4dc00`).

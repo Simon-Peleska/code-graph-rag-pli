@@ -300,7 +300,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 11;
+const INDEXER_VERSION = 12;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -2405,16 +2405,21 @@ function link(db, refs) {
     else defined?.set(symbol.name, [symbol]);
   }
 
-  /** @param {string} a @param {string} b */
-  const sharedFolders = (a, b) => {
-    const x = a.split("/");
-    const y = b.split("/");
-    let n = 0;
-    while (n < x.length - 1 && n < y.length - 1 && x[n] === y[n]) n++;
-    return n;
+  // Dev and prod copies of a member live side by side, so a name means the
+  // nearest one: the referrer's folder, then its subfolders (shallowest
+  // first), then the parent folder and its subfolders, and so on outward.
+  /** @param {number} from @param {number} to @returns {number} smaller is nearer */
+  const distance = (from, to) => {
+    const x = (fileById.get(from)?.path ?? "").split("/").slice(0, -1);
+    const y = (fileById.get(to)?.path ?? "").split("/").slice(0, -1);
+    let shared = 0;
+    while (shared < x.length && shared < y.length && x[shared] === y[shared]) shared++;
+    return (x.length - shared) * 1000 + (y.length - shared);
   };
-  // The member file sharing the longest path with the referrer.
+  /** @param {number} id */
+  const pathOf = (id) => fileById.get(id)?.path ?? "";
   /**
+   * The member file nearest the referrer.
    * @param {string} name
    * @param {number} from
    * @param {Set<number>} [skipped]
@@ -2424,12 +2429,12 @@ function link(db, refs) {
     const candidates = byMember.get(name)?.filter((id) => !skipped.has(id));
     if (!candidates?.length) return undefined;
     if (candidates.length === 1) return candidates[0];
-    const path = fileById.get(from)?.path ?? "";
-    /** @param {number} id */
-    const pathOf = (id) => fileById.get(id)?.path ?? "";
-    return [...candidates].sort(
-      (a, b) => sharedFolders(pathOf(b), path) - sharedFolders(pathOf(a), path) || pathOf(a).localeCompare(pathOf(b)),
-    )[0];
+    return [...candidates].sort((a, b) => distance(from, a) - distance(from, b) || pathOf(a).localeCompare(pathOf(b)))[0];
+  };
+  /** Of a name's definitions, those nearest the referrer. @param {SymbolRow[]} definitions @param {number} from */
+  const nearest = (definitions, from) => {
+    const best = Math.min(...definitions.map((s) => distance(from, s.file)));
+    return definitions.filter((s) => distance(from, s.file) === best);
   };
   /** @param {number} file @param {string} name */
   const symbolNamed = (file, name) => symbolsOf.get(file)?.find((s) => s.name === name);
@@ -2475,12 +2480,12 @@ function link(db, refs) {
         return target === undefined ? [] : [{ file: target, symbol: null }];
       }
       case "screen":
-        return (screens.get(ref.name) ?? []).map(at);
+        return nearest(screens.get(ref.name) ?? [], ref.file).map(at);
       case "table": {
         // PROD.CUSTOMER means that table, not the alias TEST.CUSTOMER.
         const named = tables.get(ref.name) ?? [];
         const qualified = named.filter((s) => s.qualifier === ref.qualifier);
-        return (ref.qualifier && qualified.length ? qualified : named).map(at);
+        return nearest(ref.qualifier && qualified.length ? qualified : named, ref.file).map(at);
       }
       case "procedure": {
         const inStream = symbolNamed(ref.file, ref.name);
@@ -2489,9 +2494,9 @@ function link(db, refs) {
       case "program":
         return program(ref.name, ref.file);
       case "psb":
-        return (psbs.get(ref.name) ?? []).map(at);
+        return nearest(psbs.get(ref.name) ?? [], ref.file).map(at);
       case "dbd":
-        return (dbds.get(ref.name) ?? []).map(at);
+        return nearest(dbds.get(ref.name) ?? [], ref.file).map(at);
     }
     // A PL/I procedure of this file, then of a file it includes, then an
     // external one.
