@@ -1,4 +1,4 @@
-# code-graph-rag-pli
+# PL/I Graph
 
 A VS Code extension for an IMS / MVS z/OS code base in PL/I, JCL, IMS MFS
 (HLASM) and Db2 DDL. It keeps a code graph of each workspace folder in a
