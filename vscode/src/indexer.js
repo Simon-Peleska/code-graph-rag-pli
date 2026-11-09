@@ -257,6 +257,8 @@ import { mfsFields } from "./mfs.js";
  * @property {ParsedAccess[]} accesses
  * @property {ParsedComparison[]} comparisons
  * @property {{ statement: number, text: string }[]} literals the string literals of a statement, without quotes
+ * @property {number} syntaxErrors ERROR and MISSING nodes
+ * @property {number | null} errorLine the first one's
  * @property {(import("./mfs.js").MfsFieldFact & { symbol: number })[]} mfsFields symbol: position in the file's symbols of the format or message
  */
 
@@ -286,10 +288,19 @@ import { mfsFields } from "./mfs.js";
  * @property {number} linkMs
  * @property {number} resolved accesses linked to the variable they name
  * @property {number} resolveMs
+ * @property {Failure[]} failures files whose facts are missing or incomplete
+ * @property {{ path: string, count: number, line: number }[]} syntaxErrors files read in this sync with syntax the grammar does not know: how often, from which line
+ */
+
+/**
+ * @typedef {object} Failure
+ * @property {string} path
+ * @property {"PLG022E" | "PLG024E"} code PLG022E: reading the file failed; PLG024E: resolving its accesses failed
+ * @property {string} error
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 10;
+const INDEXER_VERSION = 11;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -300,7 +311,12 @@ CREATE TABLE IF NOT EXISTS files (
   language TEXT NOT NULL,
   member TEXT NOT NULL,
   mtime INTEGER NOT NULL,
-  size INTEGER NOT NULL
+  size INTEGER NOT NULL,
+  -- ERROR and MISSING nodes: syntax the grammar does not know, from error_line on.
+  syntax_errors INTEGER NOT NULL DEFAULT 0,
+  error_line INTEGER,
+  -- Why reading the file failed; it then has no facts.
+  failure TEXT
 );
 CREATE INDEX IF NOT EXISTS files_member ON files(member);
 CREATE TABLE IF NOT EXISTS symbols (
@@ -700,7 +716,7 @@ export function sync(db, root, indexer, options = {}) {
   const added = [];
   const oldNames = db.prepare("SELECT name FROM symbols WHERE file = ?");
   const deleteFile = db.prepare("DELETE FROM files WHERE id = ?");
-  const insertFile = db.prepare("INSERT INTO files (path, language, member, mtime, size) VALUES (?, ?, ?, ?, ?)");
+  const insertFile = db.prepare("INSERT INTO files (path, language, member, mtime, size, syntax_errors, error_line, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   const insertSymbol = db.prepare(
     "INSERT INTO symbols (file, parent, kind, name, qualifier, detail, comment, line, end_line) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
@@ -734,6 +750,10 @@ export function sync(db, root, indexer, options = {}) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const total = removed.length + changed.length;
+  /** @type {Failure[]} */
+  const failures = [];
+  /** @type {{ path: string, count: number, line: number }[]} */
+  const syntaxErrors = [];
   db.exec("BEGIN");
   try {
     for (const [done, path] of [...removed, ...changed.map(([path]) => path)].entries()) {
@@ -746,91 +766,104 @@ export function sync(db, root, indexer, options = {}) {
       }
       const stat = onDisk.get(path);
       if (!stat) continue;
-      const text = readFileSync(join(root, path), "utf-8");
-      let language = /** @type {keyof Grammars} */ (languageOf(path));
-      if (language === "pli" && IMS_GEN.test(text.slice(0, 4000))) language = "hlasm";
-      const parsed = parseFile(indexer, language, text);
-      const file = Number(insertFile.run(path, language, memberOf(path), stat.mtime, stat.size).lastInsertRowid);
-      added.push(file);
-      /** @type {number[]} */
-      const symbolIds = [];
-      for (const symbol of parsed.symbols) {
-        names.add(symbol.name);
-        const parent = symbol.parent < 0 ? null : symbolIds[symbol.parent];
-        const id = insertSymbol.run(file, parent, symbol.kind, symbol.name, symbol.qualifier, symbol.detail ?? null, symbol.comment ?? null, symbol.line, symbol.endLine).lastInsertRowid;
-        symbolIds.push(Number(id));
-      }
-      /** @type {number[]} */
-      const variableIds = [];
-      for (const v of parsed.variables) {
-        const id = insertVariable.run(
-          file,
-          v.scope < 0 ? null : symbolIds[v.scope],
-          v.parent < 0 ? null : variableIds[v.parent],
-          v.level,
-          v.name,
-          v.qualified,
-          v.type,
-          v.size,
-          v.dims,
-          v.storage,
-          v.base,
-          v.init,
-          v.like,
-          v.external ? 1 : 0,
-          v.parameter,
-          v.attributes,
-          v.comment ?? null,
-          v.line,
-        ).lastInsertRowid;
-        variableIds.push(Number(id));
-      }
-      /** @type {number[]} */
-      const stepIds = [];
-      for (const step of parsed.steps) {
-        const job = step.job < 0 ? null : symbolIds[step.job];
-        stepIds.push(Number(insertStep.run(file, job, step.name, step.program, step.procedure, step.psb, step.parm, step.line).lastInsertRowid));
-      }
-      for (const dd of parsed.dds) {
-        insertDd.run(file, dd.step < 0 ? null : stepIds[dd.step], dd.name, dd.dsn, dd.member, dd.disp, dd.attributes, dd.line);
-      }
-      for (const io of parsed.fileIo) {
-        insertFileIo.run(file, io.caller < 0 ? null : symbolIds[io.caller], io.operation, io.name, io.record, io.key, io.title, io.statement, io.line);
-      }
-      for (const c of parsed.sqlColumns) {
-        insertSqlColumn.run(file, c.caller < 0 ? null : symbolIds[c.caller], c.operation, c.cursor, c.schema, c.table, c.column, c.usage, c.host, c.expression, c.line);
-      }
-      for (const c of parsed.columns) {
-        insertColumn.run(file, symbolIds[c.table], parsed.symbols[c.table].name, c.name, c.type, c.notNull ? 1 : 0, c.key, c.position, c.line);
-      }
-      const pcbIds = parsed.pcbs.map((c) =>
-        Number(insertPcb.run(file, symbolIds[c.psb], c.position, c.type, c.name, c.dbd, c.procopt, c.attributes, c.line).lastInsertRowid),
-      );
-      for (const c of parsed.sensegs) insertSenseg.run(file, pcbIds[c.pcb], c.name, c.parent, c.procopt, c.line);
-      const segmentIds = parsed.segments.map((c) =>
-        Number(insertSegment.run(file, symbolIds[c.dbd], c.name, c.parent, c.bytes, c.position, c.line).lastInsertRowid),
-      );
-      for (const c of parsed.segmentFields) insertSegmentField.run(file, segmentIds[c.segment], c.name, c.sequence, c.start, c.bytes, c.type, c.line);
-      for (const f of parsed.mfsFields) {
-        insertMfsField.run(file, symbolIds[f.symbol], f.kind, f.name, f.dfld, f.row, f.col, f.length, f.segment, f.offset, f.label, f.literal, f.attributes, f.line);
-      }
-      for (const c of parsed.dliCalls) {
-        const caller = c.caller < 0 ? null : symbolIds[c.caller];
-        insertDliCall.run(file, caller, c.entry, c.function, c.pcb, c.pcbParameter, c.ioArea, c.segment, c.path, c.arguments, c.line);
-      }
-      /** @type {number[]} */
-      const statementIds = [];
-      for (const st of parsed.statements) {
-        const caller = st.caller < 0 ? null : symbolIds[st.caller];
-        const parent = st.parent < 0 ? null : statementIds[st.parent];
-        statementIds.push(Number(insertStatement.run(file, caller, parent, st.kind, st.branch, st.label, st.detail, st.line, st.endLine).lastInsertRowid));
-      }
-      for (const a of parsed.accesses) insertAccess.run(statementIds[a.statement], a.name, a.mode, a.value, a.position);
-      for (const c of parsed.comparisons) insertComparison.run(statementIds[c.statement], c.left, c.operator, c.right);
-      for (const l of parsed.literals) insertLiteral.run(statementIds[l.statement], l.text);
-      for (const ref of parsed.refs) {
-        const caller = ref.caller < 0 ? null : symbolIds[ref.caller];
-        insertRef.run(file, caller, ref.kind, ref.name, ref.qualifier, ref.detail, ref.line, ref.col, ref.endLine, ref.endCol);
+      // One odd file must not stop the sync: its facts go, deleting its row
+      // cascades to all of them, and it stays in the graph with the failure
+      // until it changes again. Cheaper than a savepoint per file.
+      let file = 0;
+      try {
+        const text = readFileSync(join(root, path), "utf-8");
+        let language = /** @type {keyof Grammars} */ (languageOf(path));
+        if (language === "pli" && IMS_GEN.test(text.slice(0, 4000))) language = "hlasm";
+        const parsed = parseFile(indexer, language, text);
+        file = Number(insertFile.run(path, language, memberOf(path), stat.mtime, stat.size, parsed.syntaxErrors, parsed.errorLine, null).lastInsertRowid);
+        if (parsed.syntaxErrors > 0) syntaxErrors.push({ path, count: parsed.syntaxErrors, line: parsed.errorLine ?? 0 });
+        /** @type {number[]} */
+        const symbolIds = [];
+        for (const symbol of parsed.symbols) {
+          names.add(symbol.name);
+          const parent = symbol.parent < 0 ? null : symbolIds[symbol.parent];
+          const id = insertSymbol.run(file, parent, symbol.kind, symbol.name, symbol.qualifier, symbol.detail ?? null, symbol.comment ?? null, symbol.line, symbol.endLine).lastInsertRowid;
+          symbolIds.push(Number(id));
+        }
+        /** @type {number[]} */
+        const variableIds = [];
+        for (const v of parsed.variables) {
+          const id = insertVariable.run(
+            file,
+            v.scope < 0 ? null : symbolIds[v.scope],
+            v.parent < 0 ? null : variableIds[v.parent],
+            v.level,
+            v.name,
+            v.qualified,
+            v.type,
+            v.size,
+            v.dims,
+            v.storage,
+            v.base,
+            v.init,
+            v.like,
+            v.external ? 1 : 0,
+            v.parameter,
+            v.attributes,
+            v.comment ?? null,
+            v.line,
+          ).lastInsertRowid;
+          variableIds.push(Number(id));
+        }
+        /** @type {number[]} */
+        const stepIds = [];
+        for (const step of parsed.steps) {
+          const job = step.job < 0 ? null : symbolIds[step.job];
+          stepIds.push(Number(insertStep.run(file, job, step.name, step.program, step.procedure, step.psb, step.parm, step.line).lastInsertRowid));
+        }
+        for (const dd of parsed.dds) {
+          insertDd.run(file, dd.step < 0 ? null : stepIds[dd.step], dd.name, dd.dsn, dd.member, dd.disp, dd.attributes, dd.line);
+        }
+        for (const io of parsed.fileIo) {
+          insertFileIo.run(file, io.caller < 0 ? null : symbolIds[io.caller], io.operation, io.name, io.record, io.key, io.title, io.statement, io.line);
+        }
+        for (const c of parsed.sqlColumns) {
+          insertSqlColumn.run(file, c.caller < 0 ? null : symbolIds[c.caller], c.operation, c.cursor, c.schema, c.table, c.column, c.usage, c.host, c.expression, c.line);
+        }
+        for (const c of parsed.columns) {
+          insertColumn.run(file, symbolIds[c.table], parsed.symbols[c.table].name, c.name, c.type, c.notNull ? 1 : 0, c.key, c.position, c.line);
+        }
+        const pcbIds = parsed.pcbs.map((c) =>
+          Number(insertPcb.run(file, symbolIds[c.psb], c.position, c.type, c.name, c.dbd, c.procopt, c.attributes, c.line).lastInsertRowid),
+        );
+        for (const c of parsed.sensegs) insertSenseg.run(file, pcbIds[c.pcb], c.name, c.parent, c.procopt, c.line);
+        const segmentIds = parsed.segments.map((c) =>
+          Number(insertSegment.run(file, symbolIds[c.dbd], c.name, c.parent, c.bytes, c.position, c.line).lastInsertRowid),
+        );
+        for (const c of parsed.segmentFields) insertSegmentField.run(file, segmentIds[c.segment], c.name, c.sequence, c.start, c.bytes, c.type, c.line);
+        for (const f of parsed.mfsFields) {
+          insertMfsField.run(file, symbolIds[f.symbol], f.kind, f.name, f.dfld, f.row, f.col, f.length, f.segment, f.offset, f.label, f.literal, f.attributes, f.line);
+        }
+        for (const c of parsed.dliCalls) {
+          const caller = c.caller < 0 ? null : symbolIds[c.caller];
+          insertDliCall.run(file, caller, c.entry, c.function, c.pcb, c.pcbParameter, c.ioArea, c.segment, c.path, c.arguments, c.line);
+        }
+        /** @type {number[]} */
+        const statementIds = [];
+        for (const st of parsed.statements) {
+          const caller = st.caller < 0 ? null : symbolIds[st.caller];
+          const parent = st.parent < 0 ? null : statementIds[st.parent];
+          statementIds.push(Number(insertStatement.run(file, caller, parent, st.kind, st.branch, st.label, st.detail, st.line, st.endLine).lastInsertRowid));
+        }
+        for (const a of parsed.accesses) insertAccess.run(statementIds[a.statement], a.name, a.mode, a.value, a.position);
+        for (const c of parsed.comparisons) insertComparison.run(statementIds[c.statement], c.left, c.operator, c.right);
+        for (const l of parsed.literals) insertLiteral.run(statementIds[l.statement], l.text);
+        for (const ref of parsed.refs) {
+          const caller = ref.caller < 0 ? null : symbolIds[ref.caller];
+          insertRef.run(file, caller, ref.kind, ref.name, ref.qualifier, ref.detail, ref.line, ref.col, ref.endLine, ref.endCol);
+        }
+        added.push(file);
+      } catch (error) {
+        if (file) deleteFile.run(file);
+        const failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        failures.push({ path, code: "PLG022E", error: failure });
+        added.push(Number(insertFile.run(path, languageOf(path) ?? "pli", memberOf(path), stat.mtime, stat.size, 0, null, failure).lastInsertRowid));
+        continue;
       }
     }
     const parsedAt = performance.now();
@@ -871,7 +904,7 @@ export function sync(db, root, indexer, options = {}) {
       }
       toResolve = [...found];
     }
-    const resolved = resolveAccesses(db, toResolve);
+    const resolved = resolveAccesses(db, toResolve, failures);
     if (total > 0) {
       db.exec(`INSERT INTO meta (name, value) VALUES ('graph_version', 1)
                ON CONFLICT (name) DO UPDATE SET value = value + 1`);
@@ -885,6 +918,8 @@ export function sync(db, root, indexer, options = {}) {
       parseMs: Math.round(parsedAt - started),
       linkMs: Math.round(linkedAt - parsedAt),
       resolveMs: Math.round(performance.now() - linkedAt),
+      failures,
+      syntaxErrors,
     };
   } catch (error) {
     db.exec("ROLLBACK");
@@ -908,31 +943,59 @@ function memberOf(path) {
  */
 function parseFile(indexer, language, text) {
   /** @type {ParsedFile} */
-  const file = { symbols: [], refs: [], variables: [], steps: [], dds: [], fileIo: [], sqlColumns: [], columns: [], pcbs: [], sensegs: [], segments: [], segmentFields: [], dliCalls: [], mfsFields: [], statements: [], accesses: [], comparisons: [], literals: [] };
+  const file = { symbols: [], refs: [], variables: [], steps: [], dds: [], fileIo: [], sqlColumns: [], columns: [], pcbs: [], sensegs: [], segments: [], segmentFields: [], dliCalls: [], mfsFields: [], statements: [], accesses: [], comparisons: [], literals: [], syntaxErrors: 0, errorLine: null };
   const tree = indexer[language].parse(language === "pli" || language === "hlasm" ? blankMargins(text, language) : text);
   if (!tree) return file;
-  switch (language) {
-    case "pli":
-      readPli(tree.rootNode, file, indexer.db2);
-      break;
-    case "jcl":
-      readJcl(tree.rootNode, file);
-      break;
-    case "hlasm":
-      readHlasm(tree.rootNode, file);
-      if (file.symbols.some((s) => s.kind === "format" || s.kind === "message")) {
-        for (const field of mfsFields(text)) {
-          const symbol = file.symbols.findIndex((s) => (s.kind === "format" || s.kind === "message") && s.name === field.screen);
-          if (symbol >= 0) file.mfsFields.push({ ...field, symbol });
+  try {
+    const errors = syntaxErrorsIn(tree.rootNode);
+    file.syntaxErrors = errors.count;
+    file.errorLine = errors.line;
+    switch (language) {
+      case "pli":
+        readPli(tree.rootNode, file, indexer.db2);
+        break;
+      case "jcl":
+        readJcl(tree.rootNode, file);
+        break;
+      case "hlasm":
+        readHlasm(tree.rootNode, file);
+        if (file.symbols.some((s) => s.kind === "format" || s.kind === "message")) {
+          for (const field of mfsFields(text)) {
+            const symbol = file.symbols.findIndex((s) => (s.kind === "format" || s.kind === "message") && s.name === field.screen);
+            if (symbol >= 0) file.mfsFields.push({ ...field, symbol });
+          }
         }
-      }
-      break;
-    case "db2":
-      readDb2(tree.rootNode, file);
-      break;
+        break;
+      case "db2":
+        readDb2(tree.rootNode, file);
+        break;
+    }
+  } finally {
+    tree.delete();
   }
-  tree.delete();
   return file;
+}
+
+/**
+ * The ERROR and MISSING nodes, and the first line with one. Only subtrees
+ * with an error are visited.
+ * @param {Node} root
+ */
+function syntaxErrorsIn(root) {
+  let count = 0;
+  /** @type {number | null} */
+  let line = null;
+  if (!root.hasError) return { count, line };
+  for (let stack = [root], node = stack.pop(); node; node = stack.pop()) {
+    if (node.type === "ERROR" || node.isMissing) {
+      count++;
+      const at = node.startPosition.row + 1;
+      if (line === null || at < line) line = at;
+      if (node.isMissing) continue;
+    }
+    for (const child of node.children) if (child && (child.hasError || child.isMissing)) stack.push(child);
+  }
+  return { count, line };
 }
 
 /**
@@ -2162,9 +2225,10 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  * field, reached through the structure.
  * @param {DatabaseSync} db
  * @param {number[]} files
+ * @param {Failure[]} failures where a file whose resolution failed is added
  * @returns {number} accesses resolved
  */
-function resolveAccesses(db, files) {
+function resolveAccesses(db, files, failures) {
   const variablesOf = db.prepare("SELECT id, scope, parent, name, qualified, like, init, base, parameter FROM variables WHERE file = ? ORDER BY id");
   const includesOf = db.prepare(
     "SELECT r.caller, l.target_file AS target FROM refs r JOIN links l ON l.ref = r.id WHERE r.file = ? AND r.kind = 'include' ORDER BY r.id",
@@ -2175,6 +2239,7 @@ function resolveAccesses(db, files) {
   const accessesOf = db.prepare("SELECT a.id, a.name, s.caller FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ?");
   const clear = db.prepare("UPDATE accesses SET variable = NULL, through = NULL WHERE statement IN (SELECT id FROM statements WHERE file = ?) AND variable IS NOT NULL");
   const update = db.prepare("UPDATE accesses SET variable = ?, through = ? WHERE id = ?");
+  const pathOf = db.prepare("SELECT path FROM files WHERE id = ?");
 
   /** @type {Map<number, VariableRow[]>} an include's variables with those of the includes in it */
   const included = new Map();
@@ -2193,101 +2258,107 @@ function resolveAccesses(db, files) {
 
   let resolved = 0;
   for (const file of files) {
-    // The variables each scope declares, by their own name; 0 is the file's.
-    /** @type {Map<number, Map<string, VariableRow[]>>} */
-    const scopes = new Map();
-    /** @param {number} scope @param {VariableRow} v */
-    const declare = (scope, v) => {
-      let byName = scopes.get(scope);
-      if (!byName) scopes.set(scope, (byName = new Map()));
-      const list = byName.get(v.name);
-      if (list) list.push(v);
-      else byName.set(v.name, [v]);
-    };
-    for (const v of /** @type {VariableRow[]} */ (variablesOf.all(file))) declare(v.scope ?? 0, v);
-    for (const include of /** @type {{ caller: number | null, target: number }[]} */ (includesOf.all(file))) {
-      for (const v of variablesIncluded(include.target, new Set([file]))) declare(include.caller ?? 0, v);
-    }
-    /** @type {Map<number, number>} */
-    const parentOf = new Map();
-    /** @type {Set<number>} the main procedures */
-    const mains = new Set();
-    for (const row of /** @type {{ id: number, parent: number | null, detail: string | null }[]} */ (parentsOf.all(file))) {
-      parentOf.set(row.id, row.parent ?? 0);
-      if (/\bMAIN\b/i.test(row.detail ?? "")) mains.add(row.id);
-    }
+    // A bug on one odd file leaves its accesses unresolved, not the sync undone.
+    try {
+      // The variables each scope declares, by their own name; 0 is the file's.
+      /** @type {Map<number, Map<string, VariableRow[]>>} */
+      const scopes = new Map();
+      /** @param {number} scope @param {VariableRow} v */
+      const declare = (scope, v) => {
+        let byName = scopes.get(scope);
+        if (!byName) scopes.set(scope, (byName = new Map()));
+        const list = byName.get(v.name);
+        if (list) list.push(v);
+        else byName.set(v.name, [v]);
+      };
+      for (const v of /** @type {VariableRow[]} */ (variablesOf.all(file))) declare(v.scope ?? 0, v);
+      for (const include of /** @type {{ caller: number | null, target: number }[]} */ (includesOf.all(file))) {
+        for (const v of variablesIncluded(include.target, new Set([file]))) declare(include.caller ?? 0, v);
+      }
+      /** @type {Map<number, number>} */
+      const parentOf = new Map();
+      /** @type {Set<number>} the main procedures */
+      const mains = new Set();
+      for (const row of /** @type {{ id: number, parent: number | null, detail: string | null }[]} */ (parentsOf.all(file))) {
+        parentOf.set(row.id, row.parent ?? 0);
+        if (/\bMAIN\b/i.test(row.detail ?? "")) mains.add(row.id);
+      }
 
-    /** A name's variable, seen from a scope. @param {string[]} parts @param {number} from @returns {VariableRow | undefined} */
-    const find = (parts, from) => {
-      const last = parts[parts.length - 1];
-      for (let scope = from; ; scope = parentOf.get(scope) ?? 0) {
-        const matches = (scopes.get(scope)?.get(last) ?? []).filter((v) => {
-          // The qualifiers given must be the variable's, in order, but may skip levels.
-          const levels = v.qualified.split(".");
-          let at = 0;
-          for (const part of parts.slice(0, -1)) {
-            while (at < levels.length - 1 && levels[at] !== part) at++;
-            if (at >= levels.length - 1) return false;
-            at++;
+      /** A name's variable, seen from a scope. @param {string[]} parts @param {number} from @returns {VariableRow | undefined} */
+      const find = (parts, from) => {
+        const last = parts[parts.length - 1];
+        for (let scope = from; ; scope = parentOf.get(scope) ?? 0) {
+          const matches = (scopes.get(scope)?.get(last) ?? []).filter((v) => {
+            // The qualifiers given must be the variable's, in order, but may skip levels.
+            const levels = v.qualified.split(".");
+            let at = 0;
+            for (const part of parts.slice(0, -1)) {
+              while (at < levels.length - 1 && levels[at] !== part) at++;
+              if (at >= levels.length - 1) return false;
+              at++;
+            }
+            return true;
+          });
+          if (matches.length) return matches.find((v) => v.qualified === parts.join(".")) ?? matches[0];
+          if (scope === 0) return undefined;
+        }
+      };
+
+      clear.run(file);
+      for (const access of /** @type {{ id: number, name: string, caller: number | null }[]} */ (accessesOf.all(file))) {
+        const parts = access.name.split(".");
+        const scope = access.caller ?? 0;
+        let variable = find(parts, scope);
+        let through = null;
+        // ALT.KREDIT, ALT LIKE KUNDE_SEG: KUNDE_SEG.KREDIT.
+        for (let i = parts.length - 1; !variable && i > 0; i--) {
+          const structure = find(parts.slice(0, i), scope);
+          if (!structure?.like) continue;
+          variable = find([...structure.like.split("."), ...parts.slice(i)], scope);
+          if (variable) through = structure.id;
+        }
+        if (!variable) continue;
+        update.run(variable.id, through, access.id);
+        resolved++;
+      }
+
+      /** @type {Map<number, VariableRow>} each structure's first field */
+      const firstFields = new Map();
+      for (const byName of scopes.values()) {
+        for (const list of byName.values()) {
+          for (const v of list) {
+            const known = v.parent === null ? undefined : firstFields.get(v.parent);
+            if (v.parent !== null && (!known || known.id > v.id)) firstFields.set(v.parent, v);
           }
-          return true;
-        });
-        if (matches.length) return matches.find((v) => v.qualified === parts.join(".")) ?? matches[0];
-        if (scope === 0) return undefined;
-      }
-    };
-
-    clear.run(file);
-    for (const access of /** @type {{ id: number, name: string, caller: number | null }[]} */ (accessesOf.all(file))) {
-      const parts = access.name.split(".");
-      const scope = access.caller ?? 0;
-      let variable = find(parts, scope);
-      let through = null;
-      // ALT.KREDIT, ALT LIKE KUNDE_SEG: KUNDE_SEG.KREDIT.
-      for (let i = parts.length - 1; !variable && i > 0; i--) {
-        const structure = find(parts.slice(0, i), scope);
-        if (!structure?.like) continue;
-        variable = find([...structure.like.split("."), ...parts.slice(i)], scope);
-        if (variable) through = structure.id;
-      }
-      if (!variable) continue;
-      update.run(variable.id, through, access.id);
-      resolved++;
-    }
-
-    /** @type {Map<number, VariableRow>} each structure's first field */
-    const firstFields = new Map();
-    for (const byName of scopes.values()) {
-      for (const list of byName.values()) {
-        for (const v of list) {
-          const known = v.parent === null ? undefined : firstFields.get(v.parent);
-          if (v.parent !== null && (!known || known.id > v.id)) firstFields.set(v.parent, v);
         }
       }
-    }
-    for (const call of /** @type {{ id: number, caller: number | null, entry: string, arguments: string }[]} */ (dliCallsOf.all(file))) {
-      const scope = call.caller ?? 0;
-      /** A literal's value, or the INIT of the variable (of a structure, its first field's). @param {string | undefined} arg */
-      const value = (arg) => {
-        if (arg === undefined) return null;
-        if (arg.startsWith("'")) return arg.slice(1, arg.lastIndexOf("'"));
-        const v = find(arg.split("."), scope);
-        const init = v && (v.init ?? firstFields.get(v.id)?.init);
-        return init?.startsWith("'") ? init.slice(1, init.lastIndexOf("'")) : null;
-      };
-      const [functionArg, pcb, , ...ssas] = dliArguments(call.entry, call.arguments.match(/(?:'[^']*'|[^,'])+/g)?.map((a) => a.trim()) ?? []);
-      const segments = ssas.map((ssa) => value(ssa)?.slice(0, 8).trim() || "?");
-      // A PCB mask is BASED on a pointer the main procedure gets as a parameter.
-      const mask = pcb === undefined ? undefined : find(pcb.split("."), scope);
-      const pointer = mask?.base ? find(mask.base.split("."), scope) : mask;
-      const pcbParameter = pointer?.parameter && pointer.scope !== null && mains.has(pointer.scope) ? pointer.parameter : null;
-      updateDliCall.run(
-        value(functionArg)?.trim() || null,
-        pcbParameter,
-        segments.filter((s) => s !== "?").pop() ?? null,
-        segments.length ? segments.join("/") : null,
-        call.id,
-      );
+      for (const call of /** @type {{ id: number, caller: number | null, entry: string, arguments: string }[]} */ (dliCallsOf.all(file))) {
+        const scope = call.caller ?? 0;
+        /** A literal's value, or the INIT of the variable (of a structure, its first field's). @param {string | undefined} arg */
+        const value = (arg) => {
+          if (arg === undefined) return null;
+          if (arg.startsWith("'")) return arg.slice(1, arg.lastIndexOf("'"));
+          const v = find(arg.split("."), scope);
+          const init = v && (v.init ?? firstFields.get(v.id)?.init);
+          return init?.startsWith("'") ? init.slice(1, init.lastIndexOf("'")) : null;
+        };
+        const [functionArg, pcb, , ...ssas] = dliArguments(call.entry, call.arguments.match(/(?:'[^']*'|[^,'])+/g)?.map((a) => a.trim()) ?? []);
+        const segments = ssas.map((ssa) => value(ssa)?.slice(0, 8).trim() || "?");
+        // A PCB mask is BASED on a pointer the main procedure gets as a parameter.
+        const mask = pcb === undefined ? undefined : find(pcb.split("."), scope);
+        const pointer = mask?.base ? find(mask.base.split("."), scope) : mask;
+        const pcbParameter = pointer?.parameter && pointer.scope !== null && mains.has(pointer.scope) ? pointer.parameter : null;
+        updateDliCall.run(
+          value(functionArg)?.trim() || null,
+          pcbParameter,
+          segments.filter((s) => s !== "?").pop() ?? null,
+          segments.length ? segments.join("/") : null,
+          call.id,
+        );
+      }
+    } catch (error) {
+      const path = /** @type {{ path: string }} */ (pathOf.get(file)).path;
+      failures.push({ path, code: "PLG024E", error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
     }
   }
   return resolved;

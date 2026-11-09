@@ -131,8 +131,11 @@ Needs VS Code 1.101 or newer, whose Node has `node:sqlite`.
 The graph is a plain SQLite file, so other tools (the MCP server, scripts)
 can read it while VS Code runs:
 
-- `files(id, path, language, member, mtime, size)`: every indexed file,
-  `path` relative to the folder with `/`.
+- `files(id, path, language, member, mtime, size, syntax_errors, error_line, failure)`:
+  every indexed file, `path` relative to the folder with `/`.
+  `syntax_errors` counts the places the grammar could not read (from
+  `error_line` on; facts there may be missing), `failure` says why reading
+  the file failed, which leaves it without facts until it changes.
 - `symbols(id, file, parent, kind, name, qualifier, detail, line, end_line)`:
   procedures, packages, jobs, procedures in JCL, formats, messages, tables,
   views, aliases, PSBs, DBDs and IMS transactions; `parent` is the enclosing
@@ -247,6 +250,13 @@ can read it while VS Code runs:
 - `PLG020E` (MCP server) a tool call failed, e.g. a bad SQL query; the
   message is the tool's answer.
 - `PLG021E` (MCP server's log) a line from the client was not JSON.
+- `PLG022E` reading a file failed on a shape the indexer does not handle;
+  the sync goes on without that file's facts. Please report it with the file.
+- `PLG023W` a file has syntax the grammar does not know, one line per file
+  and a count per sync. Everything around it is still read;
+  `SELECT path, syntax_errors, error_line FROM files WHERE syntax_errors > 0`
+  lists them all.
+- `PLG024E` resolving a file's field accesses failed; they stay unresolved.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

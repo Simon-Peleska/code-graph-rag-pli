@@ -45,6 +45,13 @@
 - **A new fact needs `INDEXER_VERSION` raised.** Unchanged files are not read
   again, so without it they never get the new rows; with it `openGraph`
   drops the tables and the next sync reads everything.
+- **One file never stops a sync.** If reading a file throws, its row is
+  deleted, which cascades to every fact it wrote, and put back with only
+  `failure` set (`PLG022E`); it is read again once it changes. A savepoint
+  per file did the same at 10% of the parse time. ERROR and MISSING nodes
+  are counted per file (`syntax_errors`, `PLG023W`) by visiting only
+  subtrees with `hasError`, so a clean file costs nothing. Syntax errors
+  inside `EXEC SQL` are not counted.
 - **`INIT((12)0)` parses with an ERROR node.** The grammar lacks repetition
   factors; `variables.init` still holds the text `(12)0`.
 - **`VARYING` has no node of its own.** It is found in the attribute text.

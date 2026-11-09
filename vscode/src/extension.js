@@ -247,6 +247,16 @@ function startWorker(context) {
       `${workspace.folder.name}: synced ${result.changed} files (read in ${result.parseMs} ms), ` +
         `linked ${result.relinked} references in ${result.linkMs} ms`,
     );
+    for (const f of result.failures) {
+      const what = f.code === "PLG022E" ? "Reading" : "Resolving the fields of";
+      log.error(`[${f.code}] ${what} ${f.path} failed; its facts are missing. Please report it with the file.\n${f.error}`);
+    }
+    for (const e of result.syntaxErrors) {
+      log.warn(`[PLG023W] ${e.path}:${e.line}: ${e.count} syntax error${e.count > 1 ? "s" : ""} the grammar does not know; facts there may be missing.`);
+    }
+    if (result.syntaxErrors.length) {
+      log.warn(`[PLG023W] ${workspace.folder.name}: ${result.syntaxErrors.length} of ${result.changed} files read have syntax the grammar does not know. The graph's files table lists them (syntax_errors, error_line).`);
+    }
     workspace.error = undefined;
     const first = !workspace.graph;
     if (first) openGraph(workspace);

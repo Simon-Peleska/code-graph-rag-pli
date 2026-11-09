@@ -13,7 +13,7 @@ import { Graph } from "./graph.js";
 const [graphFile, root] = process.argv.slice(2);
 const log = (/** @type {string} */ text) => process.stderr.write(`${text}\n`);
 
-const SCHEMA = `files(id, path, language: pli|jcl|hlasm|db2, member)
+const SCHEMA = `files(id, path, language: pli|jcl|hlasm|db2, member, syntax_errors: places the grammar could not read, facts there may be missing, error_line: the first, failure: why reading it failed, then it has no facts)
 symbols(id, file → files, parent → symbols, kind: procedure|job|format|message|table|psb|dbd|transaction|..., name, qualifier, detail: OPTIONS(...) RETURNS(...) for procedures, the operands for psb|dbd|transaction (PSB=, PGMTYPE= of its APPLCTN), comment: a procedure's, the comments right above it, line, end_line)
 refs(id, file → files, caller → symbols, kind: call|fetch|program|procedure|include|screen|table|psb|dbd|..., name, qualifier, detail: SELECT|INSERT|UPDATE|DELETE for tables, line, col, end_line, end_col)
 links(ref → refs, target_file → files, target_symbol → symbols or NULL for an include of the whole file); an unresolved ref has no link
