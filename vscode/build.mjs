@@ -1,4 +1,4 @@
-// Writes out/: the extension and its indexer worker as CommonJS bundles, the
+// Writes out/: the extension, its indexer worker and its MCP server as CommonJS bundles, the
 // tree-sitter runtime, grammars and highlights queries they load, graph.html, the graph
 // website's page with vscode-elements and Cytoscape inlined, and screen.html, the 3270
 // screen page. The extension fills in __PROJECT__, __GRAPH_JSON__ and __SCREEN_JSON__.
@@ -52,7 +52,7 @@ for (const name of readdirSync("grammars").filter((n) => n.endsWith(".wasm") || 
 }
 
 await build({
-  entryPoints: { extension: "src/extension.js", worker: "src/worker.js" },
+  entryPoints: { extension: "src/extension.js", worker: "src/worker.js", mcp: "src/mcp.js" },
   outdir: "out",
   outExtension: { ".js": ".cjs" },
   bundle: true,

@@ -114,6 +114,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.open", open),
     vscode.commands.registerCommand("pliGraph.show", () => showGraph(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
+    registerMcpServer(context),
     vscode.languages.registerDefinitionProvider(
       LANGUAGES.map((language) => ({ language })),
       { provideDefinition },
@@ -940,6 +941,31 @@ async function showScreen(context, uri) {
 
 /** @type {string | undefined} */
 let screenTemplate;
+
+// ---- MCP server -----------------------------------------------------------------
+
+/**
+ * Offers out/mcp.cjs to Copilot's agent mode, one server per workspace folder,
+ * run by VS Code's own Node. @types/vscode 1.85 predates this API, hence the cast.
+ * @param {vscode.ExtensionContext} context
+ * @returns {vscode.Disposable}
+ */
+function registerMcpServer(context) {
+  const lm = /** @type {any} */ (vscode).lm;
+  const Definition = /** @type {any} */ (vscode).McpStdioServerDefinition;
+  if (!lm?.registerMcpServerDefinitionProvider || !Definition) {
+    log.info("This VS Code has no MCP server API; the graph's MCP server is not offered.");
+    return new vscode.Disposable(() => {});
+  }
+  const script = vscode.Uri.joinPath(context.extensionUri, "out", "mcp.cjs").fsPath;
+  const version = context.extension.packageJSON.version;
+  return lm.registerMcpServerDefinitionProvider("pliGraph.mcp", {
+    provideMcpServerDefinitions: () =>
+      [...workspaces.values()].map(
+        (w) => new Definition(`PL/I Graph: ${w.folder.name}`, process.execPath, [script, w.graphFile, w.folder.uri.fsPath], { ELECTRON_RUN_AS_NODE: "1" }, version),
+      ),
+  });
+}
 
 // Webviews run only the scripts and styles inlined in their page.
 const WEBVIEW_CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">`;

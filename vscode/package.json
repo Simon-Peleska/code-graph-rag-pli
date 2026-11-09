@@ -32,6 +32,12 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "pliGraph.mcp",
+        "label": "PL/I Graph"
+      }
+    ],
     "configurationDefaults": {
       "[pli]": {
         "editor.semanticHighlighting.enabled": true

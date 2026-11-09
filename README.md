@@ -3,7 +3,7 @@
 A VS Code extension for an IMS / MVS z/OS code base in PL/I, JCL, IMS MFS
 (HLASM) and Db2 DDL. It keeps a code graph of each workspace folder in a
 SQLite file and answers Go to Definition, Find All References, completion
-and dependency trees from it. The same grammars also do the highlighting. The parsers are tree-sitter grammars compiled
+and dependency trees from it, and offers it to Copilot as an MCP server. The same grammars also do the highlighting. The parsers are tree-sitter grammars compiled
 to WebAssembly, which are separate projects:
 [tree-sitter-pli](https://github.com/Simon-Peleska/tree-sitter-pli),
 [tree-sitter-jcl](https://github.com/Simon-Peleska/tree-sitter-jcl),
@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG019E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG021E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 

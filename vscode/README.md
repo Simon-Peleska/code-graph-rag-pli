@@ -10,7 +10,10 @@ extension keeps of each workspace folder:
   by the Db2 grammar. A TextMate grammar colors a file until its first parse
   is done (about 50 ms for 3,000 lines). An extensionless z/OS member gets
   its language once it is in the graph, by its third character: `J` is JCL,
-  `F` MFS, `T` Db2, anything else PL/I.
+  `F` MFS, `T` Db2, anything else PL/I. The graph also reads a member as
+  assembler when its first statement is an IMS gen macro (`PCB`, `DBD`,
+  `APPLCTN`, ...), so PSB gens, DBD gens and the IMS system definition are
+  found whatever their names.
 - **Go to Definition** (F12, Ctrl+click) on a called procedure or an
   `%INCLUDE` member, a job's programs and procedures, a screen's formats and
   messages and the tables a program or view uses. It uses the calls the
@@ -71,6 +74,30 @@ extension keeps of each workspace folder:
   name opens its `DFLD`. Enter, F1-F24 (Shift for 13-24) and PageUp/PageDown
   (PA1/PA2) send the screen; the output channel logs the key and the fields.
   Editing the source redraws the screen and keeps the typed values.
+- **An MCP server for Copilot**: the extension offers each workspace folder's
+  graph to Copilot's agent mode (and any other chat in VS Code that uses MCP)
+  as the server **PL/I Graph: <folder>**, with nothing to configure. Its
+  tools are `find_definition`, `find_references`, `dependencies`,
+  `dependents`, `dataset` (which job steps write and read a dataset),
+  `program_files` (a program's files, records, keys and the datasets they
+  are in), `table_columns` (a Db2 table's columns and the SQL statements
+  that select, compare, set or insert each, with their host variables),
+  `psb` (an IMS PSB or a transaction's: its PCBs, the segments each may
+  access and who uses it), `screen` (an MFS format's fields with their
+  labels, and where each message field sits in the program's I/O area),
+  `dli` (a program's DL/I calls: function, SSA
+  segments, I/O area and the PSB's PCB each call uses), `field` (where a
+  field is set, passed to a CALL or compared, under which IF, WHEN, DO and
+  ON conditions), `lineage` (where a variable's value comes from and goes
+  to: assignments, and arguments bound to parameters), `text` (comments
+  and string literals containing a word or message code), `get_source` and
+  `query_graph`, a read-only SQL query over the
+  tables below. Copilot lists them under the tools button in agent mode,
+  and **MCP: List Servers** starts, stops and shows the server's log. It
+  reads the graph the extension keeps up to date and never writes to it.
+  Outside VS Code, any MCP client can start it as
+  `node <extension>/out/mcp.cjs <graph .sqlite> <folder>` (Node 22.5 or
+  newer); the output channel names the graph file on startup.
 
 ## How the graph is kept
 
@@ -101,20 +128,103 @@ Needs VS Code 1.101 or newer, whose Node has `node:sqlite`.
 
 ### The graph's tables
 
-The graph is a plain SQLite file, so other tools (an MCP server, scripts)
+The graph is a plain SQLite file, so other tools (the MCP server, scripts)
 can read it while VS Code runs:
 
 - `files(id, path, language, member, mtime, size)`: every indexed file,
   `path` relative to the folder with `/`.
-- `symbols(id, file, parent, kind, name, qualifier, line, end_line)`:
+- `symbols(id, file, parent, kind, name, qualifier, detail, line, end_line)`:
   procedures, packages, jobs, procedures in JCL, formats, messages, tables,
-  views and aliases; `parent` is the enclosing symbol.
+  views, aliases, PSBs, DBDs and IMS transactions; `parent` is the enclosing
+  symbol, `detail` a procedure's `OPTIONS(...)` and `RETURNS(...)`, or the
+  operands of a PSB, DBD or transaction (with its `APPLCTN`'s `PSB=` and
+  `PGMTYPE=`).
 - `refs(id, file, caller, kind, name, qualifier, detail, line, col, end_line, end_col)`:
-  every call, fetch, include, program, table and screen reference, `caller`
-  being the symbol it is in.
+  every call, fetch, include, program, procedure, table, screen, PSB and
+  DBD reference, `caller` being the symbol it is in. A transaction refers
+  to its PSB and to the program named like it, a PSB to the DBDs of its
+  PCBs.
 - `links(ref, target_file, target_symbol)`: what a reference resolved to, one
   row per target; none when it did not resolve. Includes link to a file only.
-- `meta(name, value)`: `graph_version` grows with every change.
+- `file_io(id, file, caller, operation, name, record, key, title, statement, line)`:
+  every PL/I `OPEN`, `CLOSE`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `LOCATE`,
+  `GET` and `PUT`, one row per file it names. `record` is `INTO`, `FROM` or
+  `SET` (`LOCATE`'s based variable), `key` is `KEY`, `KEYTO` or `KEYFROM`,
+  `title` is `OPEN`'s `TITLE`. `GET` and `PUT` without `FILE` or `STRING`
+  name `SYSIN` and `SYSPRINT`. A file's DD is the one named like its
+  `title`, or else like the file.
+- `sql_columns(id, file, caller, operation, cursor, schema, table_name, column_name, usage, host, expression, line)`:
+  every column an embedded SQL statement uses. `usage` is `select`, `where`,
+  `join`, `group`, `order`, `having`, `set`, `insert` or `read` (inside a
+  `SET` or `VALUES` expression); `host` the host variable the column is
+  selected into, compared with, set from or inserted from; `expression` the
+  predicate, assigned value or select item when it is more than the column.
+  A cursor's query has `operation` `DECLARE`, and each `FETCH` gets one row
+  per `INTO` host variable with the cursor's select item at that position.
+  An unqualified column in a join has no `table_name`.
+- `columns(id, file, table_symbol, table_name, name, type, not_null, key, position, line)`:
+  the columns of every `CREATE TABLE`, `key` being the position in the
+  primary key.
+- `pcbs(id, file, psb, position, type, name, dbd, procopt, attributes, line)`:
+  the PCBs of every PSB gen in the order written, `type` `TP`, `DB` or
+  `GSAM`, `name` its `PCBNAME=` or label.
+- `sensegs(id, file, pcb, name, parent, procopt, line)`: the segments each
+  PCB may access.
+- `segments(id, file, dbd, name, parent, bytes, position, line)` and
+  `segment_fields(id, file, segment, name, sequence, start, bytes, type, line)`:
+  every DBD gen's segment hierarchy and fields, `sequence` `U` or `M` for
+  the key field.
+- `mfs_fields(id, file, screen, kind, name, dfld, row, col, length, segment, offset, label, literal, attributes, line)`:
+  the `DFLD`s of every MFS format's first device, with `label` the literal
+  to their left on the same row, and the `MFLD`s of every message in order,
+  with `dfld` the screen field they map and `offset` where their data
+  starts in the message segment after `LL ZZ` (and after the two attribute
+  bytes of `ATTR=YES`).
+- `dli_calls(id, file, caller, entry, function, pcb, pcb_parameter, io_area, segment, path, arguments, line)`:
+  every `CALL PLITDLI`, `CEETDLI` or `AIBTDLI`. `function` (`GU`, `ISRT`,
+  ...) and the SSA segments come from a literal or the `INIT` of the
+  variable passed, wherever it is declared (an SSA structure's first field); `path` lists every
+  SSA's segment (`KUNDE/KONTO`, `?` when unknown), `segment` the last.
+  `pcb_parameter` is the main procedure's parameter the PCB mask is
+  `BASED` on, which is its place in the PSB counting the I/O PCB.
+- `statements(id, file, caller, parent, kind, branch, label, detail, line, end_line)`:
+  every executable PL/I statement, and every `WHEN` and `OTHERWISE`, as a
+  tree: `parent` is the statement it is in, `branch` `then` or `else` of its
+  parent `IF`. `detail` is the head: the `IF` condition, `WHEN` values,
+  `SELECT` subject, `DO` spec, `ON` condition, `RETURN` value, `GOTO`
+  label, `SIGNAL` condition or `CALL` entry. Declarations are no statements.
+- `accesses(id, statement, name, mode, value, position, variable, through)`:
+  the fields each statement reads, writes (`value` the literal written) or
+  passes to a `CALL` (`arg`, `position` from 1), by name as written.
+  `variable` is the declaration the name resolves to by PL/I's scope rules,
+  includes counted; for a field of a `LIKE` copy it is the template's field
+  and `through` the copy.
+- `comparisons(id, statement, left, operator, right)`: every comparison in a
+  condition, and a `SELECT`'s subject against each `WHEN` value.
+- `literals(id, statement, text)`: every string literal of a statement,
+  without quotes and trailing blanks: messages, report text, codes. Bit
+  and hex literals are left out.
+- `variables(id, file, scope, parent, level, name, qualified, type, size, dims, storage, base, init, like, external, parameter, attributes, line)`:
+  every PL/I declaration and structure field. `scope` is the procedure it is
+  declared in (none in an include outside one), `parent` the enclosing
+  structure, `qualified` the dotted name (`KUNDE.ADRESSE.ORT`), `storage`
+  `STATIC`, `AUTOMATIC`, `BASED`/`DEFINED` (with `base`), `CONTROLLED`,
+  `CONSTANT` for `VALUE` or `PARAMETER` (with its position in `parameter`).
+  `comment` holds the comments right above the declaration and after it on
+  its line; `symbols.comment` a procedure's, from right above it.
+  A parameter that is never declared still gets a row.
+- `steps(id, file, job, name, program, procedure, psb, parm, line)`: every
+  JCL `EXEC`, `job` being its job or procedure. `program` is what runs: `PGM=`,
+  `MBR=`, or for `DFSRRC00` the program in its `PARM`, where `psb` comes from
+  too (or from `PSB=`).
+- `dds(id, file, step, name, dsn, member, disp, attributes, line)`: every DD
+  statement. `dsn` without the PDS member or GDG generation, which go to
+  `member` (`+1`, `0`, `KDMEMBER`); `disp` as written (`NEW,CATLG,DELETE`,
+  `SHR`), `NEW` when a DSN has none. A concatenation repeats the DD name;
+  `//STEP.DD` overrides belong to the step running the procedure.
+- `meta(name, value)`: `graph_version` grows with every change;
+  `indexer_version` names what the indexer reads, and a graph of an older
+  one is built again from scratch.
 
 ## Error codes
 
@@ -134,6 +244,9 @@ can read it while VS Code runs:
 - `PLG017E` Show 3270 Screen: opening a field's `DFLD` failed.
 - `PLG018E` (on the screen page) drawing the screen failed.
 - `PLG019E` (on the screen page) the format is no longer in the source.
+- `PLG020E` (MCP server) a tool call failed, e.g. a bad SQL query; the
+  message is the tool's answer.
+- `PLG021E` (MCP server's log) a line from the client was not JSON.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

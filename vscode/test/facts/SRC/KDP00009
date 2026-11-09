@@ -1,0 +1,22 @@
+ /**********************************************************/
+ /* KDP00009: SPERRPRUEFUNG                                */
+ /* PRUEFT, OB EIN KUNDE GESPERRT IST                      */
+ /**********************************************************/
+ KDP00009: PROC(KDNR) OPTIONS(MAIN);
+   DCL KDNR CHAR(8);         /* KUNDENNUMMER */
+   /* SPERRVERMERK DES KUNDEN */
+   DCL 1 SPERRE,
+         2 KZ    CHAR(1),    /* S = GESPERRT, F = FREI */
+         2 GRUND CHAR(30);
+   DCL MELDUNG CHAR(79);
+   DCL KDFEHL ENTRY;
+   IF KZ = 'S' THEN DO;
+     MELDUNG = 'KDE001 KUNDE IST GESPERRT';
+     CALL KDFEHL('KDE001', 'GESPERRT: ' || GRUND);
+   END;
+   ELSE PUT SKIP LIST('KUNDE ''FREI''');
+ /* PROTOKOLL */
+ PROTO: PROC;
+   DISPLAY('KDP00009 ENDE');
+ END PROTO;
+ END KDP00009;

@@ -21,6 +21,7 @@ const files = [
   "syntaxes/db2.tmLanguage.json",
   "out/extension.cjs",
   "out/worker.cjs",
+  "out/mcp.cjs",
   "out/graph.html",
   "out/screen.html",
   "out/web-tree-sitter.wasm",

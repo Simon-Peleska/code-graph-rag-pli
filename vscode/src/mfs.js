@@ -103,6 +103,89 @@ export function mfsFormats(text) {
 }
 
 /**
+ * A DFLD of a format's first device, or an MFLD of a message. Lines from 1,
+ * rows and columns from 1.
+ * @typedef {object} MfsFieldFact
+ * @property {string} screen the format or message
+ * @property {"DFLD" | "MFLD"} kind
+ * @property {string | null} name a DFLD's label, null for a literal
+ * @property {string | null} dfld the DFLD an MFLD maps
+ * @property {number | null} row
+ * @property {number | null} col
+ * @property {number | null} length
+ * @property {number | null} segment the message segment, from 1
+ * @property {number | null} offset of an MFLD's data in its segment after LL and ZZ, behind the two attribute bytes of ATTR=YES
+ * @property {string | null} label the literal left of a DFLD on its row
+ * @property {string | null} literal a literal DFLD's text, an MFLD's literal or default
+ * @property {string} attributes the operands as written
+ * @property {number} line
+ */
+
+/**
+ * The fields of every format and message, for the graph.
+ * @param {string} text an MFS source
+ * @returns {MfsFieldFact[]}
+ */
+export function mfsFields(text) {
+  /** @type {MfsFieldFact[]} */
+  const fields = [];
+  let screen = "";
+  let devices = 0;
+  let segment = 0;
+  let offset = 0;
+  /** @type {MfsFieldFact[]} the current format's DFLDs, to find labels in */
+  let dflds = [];
+  /** @param {string} value */
+  const unquote = (value) => value.slice(1, value.lastIndexOf("'")).replaceAll("''", "'");
+  for (const { label, operation, operands, line } of statements(text)) {
+    if (operation === "FMT" || operation === "MSG") {
+      screen = label;
+      devices = 0;
+      segment = 0;
+      dflds = [];
+      continue;
+    }
+    if (operation === "DEV") devices++;
+    if (operation === "SEG") {
+      segment++;
+      offset = 0;
+    }
+    if (operation === "DFLD" && screen && devices === 1) {
+      const [row, col] = numbers(keyword(operands, "POS"));
+      const literal = operands[0]?.startsWith("'") ? unquote(operands[0]) : null;
+      /** @type {MfsFieldFact} */
+      const field = {
+        screen, kind: "DFLD", name: literal === null ? label || null : null, dfld: null,
+        row: row ?? null, col: col ?? null, length: Number(keyword(operands, "LTH")) || literal?.length || null,
+        segment: null, offset: null, label: null, literal, attributes: operands.join(","), line: line + 1,
+      };
+      if (literal === null) {
+        const left = dflds.filter((d) => d.literal !== null && d.row === field.row && (d.col ?? 0) < (field.col ?? 0));
+        field.label = left.sort((a, b) => (b.col ?? 0) - (a.col ?? 0))[0]?.literal?.trim() || null;
+      }
+      dflds.push(field);
+      fields.push(field);
+    }
+    if (operation === "MFLD" && screen) {
+      // MFLD KDNR, MFLD (KDNR,'default'), MFLD 'literal', MFLD (,SCA)
+      const first = operands[0] ?? "";
+      const parts = first.startsWith("(") ? list(first.slice(0, first.lastIndexOf(")") + 1)) : [first];
+      const dfld = parts[0] && !parts[0].startsWith("'") ? parts[0].toUpperCase() : null;
+      const quoted = /'(?:[^']|'')*'/.exec(first)?.[0];
+      const length = Number(keyword(operands, "LTH")) || (quoted ? unquote(quoted).length : null);
+      const attributeBytes = keyword(operands, "ATTR")?.toUpperCase().startsWith("YES") ? 2 : 0;
+      fields.push({
+        screen, kind: "MFLD", name: null, dfld, row: null, col: null, length,
+        segment: Math.max(segment, 1), offset: offset + attributeBytes, label: null, literal: quoted ? unquote(quoted) : null,
+        attributes: operands.join(","), line: line + 1,
+      });
+      offset += attributeBytes + (length ?? 0);
+    }
+  }
+  return fields;
+}
+
+/**
  * @param {string[]} operands
  * @param {string} name
  * @returns {string | undefined} the value of `name=`

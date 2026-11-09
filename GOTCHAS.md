@@ -42,8 +42,87 @@
 - **Db2 DDL with sequence numbers in columns 73-80 doesn't parse.** The JCL
   and HLASM grammars handle the columns themselves, the Db2 grammar reads
   free-format SQL.
-- **`OPTIONS(MAIN)` is not recorded.** The graph page's `OPTIONS(MAIN)`
-  badge and legend never light up.
+- **A new fact needs `INDEXER_VERSION` raised.** Unchanged files are not read
+  again, so without it they never get the new rows; with it `openGraph`
+  drops the tables and the next sync reads everything.
+- **`INIT((12)0)` parses with an ERROR node.** The grammar lacks repetition
+  factors; `variables.init` still holds the text `(12)0`.
+- **`VARYING` has no node of its own.** It is found in the attribute text.
+- **DSNs are kept as written.** `&&TEMP`, `*.STEP1.DD` back references and
+  `&SYM` symbolic parameters are not resolved, so a dataset chain through
+  them breaks; a procedure's DDs are not merged with the overrides of the
+  step running it.
+- **PSB references link only to PSB gens.** PSB names usually equal program
+  names, so `psb` refs must not fall back to member lookup like programs;
+  the other way round, `program()` skips the members of PSB and DBD gens, or
+  `PGM=KDDRUCK` would find the PSB gen `KDDRUCK`.
+- **IMS gens are found by their first statement.** A member that would be
+  PL/I is read as assembler when its first statement is `PRINT`, `TITLE`,
+  `PCB`, `PSBGEN`, `DBD`, `DATASET`, `SEGM`, `IMSCTRL`, `APPLCTN`,
+  `TRANSACT` or `DATABASE`. Only the indexer does this; the editor still
+  colors such a member as PL/I.
+- **A transaction's program is its `APPLCTN`'s PSB name.** That is how IMS
+  names MPP programs; `GPSB=` with `PGM=` is not read, so such transactions
+  have no PSB and no program.
+- **`pcbs.position` counts the PCBs as written.** An online or BMP program
+  (or `CMPAT=YES`) gets the I/O PCB first, so its parameter *n* is PCB
+  *n - 1*.
+- **DL/I constants come from `INIT`.** The resolve pass looks the function
+  code, SSAs and PCB mask up like any access, so includes count; one set at
+  run time leaves `function` or the SSA's segment unknown, and the call's
+  `arguments` still show the names. `PLITDLI` and `AIBTDLI` are read with the parameter count first, `CEETDLI`
+  without. An `AIBTDLI` call names its PCB inside the AIB, so it has no
+  `pcb_parameter`.
+- **An MFS label is the literal left of its field on the same row.** A
+  label above a column of fields, or on another device or page, is not
+  found. Only a format's first `DEV` is read.
+- **An `ISRT` on the I/O PCB passes a MOD name where SSAs go.** The indexer
+  cannot tell them apart, so `dli_calls.segment` holds the MOD name; the
+  `dli` tool shows it as `MOD` once the PCB resolves to an I/O or TP PCB.
+- **`accesses.name` is the field as written; `variable` is what it names.**
+  `resolveAccesses` runs after `link()` and follows PL/I's rules: the
+  innermost procedure first, then outer ones, then the member; an include's
+  declarations belong to the procedure the `%INCLUDE` is in. Qualifiers may
+  skip levels (`KD.ORT` for `KD.ADRESSE.ORT`); a fully qualified match wins,
+  otherwise the first declaration, so an ambiguous name is not reported.
+  A field of a `LIKE` copy resolves to the template's field, with the copy
+  in `through`. A built-in (`SUBSTR`) or an undeclared name stays NULL.
+  Only the members that changed, or whose includes did, are resolved again.
+  The `field` tool still matches names as written. A function call and an
+  array element look alike, so `F(X)` is a read of `F` too. A `GOTO` label, an `ON`
+  condition's file and an I/O statement's `FILE(...)` are no accesses;
+  `INTO`, `KEYTO`, `SET` and `GET`'s data are writes.
+- **A comment belongs to what is right below it.** Only comment lines with
+  no gap down to a procedure or declaration count (box lines of `*` join the
+  block), plus one after a declaration on its line. A comment above a
+  statement, or separated by a blank line, is not kept.
+- **`lineage` is one step.** It lists a variable's direct sources and
+  targets: assignments in the same statement, and arguments bound to the
+  callee's parameters by position. An argument that is an expression, not a
+  plain reference, binds nothing. Following a chain means calling it again.
+- **The sample has no assignments.** zos-sample's statements are calls,
+  IFs, DOs and SQL, so its `accesses` count is far below real code's.
+- **I/O statements are read from their text.** The grammar ends `REWRITE`
+  before a `KEY(...)` and knows no `LOCATE`, so `readFileIo` takes the
+  source up to the next `;` and picks the options out by regex. A `;` inside
+  a string literal in an I/O statement cuts it short.
+- **`root.text` starts at the first token.** Slice it with
+  `node.startIndex - root.startIndex`, not `node.startIndex`.
+- **A program's files are only its own member's.** `programFiles` and the
+  `program_files` tool miss I/O done in procedures it calls in other members.
+- **Embedded SQL columns are paired by position.** Select item *i* goes into
+  `INTO` host variable *i*, insert column *i* takes `VALUES` entry *i*, and a
+  `FETCH` takes its columns from the last `DECLARE` of that cursor earlier in
+  the same file; a cursor declared in another member or after the `FETCH`
+  leaves the columns empty. Columns of a subquery's select list are counted
+  as select items too, which shifts the pairing.
+- **Walking the Db2 tree is costly in web-tree-sitter.** Every node access
+  crosses into wasm, so `readSql` collects what it needs in one walk instead
+  of calling `descendantsOfType` per clause. It still adds about 0.7 s to a
+  full sync of the 20k-file sample.
+- **Two declaration readers.** `pliDeclarations` in `source.js` (text-based,
+  for Go to Definition and completion) and `readDeclaration` in the indexer
+  (tree-based, for `variables`) can disagree.
 
 ## The extension
 
@@ -85,6 +164,13 @@
   output fields are shown blank and nothing maps fields to a message.
 - **Dot paths are not watched.** Changes under `.git` and other dot folders
   never reach the indexer.
+- **The MCP server API is cast to `any`.** The installed `@types/vscode`
+  is 1.85, older than `lm.registerMcpServerDefinitionProvider` (1.101).
+  The server runs on VS Code's own Node (`ELECTRON_RUN_AS_NODE`), so it
+  needs no Node install and has `node:sqlite`. It opens the graph
+  read-only, so a `query_graph` cannot write even if Copilot tries.
+  VSCodium has the API but no Copilot; test the server over stdio
+  (`test/mcp.test.js`) or with another MCP chat extension.
 
 ## The cgr patch set (`patches/`, no longer used by the extension)
 
