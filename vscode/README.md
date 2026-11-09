@@ -45,7 +45,9 @@ extension keeps of each workspace folder:
   work for the JCL jobs, MFS screens and Db2 tables in the graph too (a job
   "calls" its programs, a program its tables and screens). Each row
   expands into its file. Files that already appear further up are marked
-  `(repeated)` and don't expand.
+  `(repeated)` and don't expand. They follow the editor you switch to or
+  click into; a file opened from them leaves them in place until you click
+  or type in its editor.
 - **Progress** of indexing: the status bar shows `PL/I graph 42%` while a
   sync runs, and a sync of 50 files or more, such as the first one, also
   shows a notification with the step (`Reading files: 5,000 of 20,000`).
@@ -108,8 +110,8 @@ to WebAssembly (`grammars/`, built by `build-grammars.sh` from the
 graph per workspace folder in the extension's workspace storage. The
 extension only reads it.
 
-- The first sync of a workspace reads every file once: about 4 seconds and
-  300 MB of memory for 20,000 files.
+- The first sync of a workspace reads every file once: about 8 seconds and
+  350 MB of memory for 20,000 files, giving a 60 MB graph.
 - Later starts open the last session's graph at once and re-read only the
   files whose time or size changed (about 0.2 seconds when nothing changed).
 - A saved, added or deleted file is in the graph a moment later: the worker
@@ -117,8 +119,9 @@ extension only reads it.
   Changes that arrive while a sync runs, such as a git checkout's, are
   synced together when it ends.
 
-The status bar item and **PL/I Graph: Rebuild Graph** throw the graph away
-and read every file again. Messages and errors go to the **PL/I Graph**
+Clicking the status bar item opens a menu: Show Graph, Show Log and Rebuild
+Graph. **Rebuild Graph** (also in the command palette) throws the graph away
+and reads every file again. Messages and errors go to the **PL/I Graph**
 output.
 
 `pliGraph.extensionlessMembers` (default on) indexes files named like
@@ -136,7 +139,7 @@ can read it while VS Code runs:
   `syntax_errors` counts the places the grammar could not read (from
   `error_line` on; facts there may be missing), `failure` says why reading
   the file failed, which leaves it without facts until it changes.
-- `symbols(id, file, parent, kind, name, qualifier, detail, line, end_line)`:
+- `symbols(id, file, parent, kind, name, qualifier, detail, comment, line, end_line)`:
   procedures, packages, jobs, procedures in JCL, formats, messages, tables,
   views, aliases, PSBs, DBDs and IMS transactions; `parent` is the enclosing
   symbol, `detail` a procedure's `OPTIONS(...)` and `RETURNS(...)`, or the
@@ -207,7 +210,7 @@ can read it while VS Code runs:
 - `literals(id, statement, text)`: every string literal of a statement,
   without quotes and trailing blanks: messages, report text, codes. Bit
   and hex literals are left out.
-- `variables(id, file, scope, parent, level, name, qualified, type, size, dims, storage, base, init, like, external, parameter, attributes, line)`:
+- `variables(id, file, scope, parent, level, name, qualified, type, size, dims, storage, base, init, like, external, parameter, attributes, comment, line)`:
   every PL/I declaration and structure field. `scope` is the procedure it is
   declared in (none in an include outside one), `parent` the enclosing
   structure, `qualified` the dotted name (`KUNDE.ADRESSE.ORT`), `storage`

@@ -145,6 +145,11 @@
         "icon": "$(window)"
       },
       {
+        "command": "pliGraph.menu",
+        "title": "Menu",
+        "category": "PL/I Graph"
+      },
+      {
         "command": "pliGraph.rebuild",
         "title": "Rebuild Graph",
         "category": "PL/I Graph",
@@ -166,6 +171,12 @@
       ]
     },
     "menus": {
+      "commandPalette": [
+        {
+          "command": "pliGraph.menu",
+          "when": "false"
+        }
+      ],
       "editor/title": [
         {
           "command": "pliGraph.showScreen",

@@ -70,6 +70,8 @@ let showStatus = () => {};
 // Opening a file from a tree must not re-root the tree being explored.
 /** @type {string | undefined} */
 let openedFromTree;
+/** @type {string | undefined} the file the dependency views show, as a URI */
+let shownInTree;
 // The Show Graph page; `hash` is the view it shows, kept for reloads.
 /** @type {{ panel: vscode.WebviewPanel, workspace: Workspace, hash: string } | undefined} */
 let graphPanel;
@@ -84,7 +86,7 @@ export function activate(context) {
   }
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
-  status.command = "pliGraph.rebuild";
+  status.command = "pliGraph.menu";
   showStatus = () => {
     const all = [...workspaces.values()];
     const indexing = all.find((w) => w.indexing)?.indexing;
@@ -100,7 +102,7 @@ export function activate(context) {
       status.tooltip = "Building the graph for the first time…";
     } else {
       status.text = "$(type-hierarchy) PL/I graph";
-      status.tooltip = "The graph follows every change. Click to rebuild it from scratch.";
+      status.tooltip = "The graph follows every change. Click for the graph, the log or a rebuild.";
     }
     status.show();
   };
@@ -110,6 +112,16 @@ export function activate(context) {
     status,
     vscode.commands.registerCommand("pliGraph.rebuild", () => {
       for (const workspace of workspaces.values()) requestSync(workspace, { rebuild: true });
+    }),
+    vscode.commands.registerCommand("pliGraph.menu", async () => {
+      const items = [
+        { label: "$(type-hierarchy) Show Graph", run: () => vscode.commands.executeCommand("pliGraph.show") },
+        { label: "$(output) Show Log", run: () => log.show() },
+        { label: "$(refresh) Rebuild Graph", detail: "Reads every file again, which takes minutes on a large repository.", run: () => vscode.commands.executeCommand("pliGraph.rebuild") },
+      ];
+      const choice = await vscode.window.showQuickPick(items, { title: "PL/I Graph" });
+      log.info(`status bar menu: ${choice?.label ?? "dismissed"}`);
+      await choice?.run();
     }),
     vscode.commands.registerCommand("pliGraph.open", open),
     vscode.commands.registerCommand("pliGraph.show", () => showGraph(context)),
@@ -137,6 +149,17 @@ export function activate(context) {
     treeView("pliGraphDependencies", "dependencies"),
     treeView("pliGraphDependents", "dependents"),
     vscode.window.onDidChangeActiveTextEditor(() => followEditor()),
+    // A file opened from the views keeps them where they are until its
+    // editor is used: a click or key there doesn't change the active editor.
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      const document = event.textEditor.document;
+      if (event.kind === undefined || event.textEditor !== vscode.window.activeTextEditor) return;
+      if (document.uri.toString() === shownInTree || !inGraph(document)) return;
+      log.info(`${vscode.workspace.asRelativePath(document.uri)} focused, reloading the dependency views`);
+      // Hidden views don't ask for their rows, so this fires once per file, not per click.
+      shownInTree = document.uri.toString();
+      changed.fire(undefined);
+    }),
     vscode.workspace.onDidOpenTextDocument((document) => {
       claimMember(document);
       // Changing the language reopens the document in the same editor.
@@ -707,6 +730,7 @@ function treeView(id, direction) {
       }
       const document = vscode.window.activeTextEditor?.document;
       const where = document && locate(document.uri);
+      shownInTree = document?.uri.toString();
       view.message = undefined;
       if (!document || !inGraph(document)) {
         view.message = "Open a PL/I, JCL, MFS or Db2 file.";

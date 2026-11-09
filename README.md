@@ -17,6 +17,15 @@ codes (`PLG004E`-`PLG024E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
+Each file is parsed once, and that one parse gives two kinds of rows: the
+structure that ties files together (definitions, references and what they
+resolve to), and the facts inside a program (declarations, statements, data
+access, interfaces). They are exact: read from the code, nothing guessed or
+summarized. Every table and column is described in
+[`vscode/README.md`](vscode/README.md#the-graphs-tables).
+
+### Definitions and references
+
 - `name: PROC` / `name: ENTRY` are procedures, `name: PACKAGE` a package
   holding its procedures. Names come from the label, uppercased. Nested
   procedures and ENTRY points have their enclosing procedure as parent.
@@ -25,29 +34,62 @@ codes (`PLG004E`-`PLG024E`) are in [`vscode/README.md`](vscode/README.md).
   includes, so `ARR(2)` on an array links to nothing.
 - `%INCLUDE member`, `%INCLUDE ddname(member)` and `EXEC SQL INCLUDE member`
   are includes. A member is the file named `member` (with or without an
-  extension); when several are, the nearest to the includer: its own
-  folder, then its subfolders (shallowest first), then the parent folder
-  and its subfolders, and so on outward; equal distances go by path. Dev
-  and prod copies side by side so each mean their own stage. The same
-  nearest rule picks among the files defining a program, procedure, screen,
-  table, PSB or DBD.
+  extension).
 - Fixed-format files (carriage control in column 1, sequence numbers in
   columns 73-80) are detected, and those columns are blanked before parsing.
   Lines and columns stay the same.
 
-The other three languages are linked to PL/I and to each other:
+The other languages are linked to PL/I and to each other:
 
 | Source | Definitions | References from the enclosing definition to |
 |---|---|---|
-| JCL (`.jcl`, `.cntl`) | `JOB`, named `PROC` | `PGM=X`, `MBR=X` (IMS procedures), the program in `PGM=DFSRRC00,PARM='BMP,X,...'`, `RUN PROGRAM(X)` in SYSTSIN data, `EXEC X` / `EXEC PROC=X` (in-stream or cataloged procedure) |
+| JCL (`.jcl`, `.cntl`) | `JOB`, named `PROC` | `PGM=X`, `MBR=X` (IMS procedures), the program and PSB in `PGM=DFSRRC00,PARM='BMP,X,PSB'`, `RUN PROGRAM(X)` in SYSTSIN data, `EXEC X` / `EXEC PROC=X` (in-stream or cataloged procedure) |
 | MFS (`.mfs`, `.asm`, `.hlasm`, `.mlc`) | `FMT`, `MSG` | `SOR=` format and `NXT=` message of a MSG |
+| PSB and DBD gens, IMS system definition | `PSBGEN`, `DBD`, `TRANSACT` | a PSB's DBDs; a transaction's PSB and the program named like it (from its `APPLCTN`) |
 | Db2 DDL (`.ddl`, `.db2`) | `CREATE TABLE` / `VIEW` / `ALIAS` | tables a view selects from, `REFERENCES` tables, the alias target |
 | PL/I | (above) | tables in `EXEC SQL` (with `SELECT`, `INSERT`, `UPDATE`, `DELETE`), MFS formats and messages named in string literals (`'CUSTO   '`) |
 
+PSB, DBD and system definition sources are recognized by their first
+statement (`PSBGEN`, `PCB`, `DBD`, `SEGM`, `APPLCTN`, `TRANSACT`, ...), with
+or without an extension. JCL `INCLUDE MEMBER=X` and HLASM `COPY X` are
+includes.
+
 A program `X` is the member named `X`; the reference goes to its procedure
-named `X`, or to all of its top-level procedures when none is. Screens are
-found by name across the repository, tables by name and, when it matches,
-schema. JCL `INCLUDE MEMBER=X` and HLASM `COPY X` are includes.
+named `X`, or to all of its top-level procedures when none is. Tables are
+matched by name and, when it matches, schema.
+
+When several files define the same name, as dev and prod copies side by
+side do, a reference means the nearest: the referrer's own folder, then its
+subfolders (shallowest first), then the parent folder and its subfolders,
+and so on outward. Equal distances go by path for a member; screens,
+tables, PSBs and DBDs keep every definition at the nearest distance.
+
+### Facts
+
+| Source | Facts | Tables |
+|---|---|---|
+| PL/I declarations | every variable and structure field: level, parent, qualified name, type, size, dimensions, storage (`STATIC`, `BASED(p)`, `DEFINED`, `CONTROLLED`, `VALUE`, ...), `INIT`, `LIKE`, `EXTERNAL`, the procedure it is in, a parameter's position, and the comments on it | `variables` |
+| PL/I statements | every executable statement as a tree: what it is in, which branch of an `IF`, its `WHEN`s and `OTHERWISE`; the head (condition, `CALL` entry, `RETURN` value, ...); the comments above procedures | `statements`, `symbols.comment` |
+| PL/I data flow | the fields each statement reads, writes (with the literal written) or passes to a `CALL` (by position), each resolved to its declaration by PL/I's scope rules, includes and `LIKE` copies counted | `accesses` |
+| PL/I conditions | every comparison in a condition, and a `SELECT` subject against each `WHEN` value | `comparisons` |
+| PL/I text | every string literal of a statement: messages, report text, codes | `literals` |
+| PL/I record I/O | `OPEN`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `LOCATE`, `GET`, `PUT`, `CLOSE` with the file, record, key and title | `file_io` |
+| Embedded SQL | every column used, how (select, where, join, set, insert, ...), the host variable it goes to or comes from, cursors and their `FETCH`es | `sql_columns` |
+| DL/I calls | `PLITDLI`, `CEETDLI`, `AIBTDLI`: function (`GU`, `ISRT`, ...), PCB and its position among the main procedure's parameters, I/O area, and the SSA segment path, from literals or the `INIT` of the variables passed | `dli_calls` |
+| JCL | every step with the program it runs and its PSB; every DD with dataset, PDS member or GDG generation, and `DISP` | `steps`, `dds` |
+| PSB and DBD gens | a PSB's PCBs in order with type, DBD and `PROCOPT`, and their sensitive segments; a DBD's segment hierarchy, lengths and fields with the key | `pcbs`, `sensegs`, `segments`, `segment_fields` |
+| MFS | a format's screen fields with row, column, length and the label left of them; a message's fields in order with the screen field each maps and its offset in the segment | `mfs_fields` |
+| Db2 DDL | every table's columns with type, `NOT NULL` and key position | `columns` |
+| Every file | how many places the grammar could not read and the first one; why reading it failed, if it did | `files` |
+
+Derived from these rows when asked, not stored: who writes and reads a
+dataset across jobs (MCP tool `dataset`), a program's files with their DDs
+and datasets (`program_files`), a table's columns with every SQL statement
+using each and its host variable (`table_columns`), a PSB's layout and users (`psb`), a screen's fields and
+the programs naming it (`screen`), which PCB of the PSB a DL/I call uses
+(`dli`), where a field is set, passed or compared and under which
+conditions (`field`), where its value comes from and goes, one step each
+way (`lineage`), and which comments and literals contain a text (`text`).
 
 ## Extensionless members
 
