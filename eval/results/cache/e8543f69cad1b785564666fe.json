@@ -1,0 +1,120 @@
+{
+  "unit": "KBU00015",
+  "member": "KBU00015",
+  "answer": {
+    "summary": "This procedure aggregates balances for account/type/category combinations by reading an input file and maintaining a sorted in-memory table. It updates existing balances or inserts new entries into the table, then writes the final sorted results to an output file.",
+    "inputs": [
+      "TCATFILE: contains TCA_SATZ records (TCA_KTO, TCA_TYP, TCA_KAT, TCA_SLD)"
+    ],
+    "outputs": [
+      "TCATOUT: contains TCA_SATZ records (TCA_KTO, TCA_TYP, TCA_KAT, TCA_SLD)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize balance counter to zero.",
+        "lines": [
+          27
+        ],
+        "fields": [
+          "TC_ANZ"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "For each record in TCATFILE, update the in-memory table using the key formed by concatenating TCA_KTO, TCA_TYP, and TCA_KAT.",
+        "lines": [
+          32
+        ],
+        "fields": [
+          "TCA_KTO",
+          "TCA_TYP",
+          "TCA_KAT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the key exists in the table, add the incoming balance (TCA_SLD) to the existing balance.",
+        "lines": [
+          42,
+          54
+        ],
+        "fields": [
+          "TC_KEY",
+          "TC_SLD"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the key does not exist, find the correct insertion position to maintain alphabetical order by TC_KEY.",
+        "lines": [
+          45,
+          47
+        ],
+        "fields": [
+          "TC_KEY",
+          "T@P"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the table is full (TC_ANZ reaches HBOUND), log an error via KBU00011.",
+        "lines": [
+          56,
+          57
+        ],
+        "fields": [
+          "TC_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "When inserting a new key, shift existing records in the table one position to the right to make space.",
+        "lines": [
+          58,
+          59,
+          60
+        ],
+        "fields": [
+          "TC_KEY",
+          "TC_SLD"
+        ],
+        "values": []
+      },
+      {
+        "text": "Initialize the new entry's balance to zero before adding the incoming balance.",
+        "lines": [
+          64,
+          65
+        ],
+        "fields": [
+          "TC_SLD"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Write the final table to TCATOUT, reconstructing the TCA_SATZ record from the split components of TC_KEY.",
+        "lines": [
+          72,
+          73,
+          74,
+          75,
+          76
+        ],
+        "fields": [
+          "TCA_KTO",
+          "TCA_TYP",
+          "TCA_KAT",
+          "TCA_SLD"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 32.8
+}

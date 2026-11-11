@@ -1,0 +1,228 @@
+{
+  "unit": "KBU00022",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "This procedure validates the structural and data integrity of an account record string. It checks for correct numeric formats, valid status codes, and valid date ranges, incrementing an error counter and logging warnings for every failed validation.",
+    "inputs": [
+      "K#S (CHAR 140): The raw account record string containing account number, status, balance, limits, dates, and other attributes."
+    ],
+    "outputs": [
+      "K#F (FIXED BIN 15): The total count of validation errors/warnings found in the record."
+    ],
+    "rules": [
+      {
+        "text": "Extract the account number from the first 11 characters of the record.",
+        "lines": [
+          80
+        ],
+        "fields": [
+          "K#NR"
+        ],
+        "values": [
+          "1",
+          "11"
+        ]
+      },
+      {
+        "text": "If the account number is not purely numeric, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          81,
+          82
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the status character at position 12 is not one of 'A', 'D', 'C', or 'X', increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          83,
+          84
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'ADCX'",
+          "0",
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the balance field (positions 13-23) is not a signed numeric value, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          85,
+          86
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the credit limit field (positions 24-33) is not purely numeric, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          87,
+          88
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the bar limit field (positions 34-43) is not purely numeric, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          90,
+          91
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the opening date field (positions 44-51) is not a valid date, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          92,
+          93
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the closing date field (positions 52-59) is not a valid date, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          94,
+          95
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the debit cycle field (positions 60-70) is not a signed numeric value, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          96,
+          97
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the credit cycle field (positions 71-81) is not a signed numeric value, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          98,
+          99
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the reminder level field (positions 92-93) is not purely numeric, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          100,
+          101
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the minimum interest field (positions 94-104) is not a signed numeric value, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          102,
+          103
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the payment field (positions 105-115) is not a signed numeric value, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          104,
+          105
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "If the points field (positions 116-124) is not purely numeric, increment error count and log a warning for 'KTO-NR'.",
+        "lines": [
+          106,
+          107
+        ],
+        "fields": [
+          "K#F",
+          "K#NR"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 106.2
+}

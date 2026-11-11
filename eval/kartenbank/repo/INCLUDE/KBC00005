@@ -1,0 +1,16 @@
+ /*******************************************************************/
+ /* KBC00005  SALDO JE KONOT/TYP/KATEGORIE (TCATFILE)  LRECL=30 FB    */
+ /*           + TABELLE IM SPEICHER, SORTIERT NACH TC_KEY            */
+ /*   1997-08-02  HKR  ERSTELLT                                       */
+ /*******************************************************************/
+  dcl 1 TCA_SATZ,
+        3 TCA_KTO         CHAR(11),
+      3 TCA_TYP         CHAR(2),
+          3 TCA_KAT         CHAR(4),
+        3 TCA_SLD         PIC 'S99999999V99',
+        3 FILLER          CHAR(2);
+  DCL 1 TC_TAB EXTERNAL,
+        3 TC_ANZ          FIXED BIN(31),
+        3 TC_E(3000),
+          5 TC_KEY        CHAR(17),
+          5 TC_SLD        FIXED DEC(15,2);

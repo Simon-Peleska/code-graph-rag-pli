@@ -1,0 +1,193 @@
+{
+  "unit": "BELASTEN",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "The procedure debits a specified amount from the account balance and the cycle balance. It constructs a transaction record with a generated ID and writes it to the transaction output file, while also updating internal counters for reporting.",
+    "inputs": [
+      "B#PFX (CHAR(2))",
+      "B#TYP (CHAR(2))",
+      "B#KAT (CHAR(4))",
+      "B#TXT (CHAR(30))",
+      "B#BTR (FIXED DEC(15,2))",
+      "KTO_NR (CHAR(11))",
+      "W_LAUFDT (CHAR(8))"
+    ],
+    "outputs": [
+      "KTO_SLD (PIC 'S99999999V99')",
+      "KTO_ZYK_SOL (PIC 'S99999999V99')",
+      "TRANOUT file (record BUC_SATZ)",
+      "KBU00027 counters (via call)"
+    ],
+    "rules": [
+      {
+        "text": "The account balance (KTO_SLD) is increased by the transaction amount (B#BTR).",
+        "lines": [
+          177
+        ],
+        "fields": [
+          "KTO_SLD",
+          "B#BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "The cycle balance (KTO_ZYK_SOL) is increased by the transaction amount (B#BTR).",
+        "lines": [
+          178
+        ],
+        "fields": [
+          "KTO_ZYK_SOL",
+          "B#BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "The transaction ID (TRN_ID) is constructed by concatenating the prefix (B#PFX), the account number (KTO_NR), and the literal string '000'.",
+        "lines": [
+          180
+        ],
+        "fields": [
+          "TRN_ID",
+          "B#PFX",
+          "KTO_NR"
+        ],
+        "values": [
+          "'000'"
+        ]
+      },
+      {
+        "text": "The transaction source (TRN_QUELLE) is set to the literal string 'ZINSLAUF'.",
+        "lines": [
+          181
+        ],
+        "fields": [
+          "TRN_QUELLE"
+        ],
+        "values": [
+          "'ZINSLAUF'"
+        ]
+      },
+      {
+        "text": "The transaction handler (TRN_HDL) is set to the literal string '000000000'.",
+        "lines": [
+          182
+        ],
+        "fields": [
+          "TRN_HDL"
+        ],
+        "values": [
+          "'000000000'"
+        ]
+      },
+      {
+        "text": "The transaction MCC code (TRN_MCC) is set to the literal string '0000'.",
+        "lines": [
+          183
+        ],
+        "fields": [
+          "TRN_MCC"
+        ],
+        "values": [
+          "'0000'"
+        ]
+      },
+      {
+        "text": "The transaction card number (TRN_KARTE) is set to an empty string.",
+        "lines": [
+          183
+        ],
+        "fields": [
+          "TRN_KARTE"
+        ],
+        "values": [
+          "''"
+        ]
+      },
+      {
+        "text": "The transaction date (TRN_DT) is set to the current run date (W_LAUFDT).",
+        "lines": [
+          183
+        ],
+        "fields": [
+          "TRN_DT",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The booking record (BUC_SATZ) is initialized to an empty string.",
+        "lines": [
+          184
+        ],
+        "fields": [
+          "BUC_SATZ"
+        ],
+        "values": [
+          "''"
+        ]
+      },
+      {
+        "text": "The booking transaction field (BUC_TRN) is populated with the first 110 characters of the transaction record (TRN_SATZ).",
+        "lines": [
+          185
+        ],
+        "fields": [
+          "BUC_TRN",
+          "TRN_SATZ"
+        ],
+        "values": [
+          "1",
+          "110"
+        ]
+      },
+      {
+        "text": "The booking account number (BUC_KTO) is set to the account number (KTO_NR).",
+        "lines": [
+          186
+        ],
+        "fields": [
+          "BUC_KTO",
+          "KTO_NR"
+        ],
+        "values": []
+      },
+      {
+        "text": "The booking date (BUC_DT) is set to the current run date (W_LAUFDT).",
+        "lines": [
+          187
+        ],
+        "fields": [
+          "BUC_DT",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The booking record (BUC_SATZ) is written to the TRANOUT file.",
+        "lines": [
+          188
+        ],
+        "fields": [
+          "BUC_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "The procedure KBU00027 is called with the transaction type (B#TYP), amount (B#BTR), and the literal status 'E'.",
+        "lines": [
+          189
+        ],
+        "fields": [
+          "B#TYP",
+          "B#BTR"
+        ],
+        "values": [
+          "'E'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 135.5
+}

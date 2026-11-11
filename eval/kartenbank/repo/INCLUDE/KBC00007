@@ -1,0 +1,17 @@
+ /*******************************************************************/
+ /* KBC00007  KUDNENSATZ (CUSTFILE)                   LRECL=60  FB    */
+ /*   1994-03-11  HKR  ERSTELLT                                       */
+ /*   2009-04-01  ALM  KDS_FICO (BONITAET)                            */
+ /*******************************************************************/
+  DCL 1 KDS_SATZ,
+       3 KDS_NR          CHAR(9),
+      3 KDS_VORN        CHAR(20),
+        3 KDS_NACHN       CHAR(25),
+        3 KDS_FICO        PIC '999',
+        3 FILLER          CHAR(3);
+  DCL 1 KD_TAB EXTERNAL,
+          3 KD_ANZ          FIXED BIN(31),
+         3 KD_E(2000),
+          5 KD_NR         CHAR(9),
+          5 KD_NAME       CHAR(46) VARYING,
+          5 KD_FICO       FIXED BIN(15);

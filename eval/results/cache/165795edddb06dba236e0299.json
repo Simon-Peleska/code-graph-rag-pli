@@ -1,0 +1,129 @@
+{
+  "unit": "KBU00003",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Compares two 8-character date strings (YYYYMMDD) by comparing their year, month, and day components individually. Returns 1 if the first date is later, -1 if earlier, and 0 if they are identical.",
+    "inputs": [
+      "P#A (CHAR(8))",
+      "P#B (CHAR(8))"
+    ],
+    "outputs": [
+      "Return value (FIXED BIN(15)): 1, -1, or 0"
+    ],
+    "rules": [
+      {
+        "text": "Initialize comparison result to 0.",
+        "lines": [
+          99
+        ],
+        "fields": [
+          "I#"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the year component of A (positions 1-4) is greater than the year component of B (positions 1-4), set result to 1.",
+        "lines": [
+          100
+        ],
+        "fields": [
+          "A#J",
+          "B#J",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the year component of A (positions 1-4) is less than the year component of B (positions 1-4), set result to -1.",
+        "lines": [
+          101
+        ],
+        "fields": [
+          "A#J",
+          "B#J",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      },
+      {
+        "text": "If years are equal, compare month components (positions 5-6). If A's month is greater than B's month, set result to 1.",
+        "lines": [
+          103
+        ],
+        "fields": [
+          "A#M",
+          "B#M",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If years are equal and A's month is less than B's month, set result to -1.",
+        "lines": [
+          104
+        ],
+        "fields": [
+          "A#M",
+          "B#M",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      },
+      {
+        "text": "If years and months are equal, compare day components (positions 7-8). If A's day is greater than B's day, set result to 1.",
+        "lines": [
+          106
+        ],
+        "fields": [
+          "A#T",
+          "B#T",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If years and months are equal and A's day is less than B's day, set result to -1.",
+        "lines": [
+          107
+        ],
+        "fields": [
+          "A#T",
+          "B#T",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      },
+      {
+        "text": "Return the comparison result.",
+        "lines": [
+          110
+        ],
+        "fields": [
+          "I#"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [
+    "rule 3: value -1 is not in the code of KBU00003 or the declarations it uses",
+    "rule 5: value -1 is not in the code of KBU00003 or the declarations it uses",
+    "rule 7: value -1 is not in the code of KBU00003 or the declarations it uses"
+  ],
+  "attempts": 2,
+  "seconds": 115.9
+}

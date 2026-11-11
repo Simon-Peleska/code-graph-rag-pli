@@ -1,0 +1,158 @@
+ /*******************************************************************/
+ /*  KBU00021   PLAUSIBILITAETSPRUFEUNG DER SAETZE (PAKET)            */
+ /*                                                                   */
+ /*  KBU00022  KONOTSATZ        (CHAR(140)) -> ANZAHL FEHLER          */
+ /*  KBU00023  UMSATZSATZ       (CHAR(120)) -> ANZAHL FEHLER          */
+ /*  KBU00024  KARTENSATZ       (CHAR(50))  -> ANZAHL FEHLER          */
+ /*  KBU00025  DATUM GUELTIG ?  (CHAR(8))   -> '1'B / '0'B            */
+ /*                                                                   */
+ /*  ACHTUNG: DIE PRUEFUNGEN PROTOKOLLIEREN NUR (WARNUNG). ES WIRD    */
+ /*  KEIN SATZ DESHALB ABGEWIESEN ODER GEAENDERT. BESCHLUSS FACHBE-   */
+ /*  REICH 2006-05-10: "LIEBER BUCHEN ALS LIEGEN LASSEN".             */
+ /*                                                                   */
+ /*  1998-04-01 HKR ERSTELLT                                          */
+ /*  2006-05-10 ALM NUR NOCH WARNUNG, VORHER RC 8                     */
+ /*  2008-09-17 ALM KARTENSATZ                                        */
+ /*******************************************************************/
+ KBU00021: PACKAGE EXPORTS(KBU00022, KBU00023, KBU00024, KBU00025);
+
+ DCL KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+ DCL P#ZIFF   CHAR(10) STATIC INIT('0123456789');
+  DCL P#VORZ   CHAR(2)  STATIC INIT('+-');
+ DCL P#MAXW   FIXED BIN(31) STATIC INIT(50);
+ DCL P#WARN   FIXED BIN(31) STATIC INIT(0);
+ DCL P#TMON(12) FIXED BIN(15) STATIC
+     INIT(31,29,31,30,31,30,31,31,30,31,30,31);
+
+ /*-------------------------------------------------------------------*/
+ /* WARNUNG AUSGEBEN, HOECHSTENS P#MAXW STUECK JE LAUF                */
+ /*-------------------------------------------------------------------*/
+   P#WARNUNG: PROC(W#WO, W#WAS, W#SCHL);
+   DCL W#WO   CHAR(8);
+   DCL W#WAS  CHAR(*) VARYING;
+   DCL W#SCHL CHAR(*);
+       P#WARN = P#WARN + 1; IF P#WARN > P#MAXW THEN RETURN;
+   IF P#WARN = P#MAXW THEN
+     do;
+       call KBU00007(W#WO, 'WEITERE WARNUNGEN UNTERDRUECKT');
+       return;
+       end;
+   CALL KBU00007(W#WO, 'WARNUNG ' || W#WAS || ' SATZ ' || W#SCHL);
+ END P#WARNUNG;
+
+ /*-------------------------------------------------------------------*/
+ /* NUMERISCH MIT VORZEICHEN ?                                        */
+ /*-------------------------------------------------------------------*/
+ P#NUMS: PROC(N#F) RETURNS(BIT(1));
+   DCL N#F CHAR(*);
+       IF LENGTH(N#F) < 2 THEN RETURN('0'B);
+   IF INDEX(P#VORZ, SUBSTR(N#F,1,1)) = 0 THEN RETURN('0'B);
+  IF VERIFY(SUBSTR(N#F,2), P#ZIFF) ^= 0 THEN RETURN('0'B); RETURN('1'B);
+ END P#NUMS;
+
+ P#NUMU: PROC(N#F) RETURNS(BIT(1));
+   DCL N#F CHAR(*);
+   RETURN(VERIFY(N#F, P#ZIFF) = 0);
+ end P#NUMU;
+
+ /*-------------------------------------------------------------------*/
+ KBU00025: PROC(D#DT) RETURNS(BIT(1));
+   DCL D#DT CHAR(8);
+   DCL (D#J, D#M, D#T) FIXED BIN(31);
+  IF ^P#NUMU(D#DT) THEN RETURN('0'B);
+   D#J = SUBSTR(D#DT,1,4);
+   D#M = SUBSTR(D#DT,5,2);
+   D#T = SUBSTR(D#DT,7,2);
+  if D#J < 1900 | D#J > 2099 then return('0'B);
+    IF D#M < 1 | D#M > 12 THEN RETURN('0'B);
+   IF D#T < 1 | D#T > P#TMON(D#M) THEN RETURN('0'B);
+   /* 29.02. IN NICHT-SCHALTJAHREN WIRD HIER NICHT ERKANNT (BEKANNT) */
+      RETURN('1'B);
+ END KBU00025;
+
+ /*-------------------------------------------------------------------*/
+ /* KONTOSATZ                                                         */
+ /*-------------------------------------------------------------------*/
+ KBU00022: PROC(K#S) RETURNS(FIXED BIN(15));
+   DCL K#S CHAR(140);
+   DCL K#F FIXED BIN(15) INIT(0);
+  DCL K#NR CHAR(11);
+   K#NR = SUBSTR(K#S,1,11);
+   IF ^P#NUMU(K#NR) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','KTO-NR',K#NR); END;
+    IF INDEX('ADCX', SUBSTR(K#S,12,1)) = 0 THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','STATUS',K#NR); END;
+   IF ^P#NUMS(SUBSTR(K#S,13,11)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','SALDO',K#NR); END;
+  if ^P#NUMU(SUBSTR(K#S,24,10)) then
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','KREDITLIM',K#NR);
+     END;
+   IF ^P#NUMU(SUBSTR(K#S,34,10)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','BARLIM',K#NR); END;
+   IF ^KBU00025(SUBSTR(K#S,44,8)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','ERDT',K#NR); END;
+  if ^KBU00025(SUBSTR(K#S,52,8)) then
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','ABDT',K#NR); END;
+   IF ^P#NUMS(SUBSTR(K#S,60,11)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','ZYK-HAB',K#NR); END;
+   IF ^P#NUMS(SUBSTR(K#S,71,11)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','ZYK-SOL',K#NR); END;
+   IF ^P#NUMU(SUBSTR(K#S,92,2)) THEN
+     do; K#F = K#F + 1; call P#WARNUNG('KBU00022','MAHNST',K#NR); END;
+    IF ^P#NUMS(SUBSTR(K#S,94,11)) THEN
+         DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','MINZ',K#NR); END;
+   IF ^P#NUMS(SUBSTR(K#S,105,11)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','ZAHL',K#NR); end;
+   IF ^P#NUMU(SUBSTR(K#S,116,9)) THEN
+     DO; K#F = K#F + 1; CALL P#WARNUNG('KBU00022','PUNKTE',K#NR); END;
+   RETURN(K#F);
+ END KBU00022;
+
+ /*-------------------------------------------------------------------*/
+ /* UMSATZSATZ                                                        */
+ /*-------------------------------------------------------------------*/
+ KBU00023: PROC(U#S) RETURNS(FIXED BIN(15));
+   DCL U#S  CHAR(120);
+   DCL U#F  FIXED BIN(15) INIT(0);
+   DCL U#ID CHAR(16);
+   U#ID = SUBSTR(U#S,1,16);
+   IF U#ID = '' THEN
+     DO; U#F = U#F + 1; CALL P#WARNUNG('KBU00023','ID LEER',U#ID); END;
+   IF ^P#NUMU(SUBSTR(U#S,17,2)) THEN
+     do; U#F = U#F + 1; call P#WARNUNG('KBU00023','TYP',U#ID); END;
+   IF ^P#NUMU(SUBSTR(U#S,19,4)) THEN
+     DO; U#F = U#F + 1; CALL P#WARNUNG('KBU00023','KATEGORIE',U#ID);
+   END;
+   IF ^P#NUMS(SUBSTR(U#S,63,11)) THEN
+     DO; U#F = U#F + 1; CALL P#WARNUNG('KBU00023','BETRAG',U#ID); END;
+   IF ^P#NUMU(SUBSTR(U#S,83,4)) THEN
+        do; U#F = U#F + 1; call P#WARNUNG('KBU00023','MCC',U#ID); END;
+    if ^P#NUMU(SUBSTR(U#S,87,16)) then
+     DO; U#F = U#F + 1; CALL P#WARNUNG('KBU00023','KARTE',U#ID); END;
+  IF ^KBU00025(SUBSTR(U#S,103,8)) THEN
+        DO; U#F = U#F + 1; CALL P#WARNUNG('KBU00023','DATUM',U#ID); end;
+     RETURN(U#F);
+ END KBU00023;
+
+ /*-------------------------------------------------------------------*/
+ /* KARTENSATZ                                                        */
+ /*-------------------------------------------------------------------*/
+ KBU00024: PROC(X#S) RETURNS(FIXED BIN(15));
+   DCL X#S CHAR(50);
+   DCL X#F FIXED BIN(15) INIT(0);
+      IF ^P#NUMU(SUBSTR(X#S,1,16)) THEN
+     DO;
+       X#F = X#F + 1;
+       CALL P#WARNUNG('KBU00024', 'KARTE', SUBSTR(X#S,1,16));
+     END;
+       IF ^P#NUMU(SUBSTR(X#S,26,11)) THEN
+     DO;
+           X#F = X#F + 1;
+       CALL P#WARNUNG('KBU00024', 'KONTO', SUBSTR(X#S,1,16));
+     END;
+   /* STATUS: Y = AKTIV, ALLES ANDERE GILT ALS GESPERRT. FRUEHER      */
+   /* GAB ES 'N' UND 'S' (STORNIERT), HEUTE KOMMT AUCH ' ' VOR.       */
+   return(X#F);
+    END KBU00024;
+
+ END KBU00021;

@@ -1,0 +1,16 @@
+ /*******************************************************************/
+ /*  KBU00008   PROTOKOLZEILE AUSGEBEN                               */
+ /*  1998-09-09 HKR ERSTELLT                                          */
+ /*  2005-11-11 ALM STUFE 0 = NICHTS AUSGEBEN (NIE BENUTZT)           */
+ /*******************************************************************/
+ KBU00008: PROC(P#PGM, P#TXT, P#ST);
+   DCL P#PGM CHAR(8);
+   DCL P#TXT CHAR(*) VARYING;
+   DCL P#ST  FIXED BIN(15);
+   DCL SYSPRINT FILE STREAM OUTPUT PRINT;
+    DCL Z#ZEIT CHAR(9);
+   IF P#ST = 0 THEN RETURN;
+       Z#ZEIT = TIME();
+   PUT FILE(SYSPRINT) SKIP EDIT(P#PGM, ' ', SUBSTR(Z#ZEIT,1,6), ' ',
+       P#TXT) (A, A, A, A, A);
+ END KBU00008;

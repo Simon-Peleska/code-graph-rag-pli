@@ -1,0 +1,150 @@
+{
+  "unit": "UMSATZ",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Processes a financial transaction by checking for duplicates, determining the debit/credit nature, and validating the transaction against business rules. If valid, it updates the account balance and applies fees for cash transactions; otherwise, it rejects the transaction.",
+    "inputs": [
+      "TRN_ID (CHAR 16)",
+      "TRN_TYP (CHAR 2)",
+      "TRN_BTR (DEC 15,2)",
+      "TRN_KARTE (CHAR 16)",
+      "#GS (CHAR 16 array)",
+      "#GN (Integer)",
+      "KTO_SATZ (CHAR 140)"
+    ],
+    "outputs": [
+      "W_BTR (DEC 15,2)",
+      "W_KARTE (CHAR 16)",
+      "@DOPP (BIT 1)",
+      "@SOLL (BIT 1)",
+      "KTAB_SATZ (CHAR 140 array)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize working amount and card number from transaction record.",
+        "lines": [
+          193,
+          194
+        ],
+        "fields": [
+          "W_BTR",
+          "W_KARTE",
+          "TRN_BTR",
+          "TRN_KARTE"
+        ],
+        "values": []
+      },
+      {
+        "text": "Check if transaction ID already exists in the seen transactions list (#GS). If found, mark as duplicate (@DOPSB = '1'B).",
+        "lines": [
+          196,
+          197,
+          198
+        ],
+        "fields": [
+          "@GI",
+          "@DOPP",
+          "TRN_ID"
+        ],
+        "values": [
+          "'1'B"
+        ]
+      },
+      {
+        "text": "If transaction ID is not a duplicate, add it to the list (#GS) and increment the counter (#GN), provided the list is not full. If full, log error 'ZU VIELE UMSAETZE'.",
+        "lines": [
+          199,
+          200,
+          201,
+          202
+        ],
+        "fields": [
+          "#GN",
+          "#GS",
+          "W_PGM"
+        ],
+        "values": [
+          "16"
+        ]
+      },
+      {
+        "text": "Set transaction as debit (@SOLL = '1'B) if type is '01' (KAUF) or '04' (BAR); otherwise, set as credit (@SOLL = '0'B).",
+        "lines": [
+          205,
+          206,
+          207,
+          208
+        ],
+        "fields": [
+          "TRN_TYP",
+          "@SOLL"
+        ],
+        "values": [
+          "'01'",
+          "'04'",
+          "'1'B",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "Perform business rule validation via PRUEFEN(). If validation fails (result != 0), reject the transaction, log it as type 'A', and exit the procedure.",
+        "lines": [
+          210,
+          211,
+          213,
+          214
+        ],
+        "fields": [
+          "@GRD",
+          "TRN_TYP",
+          "W_BTR"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If validation passes, execute the booking process and log the transaction as type 'G'.",
+        "lines": [
+          217,
+          218
+        ],
+        "fields": [
+          "TRN_TYP",
+          "W_BTR"
+        ],
+        "values": [
+          "'G'"
+        ]
+      },
+      {
+        "text": "If the transaction type is '04' (BAR), calculate and apply the transaction fee.",
+        "lines": [
+          219,
+          220
+        ],
+        "fields": [
+          "TRN_TYP"
+        ],
+        "values": [
+          "'04'"
+        ]
+      },
+      {
+        "text": "Update the account table (KTAB_SATZ) with the updated account record (KTO_SATZ) at the index specified by @KI.",
+        "lines": [
+          221
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "@KI",
+          "KTO_SATZ"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 41.9
+}

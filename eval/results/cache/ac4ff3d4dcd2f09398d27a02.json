@@ -1,0 +1,103 @@
+{
+  "unit": "KBP00001",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "This procedure performs the daily batch processing of credit card transactions. It reads the day's transaction file, validates each record against business rules (including duplicate detection and card status), and posts valid transactions to customer accounts while rejecting invalid ones. Finally, it updates account balances, category summaries, and transaction history files, returning a specific code if any rejections occurred.",
+    "inputs": [
+      "CTLCARD (Control Card containing Run Date)",
+      "DALYTRAN (Daily Transactions File)",
+      "XREFFILE (Card Cross-Reference File)",
+      "ACCTFILE (Account Master File)",
+      "TCATFILE (Category Summary File)",
+      "P_PARM (Parameter string for TRACE and CHECKPOINT settings)"
+    ],
+    "outputs": [
+      "ACCTOUT (Updated Account Master File)",
+      "TCATOUT (Updated Category Summary File)",
+      "TRANOUT (Booked Transaction History)",
+      "REJECTS (Rejected Transactions with reasons)",
+      "SYSPRINT (Log and Summary Report)"
+    ],
+    "rules": [
+      {
+        "text": "If the parameter string contains 'TRACE', the test mode switch is enabled to log detailed transaction processing steps.",
+        "lines": [
+          119
+        ],
+        "fields": [
+          "P_PARM",
+          "SW_TEST"
+        ],
+        "values": [
+          "'TRACE'",
+          "'1'B"
+        ]
+      },
+      {
+        "text": "If the parameter string contains 'CHKP=', the checkpoint interval is set to the 4-digit number following the equals sign; otherwise, it defaults to 1000.",
+        "lines": [
+          120,
+          121,
+          86
+        ],
+        "fields": [
+          "P_PARM",
+          "W_CHKP_N"
+        ],
+        "values": [
+          "'CHKP='",
+          "1000"
+        ]
+      },
+      {
+        "text": "The run date is extracted from the first 8 characters of the control card. If it contains any non-numeric characters, the program aborts with return code 16.",
+        "lines": [
+          140,
+          141,
+          142
+        ],
+        "fields": [
+          "W_STEU",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "'0123456789'",
+          "16"
+        ]
+      },
+      {
+        "text": "A checkpoint log message is written every time the transaction counter reaches the defined checkpoint interval (default 1000), and the counter resets to 0.",
+        "lines": [
+          165,
+          166,
+          168,
+          169
+        ],
+        "fields": [
+          "W_CHKP_Z",
+          "W_CHKP_N"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If any transactions were rejected (Z_ABGEW > 0) and the current return code is less than 4, the return code is set to 4 to indicate rejections occurred.",
+        "lines": [
+          184
+        ],
+        "fields": [
+          "Z_ABGEW",
+          "W_RC"
+        ],
+        "values": [
+          "0",
+          "4"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 166.3
+}

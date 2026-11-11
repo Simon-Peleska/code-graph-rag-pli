@@ -1,0 +1,84 @@
+{
+  "unit": "MINDESTZAHLUNG",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Calculates the minimum required payment amount based on the current account balance, a fixed percentage, and credit limit thresholds. It ensures the calculated payment does not exceed the actual balance.",
+    "inputs": [
+      "KTO_SATZ.KTO_SLD",
+      "KTO_SATZ.KTO_KLIM",
+      "KO_MINZ_MIN",
+      "KO_MINZ_PROZ"
+    ],
+    "outputs": [
+      "§MIN"
+    ],
+    "rules": [
+      {
+        "text": "If the account balance is zero or negative, the minimum payment is set to zero.",
+        "lines": [
+          85,
+          86,
+          87
+        ],
+        "fields": [
+          "KTO_SLD",
+          "§MIN"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the account-balance is less than the minimum threshold, the minimum payment is equal to the account balance.",
+        "lines": [
+          89,
+          90
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KO_MINZ_MIN",
+          "§MIN"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the account balance is at or above the minimum threshold, calculate the minimum payment as the maximum of the threshold and the calculated percentage of the balance, then add any amount by which the balance exceeds the credit limit.",
+        "lines": [
+          92,
+          93,
+          94,
+          95,
+          96
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KO_MINZ_PROZ",
+          "§MIN",
+          "KTO_KLIM",
+          "§UEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "The final calculated minimum payment cannot exceed the account balance.",
+        "lines": [
+          97
+        ],
+        "fields": [
+          "§MIN",
+          "KTO_SLD"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [
+    "rule 1: field §MIN is not declared anywhere",
+    "rule 2: field §MIN is not declared anywhere",
+    "rule 3: field §MIN is not declared anywhere",
+    "rule 3: field §UEB is not declared anywhere",
+    "rule 4: field §MIN is not declared anywhere"
+  ],
+  "attempts": 2,
+  "seconds": 42.2
+}

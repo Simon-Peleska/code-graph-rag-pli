@@ -1,0 +1,140 @@
+{
+  "unit": "KBP00005",
+  "member": "KBP00005",
+  "answer": {
+    "summary": "This procedure generates overdue payment reminder letters for accounts with a debit balance. It determines the reminder level (1, 2, or 3) based on the existing reminder count and produces a formatted letter for each eligible account.",
+    "inputs": [
+      "CTLCARD: Control card containing execution parameters",
+      "KTO_SATZ: Account records containing balance, status, and reminder level",
+      "KBU00012: Account data table",
+      "KBU00018: Customer data table"
+    ],
+    "outputs": [
+      "BRIEFE: Output stream containing generated reminder letters",
+      "KBU00007: Log entry containing the total number of letters processed"
+    ],
+    "rules": [
+      {
+        "text": "The execution date is extracted from the first 8 characters of the control card.",
+        "lines": [
+          51
+        ],
+        "fields": [
+          "W_STEU",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The payment deadline (M_FRIST) is calculated by adding 14 days to the execution date.",
+        "lines": [
+          52
+        ],
+        "fields": [
+          "M_FRIST"
+        ],
+        "values": [
+          "14"
+        ]
+      },
+      {
+        "text": "An account is skipped if the account status (KTO_ST) is not 'D' (Debit).",
+        "lines": [
+          59
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'D'"
+        ]
+      },
+      {
+        "text": "An account is skipped if the balance (KTO_SLD) is less than or equal to zero.",
+        "lines": [
+          60
+        ],
+        "fields": [
+          "KTO_SLD"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Reminder level 1 is assigned if the current reminder count (KTO_MAHN) is 2 or less.",
+        "lines": [
+          62
+        ],
+        "fields": [
+          "M_STUFE",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "text": "Reminder level 2 is assigned if the current reminder count (KTO_MAHN) is 4 or less.",
+        "lines": [
+          63
+        ],
+        "fields": [
+          "M_STUFE",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "2",
+          "4"
+        ]
+      },
+      {
+        "text": "Reminder level 3 is assigned for any other reminder count.",
+        "lines": [
+          64
+        ],
+        "fields": [
+          "M_STUFE"
+        ],
+        "values": [
+          "3"
+        ]
+      },
+      {
+        "text": "The program logs the total number of letters processed at the end of the run.",
+        "lines": [
+          72,
+          73
+        ],
+        "fields": [
+          "W_ZTXT",
+          "W_PGM"
+        ],
+        "values": []
+      },
+      {
+        "text": "The program is considered decommissioned; the logic for generating letters is no longer active in the current production environment.",
+        "lines": [
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
+        "fields": [],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 38.7
+}

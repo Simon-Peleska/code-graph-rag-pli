@@ -1,0 +1,56 @@
+{
+  "unit": "P#NUMS",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates whether a given string represents a numeric value that may optionally include a leading sign (+ or -).",
+    "inputs": [
+      "N#F: A character string representing the number to be validated."
+    ],
+    "outputs": [
+      "BIT(1): Returns '1'B (true) if the string is a valid signed number, otherwise '0'B (false)."
+    ],
+    "rules": [
+      {
+        "text": "The input string must have a length of at least 2 characters.",
+        "lines": [
+          48
+        ],
+        "fields": [
+          "N#F"
+        ],
+        "values": [
+          "2"
+        ]
+      },
+      {
+        "text": "The first character of the string must be a valid sign found in the predefined sign set (P#VORZ).",
+        "lines": [
+          49
+        ],
+        "fields": [
+          "P#VORZ",
+          "N#F"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "All characters following the first character must consist only of digits found in the predefined digit set (P#ZIFF).",
+        "lines": [
+          50
+        ],
+        "fields": [
+          "P#ZIFF",
+          "N#F"
+        ],
+        "values": [
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 14.9
+}

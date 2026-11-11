@@ -1,0 +1,119 @@
+{
+  "unit": "KBU00003",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Compares two date strings (YYYYMMDD) part-by-part (Year, then Month, then Day) to determine chronological order. Returns 1 if the first date is later, -1 if the first date is earlier, and 0 if they are equal.",
+    "inputs": [
+      "P#A: CHAR(8) (Date 1: YYYYMMDD)",
+      "P#B: CHAR(8) (Date 2: YYYYMMDD)"
+    ],
+    "outputs": [
+      "FIXED BIN(15): Comparison result (1, -1, or 0)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize comparison result to 0.",
+        "lines": [
+          99
+        ],
+        "fields": [
+          "I#"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If Year of A is greater than Year of B, set result to 1.",
+        "lines": [
+          100
+        ],
+        "fields": [
+          "A#J",
+          "B#J",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If Year of A is less than Year of B, set result to -1.",
+        "lines": [
+          101
+        ],
+        "fields": [
+          "A#J",
+          "B#J",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      },
+      {
+        "text": "If Years are equal and Month of A is greater than Month of B, set result to 1.",
+        "lines": [
+          103
+        ],
+        "fields": [
+          "A#M",
+          "B#M",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If Years are equal and Month of A is less than Month of B, set result to -1.",
+        "lines": [
+          104
+        ],
+        "fields": [
+          "A#M",
+          "B#M",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      },
+      {
+        "text": "If Years and Months are equal and Day of A is greater than Day of B, set result to 1.",
+        "lines": [
+          106
+        ],
+        "fields": [
+          "A#T",
+          "B#T",
+          "I#"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If Years and Months are equal and Day of A is less than Day of B, set result to -1.",
+        "lines": [
+          107
+        ],
+        "fields": [
+          "A#T",
+          "B#T",
+          "I#"
+        ],
+        "values": [
+          "-1"
+        ]
+      }
+    ]
+  },
+  "errors": [
+    "rule 3: value -1 is not in the code of KBU00003 or the declarations it uses",
+    "rule 5: value -1 is not in the code of KBU00003 or the declarations it uses",
+    "rule 7: value -1 is not in the code of KBU00003 or the declarations it uses"
+  ],
+  "attempts": 2,
+  "seconds": 63.9
+}

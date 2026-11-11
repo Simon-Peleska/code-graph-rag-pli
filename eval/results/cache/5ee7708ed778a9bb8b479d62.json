@@ -1,0 +1,75 @@
+{
+  "unit": "S#KOPF",
+  "member": "KBU00026",
+  "answer": {
+    "summary": "This procedure generates the header section for the 'KARTENBANK ABSTIMMLISTE' report, incrementing the page counter and printing the report metadata and column headers.",
+    "inputs": [
+      "S#KOPF_DT (Date)",
+      "S#KOPF_PGM (Program Name)",
+      "S#SEITE (Current Page Number)",
+      "S#TXT (Header Labels: 'GEBUCHT', 'ABGEWIESEN', 'ERZEUGT')"
+    ],
+    "outputs": [
+      "SYSPRINT (Report Output)",
+      "S#SEITE (Incremented Page Number)",
+      "S#ZL (Current Line Counter)"
+    ],
+    "rules": [
+      {
+        "text": "Increment the page counter by 1 for every header call.",
+        "lines": [
+          86
+        ],
+        "fields": [
+          "S#SEITE"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Print the report header containing the title, program name, status 'LAUF', date, and the current page number.",
+        "lines": [
+          87,
+          88,
+          90
+        ],
+        "fields": [
+          "S#KOPF_PGM",
+          "S#KOPF_DT",
+          "S#SEITE"
+        ],
+        "values": [
+          "'KARTENBANK  ABSTIMMLISTE'",
+          "'LAUF'"
+        ]
+      },
+      {
+        "text": "Print the column headers for 'GEBUCHT', 'ABGEWIESEN', and 'ERZEUGT' with a 2-line skip above them.",
+        "lines": [
+          91,
+          92
+        ],
+        "fields": [
+          "S#TXT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Reset the current line counter to 4 after printing the header.",
+        "lines": [
+          93
+        ],
+        "fields": [
+          "S#ZL"
+        ],
+        "values": [
+          "4"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 22.2
+}

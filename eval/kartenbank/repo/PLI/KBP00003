@@ -1,0 +1,138 @@
+ /*******************************************************************/
+ /*  PROGRAMM   KBP00003                                              */
+ /*  JOB        KBJ00001  STEP030                                     */
+ /*                                                                   */
+ /*  KONTOAUSZUG + NEUER ZYKLUS                                       */
+ /*    - MINDESTZAHLNUG BERECHENN                                     */
+ /*    - AUSZUG SCHRIEBEN WENN BEWEGUNG ODER SALDO                    */
+ /*    - ZYKLUSFELDER ZURUECKSETZEN                                   */
+ /*                                                                   */
+ /*  EINGAEB    CTLCARD ACCTFILE CUSTFILE                             */
+ /*  AUSGABE    ACCTOUT STMTFILE                                      */
+ /*                                                                   */
+ /*  1995-02-20 HKR ERSTELLT                                          */
+ /*  2001-06-14 WBE EURO-DOPPELAUSWEIS (KBU00020)                     */
+ /*  2002-03-01 WBE DOPPELAUSWEIS ENDE - SCHALTER BLEIBT 'N'          */
+ /*  2009-04-01 ALM NAME AUS KBU00018                                 */
+ /*******************************************************************/
+ KBP00003:
+   PROCEDURE OPTIONS(MAIN);
+
+  %INCLUDE KBC00001;
+      %INCLUDE KBC00002;
+      %INCLUDE KBC00007;
+   %INCLUDE KBC00008;
+   %INCLUDE KBC00010;
+   %INCLUDE KBC00011;
+
+   DECLARE CTLCARD  FILE RECORD INPUT;
+   DECLARE STMTFILE FILE RECORD OUTPUT;
+
+   DECLARE KBU00002 ENTRY(CHAR(8), FIXED BIN(31)) RETURNS(CHAR(8))
+                    EXTERNAL;
+   DECLARE KBU00005 ENTRY(FIXED DEC(31,10)) RETURNS(FIXED DEC(15,2))
+                    EXTERNAL;
+   DECLARE KBU00006 ENTRY(FIXED DEC(15,2), FIXED DEC(15,2))
+                        RETURNS(FIXED DEC(15,2)) EXTERNAL;
+   DECLARE KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+   DECLARE KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)
+                    EXTERNAL;
+   DECLARE (KBU00012, KBU00014, KBU00018) ENTRY EXTERNAL;
+   DECLARE KBU00019 ENTRY(CHAR(9), FIXED BIN(31)) EXTERNAL;
+   DECLARE KBU00020 ENTRY(FIXED DEC(15,2), FIXED DEC(15,2)) EXTERNAL;
+
+   DECLARE §I       FIXED BIN(31);
+      DECLARE §KD      FIXED BIN(31);
+   DECLARE §FAEL    CHAR(8);
+      DECLARE §MIN     FIXED DEC(15,2);
+   DECLARE §SLD     FIXED DEC(15,2); DECLARE §UEB     FIXED DEC(15,2);
+   DECLARE §EUR     FIXED DEC(15,2); DECLARE §AUSZUG  BIT(1);
+
+     W_PGM = 'KBP00003';
+       W_RC  = 0;
+
+   OPEN FILE(CTLCARD);
+   READ FILE(CTLCARD) INTO(W_STEU);
+  CLOSE FILE(CTLCARD);
+   W_LAUFDT = SUBSTR(W_STEU,1,8);
+   §FAEL = KBU00002(W_LAUFDT, KO_FAELLIG_TG);
+    CALL KBU00007(W_PGM, 'FAELLIG AM ' || §FAEL);
+
+   CALL KBU00012;
+   CALL KBU00018;
+
+   OPEN FILE(STMTFILE);
+
+    do §I = 1 TO KTAB_ANZ;
+     STRING(KTO_SATZ) = KTAB_SATZ(§I);
+     IF KTO_ST ^= 'X' THEN
+       DO;
+           CALL MINDESTZAHLUNG;
+         CALL AUSZUG; CALL NEUER_ZYKLUS;
+         KTAB_SATZ(§I) = STRING(KTO_SATZ);
+       END;
+   END;
+
+  CLOSE FILE(STMTFILE);
+   CALL KBU00014; W_ZTXT = Z_GESCHR;
+   CALL KBU00007(W_PGM, 'AUSZUEGE ' || W_ZTXT);
+   CALL PLIRETC(W_RC);
+   RETURN;
+
+ /*------------------------------------------------------------------*/
+    MINDESTZAHLUNG:
+  PROCEDURE;
+   §SLD = KTO_SLD;
+    IF §SLD <= 0 THEN
+     §MIN = 0;
+   ELSE
+   IF §SLD < KO_MINZ_MIN THEN
+     §MIN = §SLD;
+   else
+     DO; §MIN = KBU00005(DIVIDE(§SLD * KO_MINZ_PROZ, 100, 31, 10));
+       §MIN = KBU00006(§MIN, KO_MINZ_MIN);
+       IF §SLD > KTO_KLIM THEN
+       DO; §UEB = §SLD - KTO_KLIM;
+         §MIN = §MIN + §UEB; END;
+      IF §MIN > §SLD THEN §MIN = §SLD;
+     end;
+  END MINDESTZAHLUNG;
+
+ /*------------------------------------------------------------------*/
+ AUSZUG:
+   PROCEDURE;
+   §AUSZUG = (KTO_SLD ^= 0) | (KTO_ZYK_SOL ^= 0) | (KTO_ZYK_HAB ^= 0);
+   if ^§AUSZUG then return;
+
+      STRING(AZG_SATZ) = '';
+   AZG_KTO = KTO_NR; CALL KBU00019(KTO_KDNR, §KD);
+   IF §KD = 0 THEN
+     AZG_NAME = 'UNBEKANNT';
+       ELSE
+      AZG_NAME = KD_NAME(§KD);
+  IF SW_EURO = 'J' THEN
+     DO;
+       /* DM-BETARG ZUSAETZLICH (2001) - AUSGBAE ENTFERNT 2002       */
+       §SLD = KTO_SLD;
+       call KBU00020(§SLD, §EUR);
+       AZG_SLD = §EUR;
+     END;
+   ELSE
+     AZG_SLD = KTO_SLD;
+   AZG_MINZ = §MIN; AZG_FAEL = §FAEL;
+   AZG_PKT  = KTO_PKT;
+    AZG_ST   = KTO_ST;
+   AZG_SOL  = KTO_ZYK_SOL;
+   AZG_HAB  = KTO_ZYK_HAB;
+   WRITE FILE(STMTFILE) FROM(AZG_SATZ); Z_GESCHR = Z_GESCHR + 1;
+   END AUSZUG;
+
+ /*------------------------------------------------------------------*/
+ NEUER_ZYKLUS:
+   PROCEDURE;
+   KTO_ZYK_SOL  = 0;
+       KTO_ZYK_HAB  = 0;
+   KTO_ZYK_ZAHL = 0; KTO_MINZ     = §MIN;
+      END NEUER_ZYKLUS;
+
+  END KBP00003;

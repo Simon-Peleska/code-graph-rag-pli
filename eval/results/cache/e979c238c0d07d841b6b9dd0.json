@@ -1,0 +1,120 @@
+{
+  "unit": "AUSZUG",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Generates a bank account statement record if the account has a non-zero balance or specific credit/debit movements. The procedure retrieves customer names, performs currency conversion to Euro if required, and writes the formatted statement to the output file.",
+    "inputs": [
+      "KTO_SATZ (KTO_NR, KTO_SLD, KTO_ZYK_SOL, KTO_ZYK_HAB, KDO_PKT, KTO_ST, KTO_KDNR)",
+      "SW_EURO (Currency switch)",
+      "KBU00019 (Customer lookup by KTO_KDNR)",
+      "KBU00020 (DM to EUR conversion)"
+    ],
+    "outputs": [
+      "AZG_SATZ (Written to STMTFILE)",
+      "Z_GESCHR (Incremented counter)"
+    ],
+    "rules": [
+      {
+        "text": "Only process the account if the balance (KTO_SLD), debit movement (KTO_ZYK_SOL), or credit movement (KTO_ZYK_HAB) is non-zero.",
+        "lines": [
+          104,
+          105
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_ZYK_SOL",
+          "KTO_ZYK_HAB"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the customer ID lookup returns 0, set the statement name to 'UNBEKANNT'.",
+        "lines": [
+          109,
+          110
+        ],
+        "fields": [
+          "KD",
+          "AZG_NAME"
+        ],
+        "values": [
+          "0",
+          "'UNBEKANNT'"
+        ]
+      },
+      {
+        "text": "If the Euro switch is active ('J'), convert the balance from DM to EUR using the external routine.",
+        "lines": [
+          113,
+          116,
+          117,
+          118
+        ],
+        "fields": [
+          "SW_EURO",
+          "KTO_SLD",
+          "AZG_SLD"
+        ],
+        "values": [
+          "'J'"
+        ]
+      },
+      {
+        "text": "If the Euro switch is not active, use the original balance as the statement balance.",
+        "lines": [
+          120,
+          121
+        ],
+        "fields": [
+          "SW_EURO",
+          "AZG_SLD",
+          "KTO_SLD"
+        ],
+        "values": [
+          "'N'",
+          "KTO_SLD"
+        ]
+      },
+      {
+        "text": "Map all remaining account fields (Minimum amount, Due date, Pocket, Status, Debit, Credit) from the source record to the statement record.",
+        "lines": [
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "fields": [
+          "AZG_MINZ",
+          "AZG_FAEL",
+          "AZG_PKT",
+          "AZG_ST",
+          "AZG_SOL",
+          "AZG_HAB",
+          "KTO_MINZ",
+          "FAEL",
+          "KTO_PKT",
+          "KTO_ST",
+          "KTO_ZYK_SOL",
+          "KTO_ZYK_HAB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increment the total number of statements processed.",
+        "lines": [
+          127
+        ],
+        "fields": [
+          "Z_GESCHR"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 36.8
+}

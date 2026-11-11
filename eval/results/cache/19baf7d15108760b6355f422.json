@@ -1,0 +1,33 @@
+{
+  "unit": "KBU00005",
+  "member": "KBU00004",
+  "answer": {
+    "summary": "This procedure performs a commercial rounding of a numeric input value to two decimal places. It is designed specifically for positive amounts.",
+    "inputs": [
+      "B#IN (FIXED DEC(31,10))"
+    ],
+    "outputs": [
+      "B#OUT (FIXED DEC(15,2))"
+    ],
+    "rules": [
+      {
+        "text": "Round the input value B#IN to 2 decimal places using commercial rounding and assign it to B#OUT.",
+        "lines": [
+          19,
+          20
+        ],
+        "fields": [
+          "B#IN",
+          "B#HLF",
+          "B#OUT"
+        ],
+        "values": [
+          "2"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 6.5
+}

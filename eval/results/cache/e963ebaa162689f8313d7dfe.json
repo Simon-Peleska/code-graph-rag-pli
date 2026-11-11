@@ -1,0 +1,69 @@
+{
+  "unit": "ZS_LADEN",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "Loads all discount group interest rate definitions from the DISCGRP file into in-memory arrays for subsequent calculation use. It constructs a composite key from group, type, and category fields and stores the corresponding annual interest rate.",
+    "inputs": [
+      "DISCGRP file (DSN=KB.PROD.DISCGRP)",
+      "DSC_SATZ record (DSC_GRP, DSC_TYP, DSC_KAT, DSC_ZINS)"
+    ],
+    "outputs": [
+      "ZS_N (counter)",
+      "ZS_SCHL array (composite keys)",
+      "ZS_P array (interest rates)"
+    ],
+    "rules": [
+      {
+        "text": "Sets end-of-file flag SW_EOF_DSC to '1'B when the DISCGRP file is exhausted.",
+        "lines": [
+          194
+        ],
+        "fields": [
+          "SW_EOF_DSC"
+        ],
+        "values": [
+          "'1'B"
+        ]
+      },
+      {
+        "text": "Increments the index ZS_N by 1 for each record read.",
+        "lines": [
+          198
+        ],
+        "fields": [
+          "ZS_N"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Constructs the composite key ZS_SCHL by concatenating DSC_GRP, DSC_TYP, and DSC_KAT.",
+        "lines": [
+          199
+        ],
+        "fields": [
+          "ZS_SCHL",
+          "DSC_GRP",
+          "DSC_TYP",
+          "DSC_KAT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Stores the annual interest rate DSC_ZINS into the ZS_P array at the current index.",
+        "lines": [
+          200
+        ],
+        "fields": [
+          "ZS_P",
+          "DSC_ZINS"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 53.2
+}

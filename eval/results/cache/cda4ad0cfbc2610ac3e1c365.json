@@ -1,0 +1,263 @@
+{
+  "unit": "KBU00022",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates the structural integrity of a single customer account record (Kontosatz) by checking specific field positions for correct data types (numeric, signed numeric, date, or status code). It returns a count of validation errors found and logs a warning for each invalid field.",
+    "inputs": [
+      "K#S (CHAR(140)): The raw customer account record string containing all fields."
+    ],
+    "outputs": [
+      "Return value (FIXED BIN(15)): The total count of validation errors detected.",
+      "Log file: Warning messages via P#WARNUNG for each specific field failure."
+    ],
+    "rules": [
+      {
+        "text": "Extracts the first 11 characters as the Account Number (KTO-NR) for use in warning messages.",
+        "lines": [
+          80
+        ],
+        "fields": [
+          "K#NR",
+          "K#S"
+        ],
+        "values": [
+          "1",
+          "11"
+        ]
+      },
+      {
+        "text": "Validates that the Account Number (positions 1-11) consists exclusively of numeric digits. If not, increments error count and logs warning 'KTO-NR'.",
+        "lines": [
+          81,
+          82
+        ],
+        "fields": [
+          "K#NR",
+          "K#F"
+        ],
+        "values": [
+          "'KBU00022'",
+          "'KTO-NR'"
+        ]
+      },
+      {
+        "text": "Validates that the Status Code (position 12) is one of 'A', 'D', 'C', or 'X'. If not, increments error count and logs warning 'STATUS'.",
+        "lines": [
+          83,
+          84
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "'ADCX'",
+          "12",
+          "1",
+          "'KBU00022'",
+          "'STATUS'"
+        ]
+      },
+      {
+        "text": "Validates that the Balance (SALDO, positions 13-23) is a signed numeric value. If not, increments error count and logs warning 'SALDO'.",
+        "lines": [
+          85,
+          86
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "13",
+          "11",
+          "'KBU00022'",
+          "'SALDO'"
+        ]
+      },
+      {
+        "text": "Validates that the Credit Limit (KREDITLIM, positions 24-33) consists exclusively of numeric digits. If not, increments error count and logs warning 'KREDITLIM'.",
+        "lines": [
+          87,
+          88
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "24",
+          "10",
+          "'KBU00022'",
+          "'KREDITLIM'"
+        ]
+      },
+      {
+        "text": "Validates that the Cash Limit (BARLIM, positions 34-43) consists exclusively of numeric digits. If not, increments error count and logs warning 'BARLIM'.",
+        "lines": [
+          90,
+          91
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "34",
+          "10",
+          "'KBU00022'",
+          "'BARLIM'"
+        ]
+      },
+      {
+        "text": "Validates that the Creation Date (ERDT, positions 44-51) is a plausible calendar date in YYYYMMDD format. If not, increments error count and logs warning 'ERDT'.",
+        "lines": [
+          92,
+          93
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "44",
+          "8",
+          "'KBU00022'",
+          "'ERDT'"
+        ]
+      },
+      {
+        "text": "Validates that the Deletion Date (ABDT, positions 52-59) is a plausible calendar date in YYYYMMDD format. If not, increments error count and logs warning 'ABDT'.",
+        "lines": [
+          94,
+          95
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "52",
+          "8",
+          "'KBU00022'",
+          "'ABDT'"
+        ]
+      },
+      {
+        "text": "Validates that the Cycle Credit (ZYK-HAB, positions 60-70) is a signed numeric value. If not, increments error count and logs warning 'ZYK-HAB'.",
+        "lines": [
+          96,
+          97
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "60",
+          "11",
+          "'KBU00022'",
+          "'ZYK-HAB'"
+        ]
+      },
+      {
+        "text": "Validates that the Cycle Debit (ZYK-SOL, positions 71-81) is a signed numeric value. If not, increments error count and logs warning 'ZYK-SOL'.",
+        "lines": [
+          98,
+          99
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "71",
+          "11",
+          "'KBU00022'",
+          "'ZYK-SOL'"
+        ]
+      },
+      {
+        "text": "Validates that the Dunning Status (MAHNST, positions 92-93) consists exclusively of numeric digits. If not, increments error count and logs warning 'MAHNST'.",
+        "lines": [
+          100,
+          101
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "92",
+          "2",
+          "'KBU00022'",
+          "'MAHNST'"
+        ]
+      },
+      {
+        "text": "Validates that the Minimum Amount (MINZ, positions 94-104) is a signed numeric value. If not, increments error count and logs warning 'MINZ'.",
+        "lines": [
+          102,
+          103
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "94",
+          "11",
+          "'KBU00022'",
+          "'MINZ'"
+        ]
+      },
+      {
+        "text": "Validates that the Payment Amount (ZAHL, positions 105-115) is a signed numeric value. If not, increments error count and logs warning 'ZAHL'.",
+        "lines": [
+          104,
+          105
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "105",
+          "11",
+          "'KBU00022'",
+          "'ZAHL'"
+        ]
+      },
+      {
+        "text": "Validates that the Points (PUNKTE, positions 116-124) consist exclusively of numeric digits. If not, increments error count and logs warning 'PUNKTE'.",
+        "lines": [
+          106,
+          107
+        ],
+        "fields": [
+          "K#S",
+          "K#F"
+        ],
+        "values": [
+          "116",
+          "9",
+          "'KBU00022'",
+          "'PUNKTE'"
+        ]
+      },
+      {
+        "text": "Returns the total count of validation errors accumulated in K#F.",
+        "lines": [
+          108
+        ],
+        "fields": [
+          "K#F"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 150.8
+}

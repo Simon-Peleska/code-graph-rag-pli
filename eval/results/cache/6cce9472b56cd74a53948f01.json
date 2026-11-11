@@ -1,0 +1,73 @@
+{
+  "unit": "KBU00020",
+  "member": "KBU00020",
+  "answer": {
+    "summary": "Converts a Deutsche Mark amount to Euros by dividing by a fixed exchange rate of 1.95583. The result is rounded to two decimal places using an external rounding routine, preserving the sign of the original amount.",
+    "inputs": [
+      "E#BTR (FIXED DEC(15,2))"
+    ],
+    "outputs": [
+      "E#ERG (FIXED DEC(15,2))"
+    ],
+    "rules": [
+      {
+        "text": "If the input amount E#BTR is exactly 0, the output E#ERG is set to 0 and the procedure returns immediately.",
+        "lines": [
+          15,
+          17,
+          18
+        ],
+        "fields": [
+          "E#BTR",
+          "E#ERG"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The intermediate value E#ZW is calculated by dividing E#BTR by the static exchange rate E#KURS (1.95583) with a precision of 31 digits and 10 decimal places.",
+        "lines": [
+          19
+        ],
+        "fields": [
+          "E#ZW",
+          "E#BTR",
+          "E#KURS"
+        ],
+        "values": [
+          "31",
+          "10"
+        ]
+      },
+      {
+        "text": "If E#BTR is negative, the absolute value of E#ZW is passed to KBU00005, and the result is negated to preserve the negative sign.",
+        "lines": [
+          20,
+          21
+        ],
+        "fields": [
+          "E#BTR",
+          "E#ERG",
+          "E#ZW"
+        ],
+        "values": []
+      },
+      {
+        "text": "If E#BTR is positive, E#ZW is passed directly to KBU00005 to round the result to two decimal places.",
+        "lines": [
+          22,
+          23
+        ],
+        "fields": [
+          "E#ERG",
+          "E#ZW"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 54.9
+}

@@ -1,0 +1,251 @@
+{
+  "unit": "GEBUEHR",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Calculates the cash withdrawal fee based on the transaction amount and a fixed percentage, enforcing a minimum fee. It posts the fee to the customer's account balance and cycle settlement, logs the transaction details, and writes the record to the transaction history file.",
+    "inputs": [
+      "W_BTR (Transaction Amount)",
+      "KO_GEB_BAR_PROZ (Fee Percentage, default 5.00)",
+      "KO_GEB_BAR_MIN (Minimum Fee, default 10.00)",
+      "KO_TYP_GEB (Fee Type Code, default '05')",
+      "KTO_NR (Account Number)",
+      "TRN_ID (Original Transaction ID)",
+      "W_KARTE (Card Number)",
+      "W_LAUFDT (Current Date)"
+    ],
+    "outputs": [
+      "KTO_SLD (Account Balance)",
+      "KTO_ZYK_SOL (Cycle Settlement Balance)",
+      "TRANOUT (Transaction History File)",
+      "KBU00016 Aggregation Table (via call)",
+      "KBU00027 Statistics (via call)"
+    ],
+    "rules": [
+      {
+        "text": "Calculate the raw fee by multiplying the transaction amount (W_BTR) by the fee percentage (KO_GEB_BAR_PROZ) and dividing by 100. The result is rounded to 2 decimal places using standard PL/I rounding rules (KBU00005).",
+        "lines": [
+          346
+        ],
+        "fields": [
+          "W_HV3",
+          "W_BTR",
+          "KO_GEB_BAR_PROZ"
+        ],
+        "values": [
+          "100"
+        ]
+      },
+      {
+        "text": "Determine the final fee (W_GEB) by taking the maximum of the calculated raw fee (W_HV3) and the minimum fee constant (KO_GEB_BAR_MIN). If the calculated fee is less than the minimum, the minimum is used.",
+        "lines": [
+          347
+        ],
+        "fields": [
+          "W_GEB",
+          "W_HV3",
+          "KO_GEB_BAR_MIN"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increase the account balance (KTO_SLD) by the final fee amount (W_GEB).",
+        "lines": [
+          349
+        ],
+        "fields": [
+          "KTO_SLD",
+          "W_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increase the cycle settlement balance (KTO_ZYK_SOL) by the final fee amount (W_GEB).",
+        "lines": [
+          350
+        ],
+        "fields": [
+          "KTO_ZYK_SOL",
+          "W_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Call KBU00016 to aggregate the fee amount into the balance table using the key composed of Account Number (KTO_NR), Fee Type (KO_TYP_GEB), and Category '0001'.",
+        "lines": [
+          351
+        ],
+        "fields": [
+          "KTO_NR",
+          "KO_TYP_GEB",
+          "W_GEB"
+        ],
+        "values": [
+          "'0001'"
+        ]
+      },
+      {
+        "text": "Construct the new Transaction ID (TRN_ID) by prefixing 'CF' to the original ID (TRN_ID) starting from its 3rd character. This effectively replaces the first two characters of the original ID with 'CF'.",
+        "lines": [
+          353,
+          355
+        ],
+        "fields": [
+          "W_ORGID",
+          "TRN_ID"
+        ],
+        "values": [
+          "'CF'"
+        ]
+      },
+      {
+        "text": "Set the Transaction Type (TRN_TYP) to the fee type code (KO_TYP_GEB).",
+        "lines": [
+          356
+        ],
+        "fields": [
+          "TRN_TYP",
+          "KO_TYP_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Set the Transaction Category (TRN_KAT) to '0001'.",
+        "lines": [
+          357
+        ],
+        "fields": [
+          "TRN_KAT"
+        ],
+        "values": [
+          "'0001'"
+        ]
+      },
+      {
+        "text": "Set the Transaction Source (TRN_QUELLE) to 'SYSTEM'.",
+        "lines": [
+          358
+        ],
+        "fields": [
+          "TRN_QUELLE"
+        ],
+        "values": [
+          "'SYSTEM'"
+        ]
+      },
+      {
+        "text": "Set the Transaction Text (TRN_TXT) to 'BARGELDGEBUEHR'.",
+        "lines": [
+          359
+        ],
+        "fields": [
+          "TRN_TXT"
+        ],
+        "values": [
+          "'BARGELDGEBUEHR'"
+        ]
+      },
+      {
+        "text": "Set the Transaction Amount (TRN_BTR) to the final fee amount (W_GEB).",
+        "lines": [
+          360
+        ],
+        "fields": [
+          "TRN_BTR",
+          "W_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Set the Transaction Handle (TRN_HDL) to '000000000'.",
+        "lines": [
+          361
+        ],
+        "fields": [
+          "TRN_HDL"
+        ],
+        "values": [
+          "'000000000'"
+        ]
+      },
+      {
+        "text": "Set the Transaction MCC (TRN_MCC) to '0000'.",
+        "lines": [
+          362
+        ],
+        "fields": [
+          "TRN_MCC"
+        ],
+        "values": [
+          "'0000'"
+        ]
+      },
+      {
+        "text": "Set the Transaction Card Number (TRN_KARTE) to the input card number (W_KARTE).",
+        "lines": [
+          363
+        ],
+        "fields": [
+          "TRN_KARTE",
+          "W_KARTE"
+        ],
+        "values": []
+      },
+      {
+        "text": "Set the Transaction Date (TRN_DT) to the current date (W_LAUFDT).",
+        "lines": [
+          364
+        ],
+        "fields": [
+          "TRN_DT",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Prepare the output record BUC_SATZ by copying the first 110 characters of the transaction record (TRN_SATZ) into BUC_TRN, setting BUC_KTO to the account number (KTO_NR), and BUC_DT to the current date (W_LAUFDT).",
+        "lines": [
+          366,
+          367
+        ],
+        "fields": [
+          "BUC_TRN",
+          "TRN_SATZ",
+          "BUC_KTO",
+          "KTO_NR",
+          "BUC_DT",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "1",
+          "110"
+        ]
+      },
+      {
+        "text": "Write the BUC_SATZ record to the TRANOUT file.",
+        "lines": [
+          368
+        ],
+        "fields": [
+          "BUC_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Call KBU00027 to update statistics for the fee type (KO_TYP_GEB) and amount (W_GEB) with status 'E' (likely 'Erledigt' or similar internal status).",
+        "lines": [
+          369
+        ],
+        "fields": [
+          "KO_TYP_GEB",
+          "W_GEB"
+        ],
+        "values": [
+          "'E'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 184.6
+}

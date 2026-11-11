@@ -1,0 +1,72 @@
+{
+  "unit": "P#NUMS",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Determines if a character string represents a signed numeric value. It validates that the string has a sign prefix and consists entirely of digits after the sign.",
+    "inputs": [
+      "N#F (CHAR(*))"
+    ],
+    "outputs": [
+      "BIT(1) return value ('1'B for true, '0'B for false)"
+    ],
+    "rules": [
+      {
+        "text": "If the length of the input string is less than 2, return false ('0'B).",
+        "lines": [
+          48
+        ],
+        "fields": [
+          "N#F"
+        ],
+        "values": [
+          "2",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "If the first character of the input string is not found in the sign set ('+' or '-'), return false ('0'B).",
+        "lines": [
+          49
+        ],
+        "fields": [
+          "N#F",
+          "P#VORZ"
+        ],
+        "values": [
+          "1",
+          "1",
+          "0",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "If any character in the substring starting from position 2 is not a digit (0-9), return false ('0'B).",
+        "lines": [
+          50
+        ],
+        "fields": [
+          "N#F",
+          "P#ZIFF"
+        ],
+        "values": [
+          "2",
+          "0",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "If all previous checks pass, return true ('1'B).",
+        "lines": [
+          50
+        ],
+        "fields": [],
+        "values": [
+          "'1'B"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 41
+}

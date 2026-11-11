@@ -1,0 +1,67 @@
+{
+  "unit": "KBU0SJ",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Determines whether a given year is a leap year based on the Gregorian calendar rules.",
+    "inputs": [
+      "J#: The year to be evaluated (FIXED BIN(31))"
+    ],
+    "outputs": [
+      "Return value: BIT(1) indicating true ('1'B) or false ('0'B)"
+    ],
+    "rules": [
+      {
+        "text": "A year is a leap year if it is divisible by 400.",
+        "lines": [
+          31
+        ],
+        "fields": [
+          "J#"
+        ],
+        "values": [
+          "400",
+          "1'B"
+        ]
+      },
+      {
+        "text": "If not divisible by 400, a year is not a leap year if it is divisible by 100.",
+        "lines": [
+          33
+        ],
+        "fields": [
+          "J#"
+        ],
+        "values": [
+          "100",
+          "0'B"
+        ]
+      },
+      {
+        "text": "If not divisible by 100, a year is a leap year if it is divisible by 4.",
+        "lines": [
+          35
+        ],
+        "fields": [
+          "J#"
+        ],
+        "values": [
+          "4",
+          "1'B"
+        ]
+      },
+      {
+        "text": "Otherwise, the year is not a leap year.",
+        "lines": [
+          36
+        ],
+        "fields": [],
+        "values": [
+          "0'B"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 15.6
+}

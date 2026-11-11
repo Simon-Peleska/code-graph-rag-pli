@@ -1,0 +1,32 @@
+{
+  "unit": "P#NUMU",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates whether a given character string consists exclusively of numeric digits (0-9). Returns true if the string is purely numeric, false otherwise.",
+    "inputs": [
+      "N#F (CHAR(*) parameter)"
+    ],
+    "outputs": [
+      "BIT(1) return value"
+    ],
+    "rules": [
+      {
+        "text": "Checks if the input string N#F contains only characters found in the set '0123456789'. If VERIFY returns 0 (meaning no invalid characters found), the procedure returns 1 (true); otherwise it returns 0 (false).",
+        "lines": [
+          55
+        ],
+        "fields": [
+          "N#F",
+          "P#ZIFF"
+        ],
+        "values": [
+          "0",
+          "'0123456789'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 24.6
+}

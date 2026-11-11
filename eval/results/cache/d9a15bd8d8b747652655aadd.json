@@ -1,0 +1,46 @@
+{
+  "unit": "KBU00008",
+  "member": "KBU00008",
+  "answer": {
+    "summary": "This procedure logs a specific message to the system print file with a timestamp, provided the status flag is non-zero.",
+    "inputs": [
+      "P#PGM: Program identifier (8 characters)",
+      "P#TXT: Message text (variable length)",
+      "P#ST: Status flag (15-bit integer)"
+    ],
+    "outputs": [
+      "SYSPRINT: A log entry containing the program name, the first 6 characters of the current time, and the message text"
+    ],
+    "rules": [
+      {
+        "text": "If the status flag P#ST is exactly 0, the procedure terminates without performing any logging.",
+        "lines": [
+          12
+        ],
+        "fields": [
+          "P#ST"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If P#ST is not 0, write a line to SYSPRINT formatted as: P#PGM, a space, the first 6 characters of the current time, a space, and P#TXT.",
+        "lines": [
+          14
+        ],
+        "fields": [
+          "P#PGM",
+          "Z#ZEIT",
+          "P#TXT"
+        ],
+        "values": [
+          "' '"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 21.5
+}

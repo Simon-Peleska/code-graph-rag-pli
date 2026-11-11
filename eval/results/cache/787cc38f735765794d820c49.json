@@ -1,0 +1,117 @@
+{
+  "unit": "BRIEF",
+  "member": "KBP00005",
+  "answer": {
+    "summary": "Generates a formal notification letter for account holders regarding outstanding minimum payments. The letter includes the account number, customer name (or a generic salutation), a specific message based on the reminder level, the amount due, and a formatted deadline date.",
+    "inputs": [
+      "KTO_SATZ.KTO_NR",
+      "KTO_SATZ.KTO_MINZ",
+      "KD_TAB.KD_E.KD_NAME",
+      "M_KD",
+      "M_STUFE",
+      "M_TXT",
+      "M_FRIST"
+    ],
+    "outputs": [
+      "BRIEFE (File)"
+    ],
+    "rules": [
+      {
+        "text": "The letter header contains 'KARTENBANK' followed by the account number.",
+        "lines": [
+          77
+        ],
+        "fields": [
+          "KTO_NR"
+        ],
+        "values": []
+      },
+      {
+        "text": "If a customer index (M_KD) is greater than 0, the customer's name is printed; otherwise, the generic salutation 'AN DEN KONTOINHABER' is used.",
+        "lines": [
+          79,
+          80,
+          82
+        ],
+        "fields": [
+          "M_KD",
+          "KD_NAME"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The letter displays the first line of text corresponding to the current reminder level (M_STUFE, 1) after a 3-line skip.",
+        "lines": [
+          83
+        ],
+        "fields": [
+          "M_STUFE",
+          "M_TXT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The letter displays the second line of text corresponding to the current reminder level (M_STUFE, 2) after a 2-line skip.",
+        "lines": [
+          84
+        ],
+        "fields": [
+          "M_STUFE",
+          "M_TXT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The outstanding amount (M_BTR) is set to the account's minimum payment amount (KTO_MINZ).",
+        "lines": [
+          85
+        ],
+        "fields": [
+          "M_BTR",
+          "KTO_MINZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "The letter displays the text 'OFFENER BETRAG: ', the calculated amount (M_BTR), and ' EUR' after a 2-line skip.",
+        "lines": [
+          86
+        ],
+        "fields": [
+          "M_BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "The letter displays the third line of text (M_STUFE, 3) followed by a date formatted as DD.MM.YYYY, extracted from M_FRIST (positions 7-8, 5-6, and 1-4).",
+        "lines": [
+          88,
+          89,
+          90
+        ],
+        "fields": [
+          "M_STUFE",
+          "M_FRIST",
+          "M_TXT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The letter displays the fourth line of text (M_STUFE, 4) after a 3-line skip.",
+        "lines": [
+          91
+        ],
+        "fields": [
+          "M_STUFE",
+          "M_TXT"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 32.2
+}

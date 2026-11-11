@@ -1,0 +1,13 @@
+ /*******************************************************************/
+ /*  KBU00007   PROTOKOL (SYSPRINT)                                  */
+ /*             RUFT KBU00008, DAS SCHREIBT WIRKLICH                  */
+ /*  1994-03-11 HKR ERSTELLT                                          */
+ /*  1998-09-09 HKR UMLEITUNG UEBER KBU00008 (FUER SPAETER: DB2-LOG)  */
+ /*******************************************************************/
+ KBU00007: PROC(P#PGM, P#TXT);
+   dcl P#PGM CHAR(8);
+     dcl P#TXT CHAR(*) VARYING;
+   DCL KBU00008 ENTRY(CHAR(8), CHAR(*) VARYING, FIXED BIN(15))
+                EXTERNAL;
+   DCL L#STUFE FIXED BIN(15) STATIC INIT(1);
+   CALL KBU00008(P#PGM, P#TXT, L#STUFE); END KBU00007;

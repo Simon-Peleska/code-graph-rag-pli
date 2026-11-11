@@ -1,0 +1,387 @@
+ /*******************************************************************/
+ /*                                                                   */
+ /*  PROGRAMM   KBP00001                                              */
+ /*  SYSTEM     KB  KARTENBANK                                        */
+ /*  JOB        KBJ00001  STEP010                                     */
+ /*                                                                   */
+ /*  TAGESVERARBEITUNG UMSAETZE                                       */
+ /*                                                                   */
+ /*  EINGAEB    CTLCARD   STEUERKARTE (LAUFDATUM SPALTE 1-8)          */
+ /*             ACCTFILE  KONTEN                                      */
+ /*             XREFFILE  KARTEN                                      */
+ /*             TCATFILE  SADLEN JE KATEGORIE                         */
+ /*             DALYTRAN  UMSAETZE DES TAGES                          */
+ /*  AUSGABE    ACCTOUT   KONTEN NEU                                  */
+ /*             TCATOUT   SADLEN NEU                                  */
+ /*             TRANOUT   GEBUCHTE UMSAETZE                           */
+ /*             REJECTS   ABGEWISENE UMSAETZE MIT GRUND              */
+ /*                                                                   */
+ /*  RC  0 OK   4 ABWEISUNGEN VORHANDEN   16 ABBRUCH                  */
+ /*                                                                   */
+ /*  AENDERUNGEN                                                      */
+ /*  ---------------------------------------------------------------  */
+ /*  1994-03-11 HKR ERSTELLT                                          */
+ /*  1994-05-02 HKR KARTENSPERRE                                      */
+ /*  1996-01-15 HKR KONTEN IM SPEICHER (KBU00012) STATT VSAM-READ     */
+ /*  1997-08-02 HKR SADLEN JE KATEGORIE                               */
+ /*  1999-11-30 WBE Y2K                                               */
+ /*  2001-06-14 WBE BONUSPUNKTE                                       */
+ /*  2001-07-30 WBE BONUSPUNKTE GUTSCHRIFT ABZIEHEN                   */
+ /*  2002-12-01 ALM MCC / DOPPELTE PUNKTE LEBENSMITTEL                */
+ /*  2004-02-09 ALM ZAHLNUGEN IM ZYKLUS (MAHNWESEN)                   */
+ /*  2006-10-10 ALM BARGELDGEBUHER                                    */
+ /*  2008-09-17 ALM KRATENSTATUS AUS XREF                             */
+ /*  2011-02-02 ALM DREIFACHE PUNKTE RESTAURANT                       */
+ /*  2013-07-01 ALM GLUECKSSPIEL GESPERRT (MCC 7995)                  */
+ /*  2015-04-22 RFI DOPPELTE TRANSAKTOINEN ABWEISEN (INC0047113)      */
+ /*                                                                   */
+ /*******************************************************************/
+ KBP00001: PROC(P_PARM) OPTIONS(MAIN) REORDER;
+
+       DCL P_PARM CHAR(100) VARYING;
+
+   %INCLUDE KBC00001;
+   %INCLUDE KBC00002;
+   %INCLUDE KBC00003;
+       %INCLUDE KBC00004;
+     %INCLUDE KBC00005;
+   %INCLUDE KBC00009;
+       %INCLUDE KBC00010;
+   %INCLUDE KBC00011;
+
+   DCL CTLCARD  FILE RECORD INPUT;
+      DCL XREFFILE FILE RECORD INPUT;
+   DCL DALYTRAN FILE RECORD INPUT;
+   DCL TRANOUT  FILE RECORD OUTPUT;
+   DCL REJECTS  FILE RECORD OUTPUT;
+
+   dcl KBU00002 ENTRY(CHAR(8), FIXED BIN(31)) RETURNS(CHAR(8))
+                   EXTERNAL;
+  DCL KBU00003 ENTRY(CHAR(8), CHAR(8)) RETURNS(FIXED BIN(15))
+                    EXTERNAL;
+   DCL KBU00005 ENTRY(FIXED DEC(31,10)) RETURNS(FIXED DEC(15,2))
+                EXTERNAL;
+   DCL KBU00006 ENTRY(FIXED DEC(15,2), FIXED DEC(15,2))
+                RETURNS(FIXED DEC(15,2)) EXTERNAL;
+  DCL KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+  DCL KBU00009 ENTRY((*) CHAR(16), FIXED BIN(31), CHAR(16),
+                FIXED BIN(31)) EXTERNAL;
+   DCL KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)
+                EXTERNAL;
+  dcl KBU00012 ENTRY EXTERNAL;
+   dcl KBU00013 ENTRY(CHAR(11), FIXED BIN(31)) EXTERNAL;
+   DCL KBU00014 ENTRY EXTERNAL;
+   DCL KBU00015 ENTRY EXTERNAL;
+  DCL KBU00016 ENTRY(CHAR(17), FIXED DEC(15,2)) EXTERNAL;
+   DCL KBU00017 ENTRY EXTERNAL;
+   DCL KBU00023 ENTRY(CHAR(120)) RETURNS(FIXED BIN(15)) EXTERNAL;
+   DCL KBU00024 ENTRY(CHAR(50))  RETURNS(FIXED BIN(15)) EXTERNAL;
+  dcl KBU00026 ENTRY(CHAR(8), CHAR(8)) EXTERNAL;
+     DCL KBU00027 ENTRY(CHAR(2), FIXED DEC(15,2), CHAR(1)) EXTERNAL;
+  DCL KBU00028 ENTRY EXTERNAL;
+
+0  /* WIEDERANLAUF: ALLE N SAETZE EIN KONTROLLPUNKT (NUR PROTOKOLL,  */
+   /* DER ECHTE WIEDERANLAUF WURDE 1996 MIT DER SPEICHERTABELE      */
++  /* AUSGEBAUT, WIEDERHOLUNG = GANZER STEP NOCHMAL)                 */
+   DCL W_CHKP_N    FIXED DEC(7) INIT(1000);
+   DCL W_CHKP_Z    FIXED DEC(7) INIT(0);
+   DCL W_PLAUS     FIXED BIN(15);
+
+0  /* KARTEN AUS XREFFILE                                            */
+   DCL #XK(5000)   CHAR(16);
+   dcl #XA(5000)   CHAR(11);
+    dcl #XS(5000)   CHAR(1);
+   DCL #XN         FIXED BIN(31) INIT(0);
+
+0  /* SCHON GESEHENE TRANSAKTIONSNUMMERN (INC0047113)                */
+   DCL #GS(20000)  CHAR(16);
+   DCL #GN         FIXED BIN(31) INIT(0);
+
+   DCL @XI         FIXED BIN(31);
+   DCL @KI         FIXED BIN(31);
+   DCL @GI         FIXED BIN(31);
+   DCL @GRD        FIXED BIN(15);
+   DCL @DOPP       BIT(1);
+   DCL @SOLL       BIT(1);
+   DCL W_BTR       FIXED DEC(15,2);
+   dcl W_GEB       FIXED DEC(15,2);
+   DCL W_KTONR     CHAR(11);
+   DCL W_KARTE     CHAR(16);
+   DCL W_ORGID     CHAR(16);
+   DCL W_TSATZ     CHAR(120);
+
+0  /* FRUEHER: TAGESLIMIT JE KARTE (1999 ABGESCHAFFT)                */
+      DCL W_TGLIM     FIXED DEC(15,2) INIT(2500.00);
+       dcl W_TGSUM     FIXED DEC(15,2) INIT(0);
+
+   W_PGM = 'KBP00001';
+   W_RC  = 0;
+   IF INDEX(P_PARM, 'TRACE') > 0 THEN SW_TEST = '1'B;
+   IF INDEX(P_PARM, 'CHKP=') > 0 THEN
++    W_CHKP_N = SUBSTR(P_PARM, INDEX(P_PARM, 'CHKP=') + 5, 4);
+
+   ON ERROR
+     BEGIN;
+      ON ERROR SYSTEM;
+         CALL KBU00011(W_PGM, 16, 'ON ERROR, ONCODE ' || ONCODE());
+     END;
+
+   ON ENDFILE(DALYTRAN) SW_EOF_TRN = '1'B;
+   ON ENDFILE(XREFFILE) SW_EOF_XRF = '1'B;
+
+   CALL KBU00007(W_PGM, 'START');
+
+0/*------------------------------------------------------------------*/
+ /* STEUERKARTE                                                       */
+ /*------------------------------------------------------------------*/
+   OPEN FILE(CTLCARD);
+   READ FILE(CTLCARD) INTO(W_STEU);
+   CLOSE FILE(CTLCARD);
+    W_LAUFDT = SUBSTR(W_STEU, 1, 8);
+  IF VERIFY(W_LAUFDT, '0123456789') ^= 0 THEN
+     CALL KBU00011(W_PGM, 16, 'LAUFDATUM UNGUELTIG: ' || W_LAUFDT);
+   CALL KBU00007(W_PGM, 'LAUFDATUM ' || W_LDT_TT || '.' || W_LDT_MM
+                 || '.' || W_LDT_JJJJ);
+
+0/*------------------------------------------------------------------*/
+ /* TABELEN LAEDN                                                    */
+ /*------------------------------------------------------------------*/
+   CALL KBU00012;
+   CALL KBU00015; call XRF_LADEN;
++  CALL KBU00026(W_PGM, W_LAUFDT);
+
+0/*------------------------------------------------------------------*/
+ /* HAUPTSCHLEIFE                                                     */
+ /*------------------------------------------------------------------*/
+   OPEN FILE(DALYTRAN), FILE(TRANOUT), FILE(REJECTS);
++  READ FILE(DALYTRAN) INTO(W_TSATZ);
+   DO WHILE(^SW_EOF_TRN);
+   Z_GELESEN = Z_GELESEN + 1;
+     STRING(TRN_SATZ) = W_TSATZ;
+     W_PLAUS = KBU00023(W_TSATZ);
+     IF SW_TEST THEN
+       CALL KBU00007(W_PGM, 'TRACE ' || TRN_ID || ' ' || TRN_TYP);
+     CALL UMSATZ;
+     W_CHKP_Z = W_CHKP_Z + 1;
+     IF W_CHKP_Z >= W_CHKP_N THEN
+       DO; W_ZTXT = Z_GELESEN;
+           CALL KBU00007(W_PGM, 'KONTROLLPUNKT ' || W_ZTXT);
+         W_CHKP_Z = 0; END;
+     READ FILE(DALYTRAN) INTO(W_TSATZ);
+      END;
+   CLOSE FILE(DALYTRAN), FILE(TRANOUT), FILE(REJECTS);
+
+0/*------------------------------------------------------------------*/
++/* AUSGABE                                                           */
+ /*------------------------------------------------------------------*/
+   CALL KBU00014;
+   CALL KBU00017;
+  CALL KBU00028;
+
++  W_ZTXT = Z_GELESEN;  CALL KBU00007(W_PGM, 'GELESEN    ' || W_ZTXT);
+   W_ZTXT = Z_GEBUCHT;  CALL KBU00007(W_PGM, 'GEBUCHT    ' || W_ZTXT);
+   W_ZTXT = Z_ABGEW;    CALL KBU00007(W_PGM, 'ABGEWIESEN ' || W_ZTXT);
+   IF Z_ABGEW > 0 THEN IF W_RC < 4 THEN W_RC = 4;
+      CALL KBU00007(W_PGM, 'ENDE');
+   CALL PLIRETC(W_RC);
+   RETURN;
+
+0/*==================================================================*/
+ /* EINEN UMSATZ VERABEITEN                                          */
+ /*==================================================================*/
+-UMSATZ: PROC;
+   W_BTR = TRN_BTR;
+   W_KARTE = TRN_KARTE;
+
+   CALL KBU00009(#GS, #GN, TRN_ID, @GI);
+     IF @GI > 0 THEN
+     @DOPP = '1'B;
+   ELSE DO; @DOPP = '0'B;
+         if #GN >= HBOUND(#GS,1) then
+      CALL KBU00011(W_PGM, 16, 'ZU VIELE UMSAETZE');
+         #GN = #GN + 1; #GS(#GN) = TRN_ID;
+   end;
+
+   IF TRN_TYP = KO_TYP_KAUF | TRN_TYP = KO_TYP_BAR THEN
++    @SOLL = '1'B;
++  ELSE
+    @SOLL = '0'B;
+
+   @GRD = PRUEFEN();
+      IF @GRD ^= 0 THEN
+     DO;
+       CALL ABWEISEN(@GRD);
+       CALL KBU00027(TRN_TYP, W_BTR, 'A');
+       RETURN; END;
+
+  CALL BUCHEN;
+   CALL KBU00027(TRN_TYP, W_BTR, 'G');
+   IF TRN_TYP = KO_TYP_BAR THEN
+     CALL GEBUEHR;
+   KTAB_SATZ(@KI) = STRING(KTO_SATZ); END UMSATZ;
+
+0/*==================================================================*/
+-PRUEFEN: PROC RETURNS(FIXED BIN(15));
+  DCL R# FIXED BIN(15) INIT(0);
+
+      IF @DOPP THEN DO; R# = 110; GOTO P#X; END;
+
+   IF W_BTR <= 0 THEN DO; R# = 109; GOTO P#X; END;
+
+  SELECT(TRN_TYP);
+     WHEN(KO_TYP_KAUF, KO_TYP_ZAHL, KO_TYP_GUT, KO_TYP_BAR) ;
+     WHEN(KO_TYP_GEB, KO_TYP_ZINS)
+           do;
+         /* NUR INTERN ERZEUGT, DUERFEN NICHT VON AUSSEN KOMMEN      */
+         R# = 111;
+         GOTO P#X;
+           END;
+       otherwise
+       DO; R# = 111; GOTO P#X; END;
+  END;
+
+   call KBU00009(#XK, #XN, W_KARTE, @XI);
+       IF @XI = 0 THEN R# = 100;
+   ELSE
+      IF #XS(@XI) ^= 'Y' THEN R# = 101;
+   ELSE DO;
+     W_KTONR = #XA(@XI);
+     CALL KBU00013(W_KTONR, @KI);
+     IF @KI = 0 THEN R# = 102;
+     ELSE DO; STRING(KTO_SATZ) = KTAB_SATZ(@KI);
+       IF KTO_ST = 'C' | KTO_ST = 'X'
+         then R# = 103;
+        ELSE IF KBU00003(TRN_DT, KTO_ABDT) > 0
+         THEN R# = 105;
+           else if @SOLL & KTO_ST = 'D'
++          THEN R# = 104;
+       ELSE IF TRN_TYP = KO_TYP_KAUF & TRN_MCC = KO_MCC_SPERR
+         THEN R# = 108;
+       ELSE IF TRN_TYP = KO_TYP_BAR & W_BTR > KTO_BLIM
+         THEN R# = 107;
+       else if @SOLL then
+           DO;
+           W_HV1 = KTO_SLD;
+            W_HV1 = W_HV1 + W_BTR;
+           IF W_HV1 > KTO_KLIM THEN R# = 106;
+         END; END;
+   END;
+
+0/* IF W_TGSUM + W_BTR > W_TGLIM THEN R# = 112;     ABGESCHAFFT 1999 */
+
+ P#X:
+  RETURN(R#);
+ END PRUEFEN;
+
+0/*==================================================================*/
+ /* ABWEISEN                                                          */
+ /*==================================================================*/
+-ABWEISEN: PROC(A#GRD);
+   DCL A#GRD FIXED BIN(15);
+   DCL A#I   FIXED BIN(15);
+   STRING(ABW_SATZ) = '';
+   ABW_TRN = TRN_ID;
+   ABW_GRD = A#GRD; ABW_TXT = '?';
+    DO A#I = LBOUND(KO_ABW,1) TO HBOUND(KO_ABW,1);
+         IF KO_ABW_CD(A#I) = A#GRD THEN ABW_TXT = KO_ABW_TX(A#I);
++ END;
+   WRITE FILE(REJECTS) FROM(ABW_SATZ);
+      Z_ABGEW = Z_ABGEW + 1;
++end ABWEISEN;
+
+0/*==================================================================*/
+ /* BUCHEN                                                            */
+ /*==================================================================*/
+-BUCHEN: PROC;
+   dcl B#SCHL  CHAR(17);
+   dcl B#EINH  FIXED DEC(11);
+    DCL B#FAKT  FIXED DEC(1);
+   DCL B#PKT   FIXED DEC(11);
+
+      B#SCHL = KTO_NR || TRN_TYP || TRN_KAT;
+
+   IF @SOLL THEN
+     DO;
+      KTO_SLD     = KTO_SLD     + W_BTR;
+        KTO_ZYK_SOL = KTO_ZYK_SOL + W_BTR; CALL KBU00016(B#SCHL, W_BTR);
+         END;
+   ELSE
+    DO;
+           KTO_SLD     = KTO_SLD     - W_BTR;
+       KTO_ZYK_HAB = KTO_ZYK_HAB + W_BTR;
+        W_HV2 = -W_BTR;
+     CALL KBU00016(B#SCHL, W_HV2);
+       if TRN_TYP = KO_TYP_ZAHL then
+             KTO_ZYK_ZAHL = KTO_ZYK_ZAHL + W_BTR;
+      END;
+
+   B#EINH = TRUNC(W_BTR);
+  B#PKT  = KTO_PKT;
+   IF TRN_TYP = KO_TYP_KAUF THEN
+     DO; SELECT(TRN_MCC);
+         WHEN(KO_MCC_LEBM)  B#FAKT = 2;
+            WHEN(KO_MCC_REST)  B#FAKT = 3;
+         OTHERWISE          B#FAKT = 1;
+       END;
+       B#PKT = B#PKT + B#EINH * B#FAKT;
+       if B#PKT > KO_MAX_PKT then B#PKT = KO_MAX_PKT;
+        end;
+   ELSE IF TRN_TYP = KO_TYP_GUT THEN
+     DO;
+       B#PKT = B#PKT - B#EINH; IF B#PKT < 0 THEN B#PKT = 0;
+     END;
+   KTO_PKT = B#PKT;
+
+   STRING(BUC_SATZ) = '';
+   BUC_TRN = SUBSTR(W_TSATZ, 1, 110);
+   BUC_KTO = KTO_NR;
+   BUC_DT  = W_LAUFDT;
+      WRITE FILE(TRANOUT) FROM(BUC_SATZ);
+   Z_GEBUCHT = Z_GEBUCHT + 1;
+   W_TGSUM = W_TGSUM + W_BTR;
+ END BUCHEN;
+
+0/*==================================================================*/
+-GEBUEHR: PROC;
+   W_HV3 = KBU00005(DIVIDE(W_BTR * KO_GEB_BAR_PROZ, 100, 31, 10));
+   W_GEB = KBU00006(W_HV3, KO_GEB_BAR_MIN);
+
+   KTO_SLD     = KTO_SLD     + W_GEB;
+  KTO_ZYK_SOL = KTO_ZYK_SOL + W_GEB;
+    CALL KBU00016(KTO_NR || KO_TYP_GEB || '0001', W_GEB);
+
+   W_ORGID = TRN_ID;
+   STRING(TRN_SATZ) = '';
+       TRN_ID     = 'CF' || SUBSTR(W_ORGID, 3);
+   TRN_TYP    = KO_TYP_GEB;
+       TRN_KAT    = '0001';
+   TRN_QUELLE = 'SYSTEM';
+   TRN_TXT    = 'BARGELDGEBUEHR';
++  TRN_BTR    = W_GEB;
+   TRN_HDL    = '000000000';
+   TRN_MCC    = '0000';
++  TRN_KARTE  = W_KARTE;
+   TRN_DT     = W_LAUFDT;
+
+     STRING(BUC_SATZ) = ''; BUC_TRN = SUBSTR(STRING(TRN_SATZ), 1, 110);
+   BUC_KTO = KTO_NR; BUC_DT  = W_LAUFDT;
+       WRITE FILE(TRANOUT) FROM(BUC_SATZ);
+   CALL KBU00027(KO_TYP_GEB, W_GEB, 'E'); END GEBUEHR;
+
+0/*==================================================================*/
+ /* KARTEN LADEN                                                      */
+ /*==================================================================*/
+- XRF_LADEN: PROC;
+   OPEN FILE(XREFFILE);
+   READ FILE(XREFFILE) INTO(XRF_SATZ);
+   DO WHILE(^SW_EOF_XRF);
+     IF KBU00024(STRING(XRF_SATZ)) > 0 THEN
+       Z_GESCHR = Z_GESCHR + 1;      /* FELD IST FREI, WIRD MISSBRAUCHT */
+     #XN = #XN + 1; #XK(#XN) = XRF_KARTE;
+     #XA(#XN) = XRF_KTO;
+     #XS(#XN) = XRF_ST;
+     READ FILE(XREFFILE) INTO(XRF_SATZ);
+   END; CLOSE FILE(XREFFILE);
+  END XRF_LADEN;
+
+  END KBP00001;

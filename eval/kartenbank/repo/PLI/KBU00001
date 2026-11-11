@@ -1,0 +1,121 @@
+ /*******************************************************************/  00000100
+ /*                                                                   */00000200
+ /*  KBU00001   DATUMSROUTINEN (PAKET)                                */00000300
+ /*                                                                   */00000400
+ /*  KBU00002  DATUM + N TAGE          (CHAR(8), FIXED BIN(31))       */00000500
+ /*  KBU00003  DATUMSVERGLEICH  -1/0/1 (CHAR(8), CHAR(8))             */00000600
+ /*                                                                   */00000700
+ /*  AENDERUNGEN                                                      */00000800
+ /*  ---------------------------------------------------------------  */00000900
+ /*  1994-03-11 HKR ERSTELLT (JJMMTT)                                 */00001000
+ /*  1999-10-04 WBE Y2K: AUF JJJJMMTT UMGESTELLT, SCHALTJAHR 2000 !!  */00001100
+ /*  2003-01-20 ALM KBU00003 NEU, VORHER INLINE IN JEDEM PROGRAMM     */00001200
+ /*  2012-05-30 ALM TAGESSCHLEIFE STATT LILIAN (CEEDAYS GIBT ES IM    */00001300
+ /*                 TESTSYSTEM NICHT)                                 */00001400
+ /*                                                                   */00001500
+ /*******************************************************************/  00001600
+ KBU00001: PACKAGE EXPORTS(KBU00002, KBU00003);                         00001700
+                                                                        00001800
+    DCL TG#MON(12) FIXED BIN(15) STATIC                                 00001900
+       INIT(31,28,31,30,31,30,31,31,30,31,30,31);                       00002000
+                                                                        00002100
+   DCL 1 D#ALT STATIC,                     /* JJMMTT VON 1994       */  00002200
+         3 D#ALT_JJ  CHAR(2) INIT('94'),                                00002300
+             3 D#ALT_JH  CHAR(2) INIT('19');                            00002400
+                                                                        00002500
+ /*-------------------------------------------------------------------*/00002600
+ /* SCHALTJAHR ?                                                      */00002700
+ /*-------------------------------------------------------------------*/00002800
+  KBU0SJ: PROC(J#) RETURNS(BIT(1));                                     00002900
+   DCL J# FIXED BIN(31);                                                00003000
+  if MOD(J#,400) = 0 then return('1'B);                                 00003100
+       ELSE                                                             00003200
+     IF MOD(J#,100) = 0 THEN RETURN('0'B);                              00003300
+     ELSE                                                               00003400
+       IF MOD(J#,4) = 0 THEN RETURN('1'B);                              00003500
+   RETURN('0'B);                                                        00003600
+  end KBU0SJ;                                                           00003700
+                                                                        00003800
+ /*-------------------------------------------------------------------*/00003900
+ /* TAGE IM MONAT                                                     */00004000
+ /*-------------------------------------------------------------------*/00004100
+  KBU0TM: PROC(J#, M#) RETURNS(FIXED BIN(15));                          00004200
+    DCL (J#, M#) FIXED BIN(31);                                         00004300
+   DCL R# FIXED BIN(15);                                                00004400
+   R# = TG#MON(M#);                                                     00004500
+   IF M# = 2 THEN                                                       00004600
+      if KBU0SJ(J#) then R# = R# + 1;                                   00004700
+   RETURN(R#);                                                          00004800
+ END KBU0TM;                                                            00004900
+                                                                        00005000
+ /*-------------------------------------------------------------------*/00005100
+ /* DATUM + ANZAHL TAGE (NUR VORWAERTS!)                              */00005200
+ /*-------------------------------------------------------------------*/00005300
+  KBU00002: PROC(P#DT, P#TG) RETURNS(CHAR(8));                          00005400
+  DCL P#DT CHAR(8);                                                     00005500
+      DCL P#TG FIXED BIN(31);                                           00005600
+   DCL (W#JJ, W#MM, W#TT, W#I) FIXED BIN(31);                           00005700
+   DCL W#ERG     CHAR(8);                                               00005800
+   dcl W#ERG_P   PIC '(8)9' DEFINED(W#ERG);                             00005900
+   DCL W#ZW      PIC '(4)9';                                            00006000
+                                                                        00006100
+  W#ZW = SUBSTR(P#DT,1,4);  W#JJ = W#ZW;                                00006200
+   W#MM = SUBSTR(P#DT,5,2);                                             00006300
+   W#TT = SUBSTR(P#DT,7,2);                                             00006400
+                                                                        00006500
+     IF P#TG < 0 THEN DO;                                               00006600
+      /* RUECKWAERTS WAR NIE GEFORDERT                              */  00006700
+      RETURN(P#DT);                                                     00006800
+      END;                                                              00006900
+                                                                        00007000
+      DO W#I = 1 TO P#TG;                                               00007100
+     W#TT = W#TT + 1;                                                   00007200
+     if W#TT > KBU0TM(W#JJ, W#MM) then                                  00007300
+       do;                                                              00007400
+       W#TT = 1;                                                        00007500
+         W#MM = W#MM + 1;                                               00007600
+         if W#MM > 12 then do; W#MM = 1; W#JJ = W#JJ + 1; end;          00007700
+         END;                                                           00007800
+       END;                                                             00007900
+                                                                        00008000
+   W#ERG_P = W#JJ * 10000                                               00008100
+               + W#MM * 100                                             00008200
+           + W#TT;                                                      00008300
+   RETURN(W#ERG);                                                       00008400
+ END KBU00002;                                                          00008500
+                                                                        00008600
+ /*-------------------------------------------------------------------*/00008700
+ /* VERGLEICH. JJJJMMTT IST ALS ZEICHENKETTE SORTIERBAR, ABER WIR     */00008800
+ /* PRUEFEN TROTZDEM TEIL FUER TEIL (ALTE JJMMTT-LOGIK)               */00008900
+ /*-------------------------------------------------------------------*/00009000
+  KBU00003: PROC(P#A, P#B) RETURNS(FIXED BIN(15));                      00009100
+     DCL (P#A, P#B) CHAR(8);                                            00009200
+   DCL I# FIXED BIN(15);                                                00009300
+   DCL 1 A# DEFINED(P#A),                                               00009400
+         3 A#J CHAR(4), 3 A#M CHAR(2), 3 A#T CHAR(2);                   00009500
+  DCL 1 B# DEFINED(P#B),                                                00009600
+             3 B#J CHAR(4), 3 B#M CHAR(2), 3 B#T CHAR(2);               00009700
+                                                                        00009800
+   I# = 0;                                                              00009900
+   IF A#J > B#J THEN I# = 1;                                            00010000
+   ELSE IF A#J < B#J THEN I# = -1;                                      00010100
+   ELSE DO;                                                             00010200
+      IF A#M > B#M THEN I# = 1;                                         00010300
+        ELSE IF A#M < B#M THEN I# = -1;                                 00010400
+     ELSE DO;                                                           00010500
+       IF A#T > B#T THEN I# = 1;                                        00010600
+           ELSE IF A#T < B#T THEN I# = -1;                              00010700
+      END;                                                              00010800
+   END;                                                                 00010900
+    RETURN(I#);                                                         00011000
+   END KBU00003;                                                        00011100
+                                                                        00011200
+ /* ALTE ROUTINE JJMMTT -> JJJJMMTT, SEIT 2000 UNBENUTZT              */00011300
+ KBU0Y2: PROC(P#D6) RETURNS(CHAR(8));                                   00011400
+   DCL P#D6 CHAR(6);                                                    00011500
+   IF SUBSTR(P#D6,1,2) >= D#ALT_JJ THEN                                 00011600
+         RETURN(D#ALT_JH || P#D6);                                      00011700
+  RETURN('20' || P#D6);                                                 00011800
+ END KBU0Y2;                                                            00011900
+                                                                        00012000
+ end KBU00001;                                                          00012100

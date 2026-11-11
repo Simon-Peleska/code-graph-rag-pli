@@ -1,0 +1,111 @@
+{
+  "unit": "KBU00023",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates the structural and data integrity of a sales record string by checking for empty IDs, numeric formats, and valid date ranges. It counts the total number of validation errors found within the input string.",
+    "inputs": [
+      "U#S: CHAR(120) - The raw input record string containing sales data."
+    ],
+    "outputs": [
+      "U#F: FIXED BIN(15) - The total count of validation errors detected."
+    ],
+    "rules": [
+      {
+        "text": "Extract the ID from the first 16 characters of the input string.",
+        "lines": [
+          118
+        ],
+        "fields": [
+          "U#ID"
+        ],
+        "values": [
+          "1",
+          "16"
+        ]
+      },
+      {
+        "text": "If the extracted ID is empty, increment the error counter and log a warning with message 'ID LEER'.",
+        "lines": [
+          119,
+          120
+        ],
+        "fields": [
+          "U#ID",
+          "U#F"
+        ],
+        "values": [
+          "''"
+        ]
+      },
+      {
+        "text": "Validate that characters 17-18 of the input string are numeric; if not, increment the error counter and log a warning with message 'TYP'.",
+        "lines": [
+          121,
+          122
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate that characters 19-22 of the input string are numeric; if not, increment the error counter and log a warning with message 'KATEGORIE'.",
+        "lines": [
+          123,
+          124
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate that characters 63-73 of the input string represent a signed numeric value; if not, increment the error counter and log a warning with message 'BETRAG'.",
+        "lines": [
+          126,
+          127
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate that characters 83-86 of the input string are numeric; if not, increment the error counter and log a warning with message 'MCC'.",
+        "lines": [
+          128,
+          129
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate that characters 87-102 of the input string are numeric; if not, increment the error counter and log a warning with message 'KARTE'.",
+        "lines": [
+          130,
+          131
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate that characters 103-110 of the input string represent a valid date (via KBU00025); if invalid, increment the error counter and log a warning with message 'DATUM'.",
+        "lines": [
+          132,
+          133
+        ],
+        "fields": [
+          "U#F"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 27.4
+}

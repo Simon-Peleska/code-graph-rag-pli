@@ -1,0 +1,48 @@
+{
+  "unit": "KBU0TM",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Calculates the number of days in a specific month, adding an extra day if the month is February and the year is a leap year.",
+    "inputs": [
+      "J# (Year)",
+      "M# (Month)",
+      "TG#MON (Array of days per month)"
+    ],
+    "outputs": [
+      "R# (Number of days in the month)"
+    ],
+    "rules": [
+      {
+        "text": "Retrieve the base number of days for the given month from the TG#MON array.",
+        "lines": [
+          45
+        ],
+        "fields": [
+          "R#",
+          "TG#MON",
+          "M#"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the month is 2, increment the day count by 1 if the leap year check for the year J# returns true.",
+        "lines": [
+          46,
+          47
+        ],
+        "fields": [
+          "M#",
+          "R#",
+          "J#"
+        ],
+        "values": [
+          "2",
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 17.1
+}

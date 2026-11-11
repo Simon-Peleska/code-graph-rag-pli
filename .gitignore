@@ -3,3 +3,4 @@
 /upstream/
 __pycache__/
 .vscode-test/
+/eval/zos-sample/repo/

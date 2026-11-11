@@ -1,0 +1,62 @@
+{
+  "unit": "KBU00008",
+  "member": "KBU00008",
+  "answer": {
+    "summary": "This procedure outputs a single protocol line to the system print file, including the program name, current time, and a text message. It acts as a no-op if the status parameter is zero.",
+    "inputs": [
+      "P#PGM (CHAR(8))",
+      "P#TXT (CHAR(*) VARYING)",
+      "P#ST (FIXED BIN(15))"
+    ],
+    "outputs": [
+      "SYSPRINT (STREAM OUTPUT PRINT file)"
+    ],
+    "rules": [
+      {
+        "text": "If the status parameter P#ST is equal to 0, the procedure returns immediately without writing any output.",
+        "lines": [
+          12
+        ],
+        "fields": [
+          "P#ST"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If P#ST is not 0, the current system time is retrieved and the first 6 characters are extracted for the output line.",
+        "lines": [
+          13,
+          14
+        ],
+        "fields": [
+          "Z#ZEIT"
+        ],
+        "values": [
+          "1",
+          "6"
+        ]
+      },
+      {
+        "text": "A line is written to the SYSPRINT file containing the program name, a space, the 6-character time substring, a space, and the text message, all formatted as alphanumeric fields.",
+        "lines": [
+          14,
+          15
+        ],
+        "fields": [
+          "P#PGM",
+          "Z#ZEIT",
+          "P#TXT"
+        ],
+        "values": [
+          "' '",
+          "A"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 48.3
+}

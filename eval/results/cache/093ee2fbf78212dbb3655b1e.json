@@ -1,0 +1,93 @@
+{
+  "unit": "MINDESTZAHLUNG",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Calculates the minimum payment amount for a credit account based on its balance. If the balance is positive, it applies a percentage-based minimum, enforces a floor amount, and adds any excess over the credit limit. If the balance is zero or negative, the minimum payment is zero.",
+    "inputs": [
+      "KTO_SLD (Account Balance)",
+      "KTO_KLIM (Credit Limit)",
+      "KO_MINZ_MIN (Minimum Payment Floor)",
+      "KO_MINZ_PROZ (Minimum Payment Percentage)"
+    ],
+    "outputs": [
+      "SLD (Local variable holding the calculated minimum payment)"
+    ],
+    "rules": [
+      {
+        "text": "If the account balance (SLD) is less than or equal to 0, the minimum payment is set to 0.",
+        "lines": [
+          86,
+          87
+        ],
+        "fields": [
+          "SLD"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the account balance (SLD) is positive but less than the minimum payment floor (KO_MINZ_MIN), the minimum payment is set to the balance itself.",
+        "lines": [
+          89,
+          90
+        ],
+        "fields": [
+          "SLD",
+          "KO_MINZ_MIN"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the account balance (SLD) is greater than or equal to the minimum payment floor (KO_MINZ_MIN), the minimum payment is calculated as (SLD * KO_MINZ_PROZ) / 100, rounded to 2 decimal places.",
+        "lines": [
+          92
+        ],
+        "fields": [
+          "SLD",
+          "KO_MINZ_PROZ"
+        ],
+        "values": [
+          "100"
+        ]
+      },
+      {
+        "text": "The calculated minimum payment is then adjusted to be at least the minimum payment floor (KO_MINZ_MIN) by taking the maximum of the calculated value and the floor.",
+        "lines": [
+          93
+        ],
+        "fields": [
+          "SLD",
+          "KO_MINZ_MIN"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the account balance (SLD) exceeds the credit limit (KTO_KLIM), the excess amount (SLD - KTO_KLIM) is added to the minimum payment.",
+        "lines": [
+          94,
+          95,
+          96
+        ],
+        "fields": [
+          "SLD",
+          "KTO_KLIM"
+        ],
+        "values": []
+      },
+      {
+        "text": "The final minimum payment cannot exceed the account balance (SLD). If it does, it is capped at the balance.",
+        "lines": [
+          97
+        ],
+        "fields": [
+          "SLD"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 74.4
+}

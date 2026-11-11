@@ -1,0 +1,95 @@
+{
+  "unit": "KBU00002",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Calculates a new date by adding a specified number of days to a given start date. It handles month and year rollovers, including leap years, and returns the result as an 8-character numeric string. If the day count is negative, it returns the original date unchanged.",
+    "inputs": [
+      "P#DT (CHAR(8)): Start date in YYYYMMDD format",
+      "P#TG (FIXED BIN(31)): Number of days to add"
+    ],
+    "outputs": [
+      "Return value (CHAR(8)): Resulting date in YYYYMMDD format"
+    ],
+    "rules": [
+      {
+        "text": "If the number of days to add (P#TG) is less than 0, the procedure immediately returns the original input date (P#DT) without modification.",
+        "lines": [
+          66,
+          68
+        ],
+        "fields": [
+          "P#TG",
+          "P#DT"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The procedure iterates P#TG times, incrementing the day component (W#TT) by 1 in each iteration.",
+        "lines": [
+          71,
+          72
+        ],
+        "fields": [
+          "P#TG",
+          "W#TT"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the incremented day (W#TT) exceeds the number of days in the current month (determined by calling procedure KBU0TM with the current year W#JJ and month W#MM), the day is reset to 1 and the month is incremented by 1.",
+        "lines": [
+          73,
+          75,
+          76
+        ],
+        "fields": [
+          "W#TT",
+          "W#JJ",
+          "W#MM"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the incremented month (W#MM) exceeds 12, the month is reset to 1 and the year is incremented by 1.",
+        "lines": [
+          77
+        ],
+        "fields": [
+          "W#MM",
+          "W#JJ"
+        ],
+        "values": [
+          "12",
+          "1"
+        ]
+      },
+      {
+        "text": "The final date is constructed by calculating W#JJ * 10000 + W#MM * 100 + W#TT and storing it in the 8-character result field W#ERG.",
+        "lines": [
+          81,
+          82,
+          83
+        ],
+        "fields": [
+          "W#JJ",
+          "W#MM",
+          "W#TT",
+          "W#ERG_P"
+        ],
+        "values": [
+          "10000",
+          "100"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 108.4
+}

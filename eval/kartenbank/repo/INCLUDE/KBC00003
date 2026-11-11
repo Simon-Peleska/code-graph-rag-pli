@@ -1,0 +1,11 @@
+ /*******************************************************************/
+ /* KBC00003  KARTEN-QUERVERWEIS (XREFFILE)          LRECL=50  FB     */
+ /*   1994-03-11  HKR  ERSTELLT                                       */
+ /*   2008-09-17  ALM  XRF_ST KRATENSTAUTS (Y AKTIV, SONST GESPERRT)  */
+ /*******************************************************************/
+  DCL 1 XRF_SATZ,
+        3 XRF_KARTE       CHAR(16),
+        3 XRF_KDNR        CHAR(9),
+        3 XRF_KTO         CHAR(11),
+        3 XRF_ST          CHAR(1),
+        3 FILLER          CHAR(13);

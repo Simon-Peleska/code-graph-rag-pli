@@ -1,0 +1,232 @@
+{
+  "unit": "PRUEFEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Validates a credit card transaction by checking for duplicates, positive amounts, and allowed transaction types. It verifies the card is active, the account is open and not expired, and ensures the transaction does not violate cash or credit limits based on the account status and transaction type.",
+    "inputs": [
+      "@DOPP",
+      "W_BTR",
+      "TRN_TYP",
+      "W_KARTE",
+      "TRN_DT",
+      "TRN_MCC",
+      "@SOLL",
+      "KTO_SATZ (via KBU00013)"
+    ],
+    "outputs": [
+      "R# (Return code)"
+    ],
+    "rules": [
+      {
+        "text": "If the duplicate flag @DOPP is set, reject with code 110.",
+        "lines": [
+          227
+        ],
+        "fields": [
+          "@DOPP",
+          "R#"
+        ],
+        "values": [
+          "110"
+        ]
+      },
+      {
+        "text": "If the transaction amount W_BTR is less than or equal to 0, reject with code 109.",
+        "lines": [
+          229
+        ],
+        "fields": [
+          "W_BTR",
+          "R#"
+        ],
+        "values": [
+          "0",
+          "109"
+        ]
+      },
+      {
+        "text": "If the transaction type TRN_TYP is '05' (GEB) or '06' (ZINS), reject with code 111 as these are internal only.",
+        "lines": [
+          233,
+          236
+        ],
+        "fields": [
+          "TRN_TYP",
+          "R#"
+        ],
+        "values": [
+          "KO_TYP_GEB",
+          "KO_TYP_ZINS",
+          "111"
+        ]
+      },
+      {
+        "text": "If the transaction type TRN_TYP is not one of '01' (KAUF), '02' (ZAHL), '03' (GUT), or '04' (BAR), reject with code 111.",
+        "lines": [
+          232,
+          240
+        ],
+        "fields": [
+          "TRN_TYP",
+          "R#"
+        ],
+        "values": [
+          "KO_TYP_KAUF",
+          "KO_TYP_ZAHL",
+          "KO_TYP_GUT",
+          "KO_TYP_BAR",
+          "111"
+        ]
+      },
+      {
+        "text": "If the card number W_KARTE is not found in the card table (KBU00009 returns 0), reject with code 100.",
+        "lines": [
+          243,
+          244
+        ],
+        "fields": [
+          "W_KARTE",
+          "R#"
+        ],
+        "values": [
+          "0",
+          "100"
+        ]
+      },
+      {
+        "text": "If the card status #XS(@XI) is not 'Y', reject with code 101.",
+        "lines": [
+          246
+        ],
+        "fields": [
+          "#XS",
+          "R#"
+        ],
+        "values": [
+          "'Y'",
+          "101"
+        ]
+      },
+      {
+        "text": "If the account number W_KTONR is not found in the account table (KBU00013 returns 0), reject with code 102.",
+        "lines": [
+          249,
+          250
+        ],
+        "fields": [
+          "W_KTONR",
+          "R#"
+        ],
+        "values": [
+          "0",
+          "102"
+        ]
+      },
+      {
+        "text": "If the account status KTO_ST is 'C' or 'X', reject with code 103.",
+        "lines": [
+          252,
+          253
+        ],
+        "fields": [
+          "KTO_ST",
+          "R#"
+        ],
+        "values": [
+          "'C'",
+          "'X'",
+          "103"
+        ]
+      },
+      {
+        "text": "If the transaction date TRN_DT is later than the card expiry date KTO_ABDT (KBU00003 returns > 0), reject with code 105.",
+        "lines": [
+          254,
+          255
+        ],
+        "fields": [
+          "TRN_DT",
+          "KTO_ABDT",
+          "R#"
+        ],
+        "values": [
+          "0",
+          "105"
+        ]
+      },
+      {
+        "text": "If the transaction is a debit (@SOLL is true) and the account status KTO_ST is 'D', reject with code 104.",
+        "lines": [
+          256,
+          257
+        ],
+        "fields": [
+          "@SOLL",
+          "KTO_ST",
+          "R#"
+        ],
+        "values": [
+          "'D'",
+          "104"
+        ]
+      },
+      {
+        "text": "If the transaction type is '01' (KAUF) and the MCC TRN_MCC is '7995' (KO_MCC_SPERR), reject with code 108.",
+        "lines": [
+          258,
+          259
+        ],
+        "fields": [
+          "TRN_TYP",
+          "TRN_MCC",
+          "R#"
+        ],
+        "values": [
+          "KO_TYP_KAUF",
+          "KO_MCC_SPERR",
+          "108"
+        ]
+      },
+      {
+        "text": "If the transaction type is '04' (BAR) and the amount W_BTR exceeds the cash limit KTO_BLIM, reject with code 107.",
+        "lines": [
+          260,
+          261
+        ],
+        "fields": [
+          "TRN_TYP",
+          "W_BTR",
+          "KTO_BLIM",
+          "R#"
+        ],
+        "values": [
+          "KO_TYP_BAR",
+          "107"
+        ]
+      },
+      {
+        "text": "If the transaction is a debit (@SOLL is true), calculate the new balance as KTO_SLD + W_BTR. If this exceeds the credit limit KTO_KLIM, reject with code 106.",
+        "lines": [
+          262,
+          264,
+          265,
+          266,
+          267
+        ],
+        "fields": [
+          "@SOLL",
+          "KTO_SLD",
+          "W_BTR",
+          "KTO_KLIM",
+          "R#"
+        ],
+        "values": [
+          "106"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 157.6
+}

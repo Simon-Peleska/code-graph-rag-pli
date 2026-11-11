@@ -1,0 +1,107 @@
+{
+  "unit": "KBP00001",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "This procedure processes daily transaction files to update account balances and category totals. It validates each transaction, checks for duplicates, applies business rules (such as fees or point adjustments), and outputs both processed transactions and rejected ones.",
+    "inputs": [
+      "CTLCARD: Control file containing the processing date (W_LAUFDT) in the first 8 characters.",
+      "XREFFILE: Cross-reference file containing card data.",
+      "DALYTRAN: Input file containing daily transactions (TRN_SATZ).",
+      "P_PARM: Program parameter string used for 'TRACE' and 'CHKP=' configuration."
+    ],
+    "outputs": [
+      "TRANOUT: File containing successfully processed transactions.",
+      "REJECTS: File containing rejected transactions with reason codes.",
+      "ACCTOUT: Updated account balances.",
+      "TCATOUT: Updated category totals.",
+      "SYSPRINT: Statistical summary reports and logs."
+    ],
+    "rules": [
+      {
+        "text": "The processing date is extracted from the first 8 characters of the CTLCARD record.",
+        "lines": [
+          140
+        ],
+        "fields": [
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the extracted processing date contains non-numeric characters, the program logs an error and terminates.",
+        "lines": [
+          141,
+          142
+        ],
+        "fields": [
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the 'TRACE' keyword is present in the program parameters, the test mode is enabled.",
+        "lines": [
+          119
+        ],
+        "fields": [
+          "SW_TEST"
+        ],
+        "values": [
+          "'TRACE'"
+        ]
+      },
+      {
+        "text": "If the 'CHKP=' parameter is provided, the checkpoint interval is set to the 4 characters following the '=' sign.",
+        "lines": [
+          120,
+          121
+        ],
+        "fields": [
+          "W_CHKP_N"
+        ],
+        "values": []
+      },
+      {
+        "text": "Every transaction is validated for structural integrity using KBU00023.",
+        "lines": [
+          161
+        ],
+        "fields": [
+          "W_PLAUS"
+        ],
+        "values": []
+      },
+      {
+        "text": "A checkpoint log is generated every time the transaction counter reaches the defined interval.",
+        "lines": [
+          166,
+          167,
+          168
+        ],
+        "fields": [
+          "W_CHKP_Z",
+          "W_CHKP_N",
+          "Z_GELESEN"
+        ],
+        "values": []
+      },
+      {
+        "text": "If any transactions are rejected (Z_ABGEW > 0), the program return code is set to 4 if it is not already 4.",
+        "lines": [
+          184
+        ],
+        "fields": [
+          "Z_ABGEW",
+          "W_RC"
+        ],
+        "values": [
+          "0",
+          "4"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 51.7
+}

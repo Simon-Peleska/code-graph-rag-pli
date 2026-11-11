@@ -1,0 +1,25 @@
+ /*******************************************************************/
+ /*  KBU00011   FEHLERBEHANDLUNG                                      */
+ /*             SETZT W_RC (EXTERNAL) AUF DEN HOECHSTEN WERT,         */
+ /*             SCHREIBT PROTOKOLL. BEI STUFE >= 16 ABBRUCH.          */
+ /*  1994-03-11 HKR ERSTELT                                          */
+ /*  2000-02-14 WBE ABBRUCH MIT STOP STATT SIGNAL ERROR               */
+ /*******************************************************************/
+  KBU00011: PROC(F#PGM, F#STUFE, F#TXT);
+  DCL F#PGM   CHAR(8);
+   dcl F#STUFE FIXED BIN(31);
+   DCL F#TXT   CHAR(*) VARYING;
+   DCL W_RC    FIXED BIN(31) EXTERNAL;
+       DCL KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+   DCL F#Z     PIC 'ZZZ9';
+
+   F#Z = F#STUFE;
+   CALL KBU00007(F#PGM, '*** FEHLER ' || F#Z || ': ' || F#TXT);
+   IF F#STUFE > W_RC THEN W_RC = F#STUFE;
+  IF F#STUFE >= 16 THEN
+     DO;
+       CALL KBU00007(F#PGM, '*** ABBRUCH');
+       call PLIRETC(W_RC);
+       STOP;
+     END;
+ END KBU00011;

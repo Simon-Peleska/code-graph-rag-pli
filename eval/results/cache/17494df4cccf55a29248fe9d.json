@@ -1,0 +1,147 @@
+{
+  "unit": "KBU00015",
+  "member": "KBU00015",
+  "answer": {
+    "summary": "This procedure aggregates balance amounts by account, type, and category from an input file into an in-memory sorted table. It then writes the resulting balances to an output file, maintaining a sorted order by key throughout the process.",
+    "inputs": [
+      "TCATFILE (Input file containing records TCA_SATZ with fields TCA_KTO, TCA_TYP, TCA_KAT, TCA_SLD)",
+      "TC_KEY (In-memory array of keys, CHAR(17))",
+      "TC_SLD (In-memory array of balances, FIXED DEC(15,2))",
+      "TC_ANZ (Counter for number of entries in the in-memory table)"
+    ],
+    "outputs": [
+      "TCATOUT (Output file containing records TCA_SATZ with aggregated balances)",
+      "TC_KEY (Updated in-memory array of keys)",
+      "TC_SLD (Updated in-memory array of balances)",
+      "TC_ANZ (Updated counter for number of entries)"
+    ],
+    "rules": [
+      {
+        "text": "The composite key for aggregation is formed by concatenating TCA_KTO (11 chars), TCA_TYP (2 chars), and TCA_KAT (4 chars) to create a 17-character string.",
+        "lines": [
+          32
+        ],
+        "fields": [
+          "TCA_KTO",
+          "TCA_TYP",
+          "TCA_KAT",
+          "T@SCHL"
+        ],
+        "values": []
+      },
+      {
+        "text": "The in-memory table is searched linearly to find an existing key or the insertion point. If the key is found, the balance is added to the existing entry.",
+        "lines": [
+          41,
+          42,
+          51,
+          54
+        ],
+        "fields": [
+          "TC_KEY",
+          "T@SCHL",
+          "TC_SLD",
+          "T@BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the key is not found, the insertion point is determined by finding the first key greater than the new key. If no greater key is found, it is appended to the end.",
+        "lines": [
+          41,
+          45,
+          47,
+          48
+        ],
+        "fields": [
+          "TC_KEY",
+          "T@SCHL",
+          "T@P"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the table is full (TC_ANZ >= HBOUND(TC_KEY,1)), an error is logged with severity 16 and the program terminates.",
+        "lines": [
+          56,
+          57
+        ],
+        "fields": [
+          "TC_ANZ",
+          "TC_KEY"
+        ],
+        "values": [
+          "16"
+        ]
+      },
+      {
+        "text": "When inserting a new key, existing entries from the insertion point to the end are shifted one position to the right to make space.",
+        "lines": [
+          58,
+          59,
+          60
+        ],
+        "fields": [
+          "TC_KEY",
+          "TC_SLD",
+          "TC_ANZ",
+          "T@P"
+        ],
+        "values": []
+      },
+      {
+        "text": "The new key is inserted at the determined position, and its balance is initialized to 0 before adding the input amount.",
+        "lines": [
+          63,
+          64,
+          65
+        ],
+        "fields": [
+          "TC_KEY",
+          "TC_SLD",
+          "T@SCHL",
+          "T@BTR"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The output record is constructed by splitting the 17-character key back into TCA_KTO (positions 1-11), TCA_TYP (positions 12-13), and TCA_KAT (positions 14-17).",
+        "lines": [
+          72,
+          73,
+          74
+        ],
+        "fields": [
+          "TC_KEY",
+          "TCA_KTO",
+          "TCA_TYP",
+          "TCA_KAT"
+        ],
+        "values": [
+          "1",
+          "11",
+          "12",
+          "2",
+          "14",
+          "4"
+        ]
+      },
+      {
+        "text": "The aggregated balance from the in-memory table is written to the TCA_SLD field of the output record.",
+        "lines": [
+          75
+        ],
+        "fields": [
+          "TC_SLD",
+          "TCA_SLD"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 116.5
+}

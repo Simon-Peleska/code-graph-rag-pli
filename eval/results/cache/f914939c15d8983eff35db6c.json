@@ -1,0 +1,80 @@
+{
+  "unit": "KBU00025",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates if a provided date string represents a valid calendar date within the range of years 1900 to 2099. It checks for numeric integrity, valid month ranges, and valid day ranges based on the specific month.",
+    "inputs": [
+      "D#DT: CHAR(8) - The date string to be validated."
+    ],
+    "outputs": [
+      "BIT(1) - Returns '1'B if the date is valid, otherwise returns '0'B."
+    ],
+    "rules": [
+      {
+        "text": "If the input string is not purely numeric, the date is invalid.",
+        "lines": [
+          62
+        ],
+        "fields": [
+          "D#DT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Extract year, month, and day from the input string: Year (chars 1-4), Month (chars 5-6), Day (chars 7-8).",
+        "lines": [
+          63,
+          64,
+          65
+        ],
+        "fields": [
+          "D#DT",
+          "D#J",
+          "D#M",
+          "D#T"
+        ],
+        "values": []
+      },
+      {
+        "text": "The year must be between 1900 and 2099 inclusive; otherwise, the date is invalid.",
+        "lines": [
+          66
+        ],
+        "fields": [
+          "D#J"
+        ],
+        "values": [
+          "1900",
+          "2099"
+        ]
+      },
+      {
+        "text": "The month must be between 1 and 12 inclusive; otherwise, the date is invalid.",
+        "lines": [
+          67
+        ],
+        "fields": [
+          "D#M"
+        ],
+        "values": [
+          "1",
+          "12"
+        ]
+      },
+      {
+        "text": "The day must be between 1 and the maximum days allowed for that specific month; otherwise, the date is invalid. Note: Leap years are not handled for February.",
+        "lines": [
+          68
+        ],
+        "fields": [
+          "D#T",
+          "D#M"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 18.2
+}

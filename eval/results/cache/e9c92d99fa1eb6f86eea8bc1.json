@@ -1,0 +1,33 @@
+{
+  "unit": "KBU00007",
+  "member": "KBU00007",
+  "answer": {
+    "summary": "This procedure acts as a wrapper that invokes the logging procedure KBU00008 with a predefined execution level.",
+    "inputs": [
+      "P#PGM (CHAR 8): Program identifier",
+      "P#TXT (CHAR varying): Message text"
+    ],
+    "outputs": [
+      "Calls KBU00008 with the provided parameters and a static level constant."
+    ],
+    "rules": [
+      {
+        "text": "The procedure calls KBU00008 using the input program name, the input text, and a static level value of 1.",
+        "lines": [
+          13
+        ],
+        "fields": [
+          "P#PGM",
+          "P#TXT",
+          "L#STUFE"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 8.2
+}

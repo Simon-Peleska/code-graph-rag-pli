@@ -1,0 +1,206 @@
+ /*******************************************************************/  00000100
+ /*  PROGRAMM   KBP00002                                              */00000200
+ /*  JOB        KBJ00001  STEP020                                     */00000300
+ /*                                                                   */00000400
+ /*  ZYKLUSENDE: SOLLZINSEN, MAHNGEBUHER, UEBERZIEHUNGSGEBUEHR,       */00000500
+ /*              KONTOSTATUS                                          */00000600
+ /*                                                                   */00000700
+ /*  EINGAEB    CTLCARD ACCTFILE TCATFILE DISCGRP CUSTFILE            */00000800
+ /*  AUSGBAE    ACCTOUT TRANOUT                                       */00000900
+ /*                                                                   */00001000
+ /*  ERSETZT KBP00004 (ALTER ZINSLAUF, PAUSCHAL 18 %)                 */00001100
+ /*                                                                   */00001200
+ /*  1997-08-02 HKR ERSTELLT                                          */00001300
+ /*  2004-02-09 ALM MAHNWESEN, STAUTS D / X                           */00001400
+ /*  2009-04-01 ALM FICO-AUFSCHLAG                                    */00001500
+ /*******************************************************************/  00001800
+    KBP00002: PROC OPTIONS(MAIN);                                       00001900
+ %INCLUDE KBC00001;                                                     00002000
+ %INCLUDE KBC00002;                                                     00002100
+ %INCLUDE KBC00004;                                                     00002200
+ %INCLUDE KBC00005;                                                     00002300
+ %INCLUDE KBC00006;                                                     00002400
+ %INCLUDE KBC00007;                                                     00002500
+  %INCLUDE KBC00010;                                                    00002600
+ %INCLUDE KBC00011;                                                     00002700
+                                                                        00002800
++ DCL CTLCARD FILE RECORD INPUT,                                        00002900
+     DISCGRP FILE RECORD INPUT,                                         00003000
++    TRANOUT FILE RECORD OUTPUT;                                        00003100
+                                                                        00003200
+ DCL (KBU00012, KBU00014, KBU00015, KBU00018) ENTRY EXTERNAL;           00003300
+ dcl KBU00013 ENTRY(CHAR(11), FIXED BIN(31)) EXTERNAL;                  00003400
+ DCL KBU00019 ENTRY(CHAR(9), FIXED BIN(31)) EXTERNAL;                   00003500
+ DCL KBU00005 ENTRY(FIXED DEC(31,10)) RETURNS(FIXED DEC(15,2))          00003600
+              EXTERNAL;                                                 00003700
+ dcl KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;                 00003800
+ DCL KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)            00003900
+                 EXTERNAL;                                              00004000
+  DCL KBU00026 ENTRY(CHAR(8), CHAR(8)) EXTERNAL;                        00004100
+ DCL KBU00027 ENTRY(CHAR(2), FIXED DEC(15,2), CHAR(1)) EXTERNAL;        00004200
+ DCL KBU00028 ENTRY EXTERNAL;                                           00004300
+                                                                        00004400
+ /* AKTION 2010: NEUKUNDEN DER GRUPPE AKTION2010 ZAHLEN BIS ENDE    */  00004500
+ /* 2011 KEINE ZINSEN. (MARKETING, M. KOLB, 2009-12-01)             */  00004600
+    DCL $AKT_GRP    CHAR(10) INIT('AKTION2010');                        00004700
+    DCL $AKT_VON    CHAR(8)  INIT('20100101');                          00004800
+ DCL $AKT_BIS    CHAR(8)  INIT('20111231');                             00004900
+                                                                        00005000
+ DCL 1 ZS(500),                                                         00005100
+       3 ZS_SCHL CHAR(16),                                              00005200
+        3 ZS_P    FIXED DEC(5,2);                                       00005300
+ DCL ZS_N        FIXED BIN(31) INIT(0);                                 00005400
+                                                                        00005500
+ DCL (I, J, K)   FIXED BIN(31);                                         00005600
+ DCL $KD         FIXED BIN(31);                                         00005700
+ DCL $GEF        BIT(1);                                                00005800
+ DCL $P          FIXED DEC(5,2);                                        00005900
+ DCL $SUM        FIXED DEC(15,2);                                       00006000
+ DCL $ZW         FIXED DEC(15,2);                                       00006100
+ DCL $MAHN       FIXED BIN(15);                                         00006200
+ DCL $GRP_DEF    CHAR(10) INIT('DEFAULT');                              00006300
+                                                                        00006400
+ W_PGM = 'KBP00002';                                                    00006500
+ W_RC  = 0;                                                             00006600
+   ON ERROR BEGIN;                                                      00006700
+   ON ERROR SYSTEM;                                                     00006800
+  CALL KBU00011(W_PGM, 16, 'ON ERROR ' || ONCODE());                    00006900
+ END;                                                                   00007000
+                                                                        00007100
+ OPEN FILE(CTLCARD);                                                    00007200
+ READ FILE(CTLCARD) INTO(W_STEU);                                       00007300
+ CLOSE FILE(CTLCARD);                                                   00007400
+     W_LAUFDT = SUBSTR(W_STEU,1,8);                                     00007500
++                                                                       00007600
+ CALL KBU00012;                                                         00007700
+ call KBU00015;                                                         00007800
+ CALL KBU00018;                                                         00007900
+  CALL ZS_LADEN;                                                        00008000
+  CALL KBU00026(W_PGM, W_LAUFDT);                                       00008100
++                                                                       00008200
+ OPEN FILE(TRANOUT);                                                    00008300
+                                                                        00008400
+ DO I = 1 TO KTAB_ANZ;                                                  00008500
+    STRING(KTO_SATZ) = KTAB_SATZ(I);                                    00008600
++  IF KTO_ST = 'X' THEN GOTO WEITER;          /* ABGESCHRIEBEN   */     00008700
+                                                                        00008800
+       CALL KBU00019(KTO_KDNR, $KD);                                    00008900
+                                                                        00009000
+   /*--- ZINSEN JE KATEGORIE -------------------------------------*/    00009100
+       $SUM = 0;                                                        00009200
+       DO J = 1 TO TC_ANZ;                                              00009300
+     IF SUBSTR(TC_KEY(J),1,11) ^= KTO_NR THEN GOTO NAECHSTE_KAT;        00009400
+     IF TC_SLD(J) <= 0 THEN GOTO NAECHSTE_KAT;                          00009500
+     IF SUBSTR(TC_KEY(J),12,2) = KO_TYP_ZAHL THEN                       00009600
+          GOTO NAECHSTE_KAT;                                            00009700
+         CALL ZINSSATZ(KTO_GRP, SUBSTR(TC_KEY(J),12,6));                00009800
+     IF KTO_GRP = $AKT_GRP THEN                                         00009900
+        IF W_LAUFDT >= $AKT_VON & W_LAUFDT <= $AKT_BIS THEN             00010000
+         $P = 0;                                                        00010100
+     IF $P > 0 THEN DO;                                                 00010200
+           IF KTO_ST = 'D' THEN $P = $P + KO_AUFS_VERZ;                 00010300
+          IF $KD > 0 THEN                                               00010400
+         IF KD_FICO($KD) < KO_FICO_GRENZE THEN                          00010500
+           $P = $P + KO_AUFS_FICO;                                      00010600
+     END;                                                               00010700
+     $ZW  = KBU00005(DIVIDE(TC_SLD(J) * $P, 1200, 31, 10));             00010800
+     $SUM = $SUM + $ZW;                                                 00010900
+    NAECHSTE_KAT:                                                       00011000
+   END;                                                                 00011100
+                                                                        00011200
+  IF $SUM >= KO_ZINS_FREI THEN                                          00011300
+     CALL BELASTEN('ZI', KO_TYP_ZINS, '0001', 'SOLLZINSEN', $SUM);      00011400
+                                                                        00011500
+   /*--- GEBUEHREN NUR A UND D -----------------------------------*/    00011600
+      IF KTO_ST = 'A' | KTO_ST = 'D' THEN DO;                           00011700
+     IF KTO_MINZ > 0 THEN                                               00011800
+       IF KTO_ZYK_ZAHL < KTO_MINZ THEN DO;                              00011900
+             $MAHN = KTO_MAHN;                                          00012000
+         IF $MAHN > 0 THEN $ZW = KO_MAHN_2;                             00012100
+                     ELSE $ZW = KO_MAHN_1;                              00012200
+         $MAHN = $MAHN + 1;                                             00012300
+         IF $MAHN > 99 THEN $MAHN = 99;                                 00012400
+         KTO_MAHN = $MAHN;                                              00012500
+         CALL BELASTEN('MG', KO_TYP_GEB, '0002', 'MAHNGEBUEHR', $ZW);   00012600
+           END;                                                         00012700
+       else KTO_MAHN = 0;                                               00012800
++    IF KTO_SLD > KTO_KLIM THEN                                         00012900
+       CALL BELASTEN('UL', KO_TYP_GEB, '0003',                          00013000
+                   'UEBERZIEHUNGSGEBUEHR', KO_UEBZ);                    00013100
+   END;                                                                 00013200
+                                                                        00013300
+   /*--- STAUTS ---------------------------------------------------*/   00013400
+    SELECT;                                                             00013500
+     WHEN(KTO_ST = 'A' & KTO_MAHN >= KO_VERZ_AB)   KTO_ST = 'D';        00013600
+     WHEN(KTO_ST = 'D' & KTO_MAHN >= KO_ABSCHR_AB) KTO_ST = 'X';        00013700
+     WHEN(KTO_ST = 'D' & KTO_MAHN = 0)             KTO_ST = 'A';        00013800
+     OTHERWISE;                                                         00013900
+   END;                                                                 00014000
+                                                                        00014100
+      KTAB_SATZ(I) = STRING(KTO_SATZ);                                  00014200
+   WEITER:                                                              00014300
+ END;                                                                   00014400
+                                                                        00014500
+ CLOSE FILE(TRANOUT);                                                   00014600
+ call KBU00014;                                                         00014700
+ CALL KBU00028;                                                         00014800
+ CALL KBU00007(W_PGM, 'ENDE');                                          00014900
+ CALL PLIRETC(W_RC);                                                    00015000
+  RETURN;                                                               00015100
+                                                                        00015200
+ /*================================================================*/   00015300
+ /*================================================================*/   00015500
+-ZINSSATZ: PROC(Z#GRP, Z#TK);                                           00015600
+   DCL Z#GRP CHAR(10);                                                  00015700
++  DCL Z#TK  CHAR(6);                                                   00015800
+     $GEF = '0'B;                                                       00015900
+     $P   = 0;                                                          00016000
+    DO K = 1 TO ZS_N;                                                   00016100
+     IF ZS_SCHL(K) = Z#GRP || Z#TK THEN DO;                             00016200
+       $P = ZS_P(K); $GEF = '1'B; LEAVE;                                00016300
+     END;                                                               00016400
+   END;                                                                 00016500
+     IF $GEF THEN RETURN;                                               00016600
+   DO K = 1 TO ZS_N;                                                    00016700
+     if ZS_SCHL(K) = $GRP_DEF || Z#TK then do;                          00016800
+     $P = ZS_P(K); LEAVE;                                               00016900
+     END;                                                               00017000
+   END;                                                                 00017100
+  END ZINSSATZ;                                                         00017200
++                                                                       00017300
+ /*================================================================*/   00017400
+ /* BELASTEN: BETRAG AUF KONTO, UMSATZ NACH TRANOUT                 */  00017500
+ /*================================================================*/   00017600
+-  BELASTEN: PROC(B#PFX, B#TYP, B#KAT, B#TXT, B#BTR);                   00017700
+   DCL B#PFX CHAR(2), B#TYP CHAR(2), B#KAT CHAR(4);                     00017800
+     DCL B#TXT CHAR(30), B#BTR FIXED DEC(15,2);                         00017900
+   KTO_SLD     = KTO_SLD     + B#BTR;                                   00018000
+   KTO_ZYK_SOL = KTO_ZYK_SOL + B#BTR;                                   00018100
+   STRING(TRN_SATZ) = '';                                               00018200
+   TRN_ID = B#PFX || KTO_NR || '000';                                   00018300
+   TRN_TYP = B#TYP; TRN_KAT = B#KAT; TRN_QUELLE = 'ZINSLAUF';           00018400
+   TRN_TXT = B#TXT; TRN_BTR = B#BTR; TRN_HDL = '000000000';             00018500
+   TRN_MCC = '0000'; TRN_KARTE = ''; TRN_DT = W_LAUFDT;                 00018600
+   STRING(BUC_SATZ) = '';                                               00018700
+  BUC_TRN = SUBSTR(STRING(TRN_SATZ),1,110);                             00018800
+   BUC_KTO = KTO_NR;                                                    00018900
+   BUC_DT  = W_LAUFDT;                                                  00019000
+   WRITE FILE(TRANOUT) FROM(BUC_SATZ);                                  00019100
+   call KBU00027(B#TYP, B#BTR, 'E');                                    00019200
+  END BELASTEN;                                                         00019300
+                                                                        00019400
++/*================================================================*/   00019500
+-ZS_LADEN: PROC;                                                        00019600
++  ON ENDFILE(DISCGRP) SW_EOF_DSC = '1'B;                               00019700
+  OPEN FILE(DISCGRP);                                                   00019800
+  READ FILE(DISCGRP) INTO(DSC_SATZ);                                    00019900
+   DO WHILE(^SW_EOF_DSC);                                               00020000
+     ZS_N = ZS_N + 1;                                                   00020100
+     ZS_SCHL(ZS_N) = DSC_GRP || DSC_TYP || DSC_KAT;                     00020200
+        ZS_P(ZS_N) = DSC_ZINS;                                          00020300
+     READ FILE(DISCGRP) INTO(DSC_SATZ);                                 00020400
++ END;                                                                  00020500
+     CLOSE FILE(DISCGRP);                                               00020600
+ END ZS_LADEN;                                                          00020700
+                                                                        00020800
+  END KBP00002;                                                         00020900

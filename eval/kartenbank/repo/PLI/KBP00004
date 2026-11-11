@@ -1,0 +1,60 @@
+ /*******************************************************************/
+ /*  PROGRAMM   KBP00004   ALTER ZINSLAUF                             */
+ /*                                                                   */
+ /*  PAUSCHAL 18 % P.A. AUF DEN POSITIVEN SALDO, MONATLICH.           */
+ /*  KEINE GEBUEHREN, KEIN STATUS.                                    */
+ /*                                                                   */
+ /*  !!! ABGELOEST DURCH KBP00002 (1997). NICHT LOESCHEN, WIRD VON     */
+ /*  !!! DER REVISION ALS NACHWEIS DER ALTEN BERECHNUNG GEBRAUCHT.     */
+ /*                                                                   */
+ /*  1994-03-11 HKR ERSTELLT                                          */
+ /*  1996-01-15 HKR ZINSSATZ AUS STEUERKARTE SPALTE 9-12              */
+ /*******************************************************************/
+ KBP00004: PROC OPTIONS(MAIN);
+   %INCLUDE KBC00001;
+   %INCLUDE KBC00004;
+   %INCLUDE KBC00011;
+   DCL CTLCARD  FILE RECORD INPUT;
+   DCL ACCTFILE FILE RECORD INPUT;
+   DCL ACCTOUT  FILE RECORD OUTPUT;
+   DCL TRANOUT  FILE RECORD OUTPUT;
+  DCL KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+   DCL A_SATZ   CHAR(140);
+    dcl A_PROZ   FIXED DEC(5,2) INIT(18.00);
+   DCL A_PROZ_K PIC '99V99';
+   DCL A_ZINS   FIXED DEC(15,2);
+   DCL A_EOF    BIT(1) INIT('0'B);
+
+       W_PGM = 'KBP00004';
+   OPEN FILE(CTLCARD);
+  READ FILE(CTLCARD) INTO(W_STEU);
+   CLOSE FILE(CTLCARD); W_LAUFDT = SUBSTR(W_STEU,1,8);
+    IF SUBSTR(W_STEU,9,4) ^= '    ' THEN
+         DO;
+       STRING(A_PROZ_K) = SUBSTR(W_STEU,9,4);
+       A_PROZ = A_PROZ_K;
+     END;
+
+     ON ENDFILE(ACCTFILE) A_EOF = '1'B;
+       OPEN FILE(ACCTFILE), FILE(ACCTOUT), FILE(TRANOUT);
+   READ FILE(ACCTFILE) INTO(A_SATZ);
+   DO WHILE(^A_EOF); STRING(KTO_SATZ) = A_SATZ;
+     IF SUBSTR(KTO_ALT_SCHL,12,1) = 'A' THEN
+       IF KTO_SLD > 0 THEN
+         DO;
+           A_ZINS = KTO_SLD * A_PROZ / 1200;
+           KTO_SLD = KTO_SLD + A_ZINS;
+           STRING(TRN_SATZ) = '';
+               TRN_ID  = 'ZA' || KTO_NR || '000'; TRN_TYP = '06';
+           TRN_KAT = '0001';
+           TRN_TXT = 'ZINSEN';
+           TRN_BTR = A_ZINS; TRN_DT  = W_LAUFDT;
+             WRITE FILE(TRANOUT) FROM(TRN_SATZ);
+         END;
+     A_SATZ = STRING(KTO_SATZ);
+     WRITE FILE(ACCTOUT) FROM(A_SATZ);
+     READ FILE(ACCTFILE) INTO(A_SATZ);
+   end;
+   CLOSE FILE(ACCTFILE), FILE(ACCTOUT), FILE(TRANOUT);
+   CALL KBU00007(W_PGM, 'ENDE ALTER ZINSLAUF');
+ END KBP00004;

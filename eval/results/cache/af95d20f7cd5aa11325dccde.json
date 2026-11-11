@@ -1,0 +1,66 @@
+{
+  "unit": "ZS_LADEN",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "This procedure loads interest rate configuration data from the DISCGRP file into internal memory arrays. It builds a composite key for each group and stores the corresponding annual interest rate.",
+    "inputs": [
+      "File DISCGRP: DSC_GRP (CHAR 10), DSC_TYP (CHAR 2), DSC_KAT (CHAR 4), DSC_ZINS (DEC 99V99)"
+    ],
+    "outputs": [
+      "ZS_SCHL: Array of composite keys (CHAR 16)",
+      "ZS_P: Array of interest rates (DEC 5,2)",
+      "ZS_N: Counter for number of records loaded"
+    ],
+    "rules": [
+      {
+        "text": "Initialize EOF flag to false.",
+        "lines": [
+          194
+        ],
+        "fields": [
+          "SW_EOF_DSC"
+        ],
+        "values": [
+          "'0'B"
+        ]
+      },
+      {
+        "text": "For each record in DISCGRP, increment the record counter.",
+        "lines": [
+          198
+        ],
+        "fields": [
+          "ZS_N"
+        ],
+        "values": []
+      },
+      {
+        "text": "Create a composite key by concatenating Group, Type, and Category.",
+        "lines": [
+          199
+        ],
+        "fields": [
+          "ZS_SCHL",
+          "DSC_GRP",
+          "DSC_TYP",
+          "DSC_KAT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Store the interest rate from the current record into the interest rate array.",
+        "lines": [
+          200
+        ],
+        "fields": [
+          "ZS_P",
+          "DSC_ZINS"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 29.8
+}

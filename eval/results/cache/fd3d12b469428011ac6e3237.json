@@ -1,0 +1,105 @@
+{
+  "unit": "KBU00002",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Calculates a future date by adding a specified number of days to a given starting date. The procedure only supports forward date arithmetic.",
+    "inputs": [
+      "P#DT: Starting date in YYYYMMDD format (CHAR(8))",
+      "P#TG: Number of days to add (FIXED BIN(31))"
+    ],
+    "outputs": [
+      "W#ERG: The resulting date in YYYYMMDD format (CHAR(8))"
+    ],
+    "rules": [
+      {
+        "text": "Extract year, month, and day from the input date string using fixed positions.",
+        "lines": [
+          62,
+          63,
+          64
+        ],
+        "fields": [
+          "W#JJ",
+          "W#MM",
+          "W#TT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the number of days to add is negative, return the original input date.",
+        "lines": [
+          66,
+          68
+        ],
+        "fields": [
+          "P#TG"
+        ],
+        "values": []
+      },
+      {
+        "text": "Iteratively increment the day for each day in the count.",
+        "lines": [
+          71,
+          72
+        ],
+        "fields": [
+          "W#I",
+          "P#TG",
+          "W#TT"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the day exceeds the number of days in the current month (determined by KBU0TM), reset the day to 1 and increment the month.",
+        "lines": [
+          73,
+          75,
+          76
+        ],
+        "fields": [
+          "W#TT",
+          "W#MM"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the month exceeds 12, reset the month to 1 and increment the year.",
+        "lines": [
+          77
+        ],
+        "fields": [
+          "W#MM",
+          "W#JJ"
+        ],
+        "values": [
+          "12"
+        ]
+      },
+      {
+        "text": "Construct the final date string by calculating (Year * 10000) + (Month * 100) + Day.",
+        "lines": [
+          81,
+          82,
+          83
+        ],
+        "fields": [
+          "W#ERG_P",
+          "W#JJ",
+          "W#MM",
+          "W#TT"
+        ],
+        "values": [
+          "10000",
+          "100"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 50.7
+}

@@ -1,0 +1,150 @@
+{
+  "unit": "GEBUEHR",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Calculates and applies a cash fee based on a percentage of the transaction amount, ensuring it meets a minimum threshold. The procedure updates account balances, logs a transaction record to the transaction history file, and updates statistical summaries.",
+    "inputs": [
+      "W_BTR (Transaction amount)",
+      "KO_GEB_BAR_PROZ (Fee percentage)",
+      "KO_GEB_BAR_MIN (Minimum fee)",
+      "KTO_NR (Account number)",
+      "TRN_ID (Original transaction ID)",
+      "W_KARTE (Card number)",
+      "W_LAUFDT (Current processing date)"
+    ],
+    "outputs": [
+      "KTO_SLD (Updated account balance)",
+      "KTO_ZYK_SOL (Updated account cumulative debit)",
+      "TRANOUT (Transaction history record)",
+      "KBU00016 (Updated balance aggregation table)",
+      "KBU00027 (Statistical summary report)"
+    ],
+    "rules": [
+      {
+        "text": "Calculate the fee by multiplying the transaction amount by the fee percentage (divided by 100) and applying commercial rounding to 2 decimal places.",
+        "lines": [
+          346
+        ],
+        "fields": [
+          "W_BTR",
+          "KO_GEB_BAR_PROZ",
+          "W_HV3"
+        ],
+        "values": [
+          "100",
+          "31",
+          "10"
+        ]
+      },
+      {
+        "text": "The fee must be at least the minimum fee amount; select the maximum between the calculated fee and the minimum fee.",
+        "lines": [
+          347
+        ],
+        "fields": [
+          "W_HV3",
+          "KO_GEB_BAR_MIN",
+          "W_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increase the account balance (KTO_SLD) and the cumulative debit (KTO_ZYK_SOL) by the calculated fee amount.",
+        "lines": [
+          349,
+          350
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_ZYK_SOL",
+          "W_GEB"
+        ],
+        "values": []
+      },
+      {
+        "text": "Update the balance aggregation table using a key composed of the account number, fee type, and a constant suffix '0001'.",
+        "lines": [
+          351
+        ],
+        "fields": [
+          "KTO_NR",
+          "KO_TYP_GEB",
+          "W_GEB"
+        ],
+        "values": [
+          "'0001'"
+        ]
+      },
+      {
+        "text": "Generate a new transaction ID by prefixing 'CF' to the substring of the original transaction ID starting from the 3rd character.",
+        "lines": [
+          353,
+          355
+        ],
+        "fields": [
+          "TRN_ID",
+          "W_ORGID"
+        ],
+        "values": [
+          "'CF'"
+        ]
+      },
+      {
+        "text": "Construct the transaction history record (TRN_SATZ) with fixed values: type is the fee type, category is '0001', source is 'SYSTEM', text is 'BARGELDGEBUEHR', handler is '000000000', MCC is '0000', and include the card number and processing date.",
+        "lines": [
+          356,
+          357,
+          358,
+          359,
+          360,
+          361,
+          362,
+          363,
+          364
+        ],
+        "fields": [
+          "TRN_TYP",
+          "TRN_KAT",
+          "TRN_QUELLE",
+          "TRN_TXT",
+          "TRN_BTR",
+          "TRN_HDL",
+          "TRN_MCC",
+          "TRN_KARTE",
+          "TRN_DT",
+          "W_GEB",
+          "W_KARTE",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "'05'",
+          "'0001'",
+          "'SYSTEM'",
+          "'BARGELDGEBUEHR'"
+        ]
+      },
+      {
+        "text": "Write the transaction record to the TRANOUT file as a BUC_SATZ record, containing the truncated transaction string, account number, and processing date.",
+        "lines": [
+          366,
+          367,
+          368
+        ],
+        "fields": [
+          "BUC_TRN",
+          "BUC_KTO",
+          "BUC_DT",
+          "TRN_SATZ",
+          "KTO_NR",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "110"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 88.5
+}

@@ -1,0 +1,116 @@
+{
+  "unit": "KBP00001",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "This procedure performs the daily batch processing of credit card transactions. It reads the day's transaction file, validates each record against in-memory account and card tables, and posts valid transactions to customer accounts while rejecting invalid ones. It also calculates fees for cash withdrawals and generates summary reports for reconciliation.",
+    "inputs": [
+      "CTLCARD (Control Card containing the run date)",
+      "DALYTRAN (Daily transaction file)",
+      "ACCTFILE (Account master file, loaded into memory)",
+      "XREFFILE (Card cross-reference file, loaded into memory)",
+      "TCATFILE (Category balance file, loaded into memory)"
+    ],
+    "outputs": [
+      "ACCTOUT (Updated account master file)",
+      "TCATOUT (Updated category balance file)",
+      "TRANOUT (History of booked transactions)",
+      "REJECTS (Log of rejected transactions with reasons)",
+      "SYSPRINT (System log and summary reports)"
+    ],
+    "rules": [
+      {
+        "text": "The run date is extracted from the first 8 characters of the control card record. If the date contains any non-numeric characters, the program aborts with return code 16.",
+        "lines": [
+          140,
+          141,
+          142
+        ],
+        "fields": [
+          "W_STEU",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "1",
+          "8",
+          "'0123456789'",
+          "16"
+        ]
+      },
+      {
+        "text": "If the parameter string contains 'TRACE', the test mode flag SW_TEST is set to '1'B, enabling detailed logging of each transaction ID and type.",
+        "lines": [
+          119
+        ],
+        "fields": [
+          "P_PARM",
+          "SW_TEST"
+        ],
+        "values": [
+          "'TRACE'",
+          "0",
+          "'1'B"
+        ]
+      },
+      {
+        "text": "If the parameter string contains 'CHKP=', the checkpoint interval W_CHKP_N is set to the 4-digit number following the equals sign. This controls how often a checkpoint message is logged.",
+        "lines": [
+          120,
+          121
+        ],
+        "fields": [
+          "P_PARM",
+          "W_CHKP_N"
+        ],
+        "values": [
+          "'CHKP='",
+          "0",
+          "5",
+          "4"
+        ]
+      },
+      {
+        "text": "A checkpoint message is logged to the system print file every W_CHKP_N transactions processed. The counter W_CHKP_Z resets to 0 after each checkpoint.",
+        "lines": [
+          165,
+          166,
+          168,
+          169
+        ],
+        "fields": [
+          "W_CHKP_Z",
+          "W_CHKP_N"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If any transactions are rejected (Z_ABGEW > 0) and the current return code W_RC is less than 4, the return code is set to 4 to indicate rejections occurred.",
+        "lines": [
+          184
+        ],
+        "fields": [
+          "Z_ABGEW",
+          "W_RC"
+        ],
+        "values": [
+          "0",
+          "4"
+        ]
+      },
+      {
+        "text": "The program terminates with the final return code W_RC, which is 0 for success, 4 for rejections, or 16 for errors.",
+        "lines": [
+          186
+        ],
+        "fields": [
+          "W_RC"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 171.1
+}

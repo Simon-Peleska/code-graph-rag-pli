@@ -1,0 +1,47 @@
+{
+  "unit": "KBU0TM",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Calculates the number of days in a specific month for a given year. It retrieves the standard day count for the month and increments it by one if the month is February and the year is a leap year.",
+    "inputs": [
+      "J# (Year)",
+      "M# (Month)"
+    ],
+    "outputs": [
+      "Return value (Number of days in the month)"
+    ],
+    "rules": [
+      {
+        "text": "Retrieve the standard number of days for the month M# from the static array TG#MON.",
+        "lines": [
+          45
+        ],
+        "fields": [
+          "R#",
+          "TG#MON",
+          "M#"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the month M# is 2 (February), check if the year J# is a leap year using KBU0SJ. If it is a leap year, add 1 to the day count R#.",
+        "lines": [
+          46,
+          47
+        ],
+        "fields": [
+          "M#",
+          "J#",
+          "R#"
+        ],
+        "values": [
+          "2",
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 54.8
+}

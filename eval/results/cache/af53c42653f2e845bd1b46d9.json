@@ -1,0 +1,121 @@
+{
+  "unit": "UMSATZ",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Processes a single credit card transaction by checking for duplicates, validating the account, and posting the amount to the customer's balance. If the transaction is a cash withdrawal, it additionally calculates and posts a fee. The procedure updates the account record and writes a transaction history entry.",
+    "inputs": [
+      "TRN_SATZ (Transaction record containing TRN_ID, TRN_TYP, TRN_BTR, TRN_KARTE)",
+      "#GS (Array of already seen transaction IDs)",
+      "#GN (Count of seen transaction IDs)",
+      "KTO_SATZ (Account master record)"
+    ],
+    "outputs": [
+      "KTO_SATZ (Updated account balance and cycle totals)",
+      "KTAB_SATZ (Transaction history record)",
+      "@DOPP (Duplicate flag)",
+      "@SOLL (Debit/Credit flag)",
+      "@GRD (Rejection code)"
+    ],
+    "rules": [
+      {
+        "text": "Checks if the transaction ID already exists in the seen-transactions array. If found, sets the duplicate flag to '1'B; otherwise, sets it to '0'B and adds the ID to the array if capacity allows.",
+        "lines": [
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202
+        ],
+        "fields": [
+          "@GI",
+          "@DOPP",
+          "#GN",
+          "#GS",
+          "TRN_ID"
+        ],
+        "values": [
+          "'1'B",
+          "'0'B",
+          "16",
+          "'ZU VIELE UMSAETZE'"
+        ]
+      },
+      {
+        "text": "Determines the debit/credit direction based on transaction type. If the type is Purchase ('01') or Cash Withdrawal ('04'), it is a debit ('1'B'); otherwise, it is a credit ('0'B).",
+        "lines": [
+          205,
+          206,
+          207,
+          208
+        ],
+        "fields": [
+          "TRN_TYP",
+          "@SOLL",
+          "KO_TYP_KAUF",
+          "KO_TYP_BAR"
+        ],
+        "values": [
+          "'01'",
+          "'04'",
+          "'1'B",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "Validates the transaction. If the validation returns a non-zero rejection code, the transaction is rejected, logged as rejected, and the procedure returns without posting.",
+        "lines": [
+          210,
+          211,
+          212,
+          213,
+          214,
+          215
+        ],
+        "fields": [
+          "@GRD",
+          "TRN_TYP",
+          "W_BTR"
+        ],
+        "values": [
+          "0",
+          "'A'"
+        ]
+      },
+      {
+        "text": "If validation passes, posts the transaction to the account, logs it as booked, and if the type is Cash Withdrawal ('04'), calculates and posts a fee.",
+        "lines": [
+          217,
+          218,
+          219,
+          220
+        ],
+        "fields": [
+          "TRN_TYP",
+          "W_BTR",
+          "KO_TYP_BAR"
+        ],
+        "values": [
+          "'G'",
+          "'04'"
+        ]
+      },
+      {
+        "text": "Writes the updated account record to the transaction history table at the current index.",
+        "lines": [
+          221
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "@KI",
+          "KTO_SATZ"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 105.7
+}

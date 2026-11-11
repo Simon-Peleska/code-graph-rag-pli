@@ -1,0 +1,30 @@
+ /*******************************************************************/
+ /*  KBU00004   BETARGSROUTINEN (PAKET)                               */
+ /*                                                                   */
+ /*  KBU00005  KAUFMAENNISCH RUNDEN AUF 2 STELLEN                     */
+ /*  KBU00006  GROESSERER VON ZWEI BETRAEGEN                          */
+ /*                                                                   */
+ /*  1995-06-02 HKR ERSTELLT                                          */
+ /*  2001-12-28 WBE EURO: RUNDUNG GEPRUEFT, BLEIBT KAUFMAENNISCH      */
+ /*  2007-03-14 ALM KBU00006 (MAX-BUILTIN WAR "ZU UNSICHER")          */
+ /*******************************************************************/
+  KBU00004: PACKAGE EXPORTS(KBU00005, KBU00006);
+
+ KBU00005: PROC(B#IN) RETURNS(FIXED DEC(15,2));
+   DCL B#IN  FIXED DEC(31,10);
+   DCL B#OUT FIXED DEC(15,2);
+      DCL B#HLF FIXED DEC(31,10);
+   /* ROUND RUNDET IN PL/I VOM NULLPUNKT WEG; FUER POSITIVE BETRAEGE */
+   /* IST DAS KAUFMAENNISCH. NEGATIVE KOMMEN HIER NICHHT VOR.         */
+   B#HLF = ROUND(B#IN, 2);
+       B#OUT = B#HLF; RETURN(B#OUT);
+ END KBU00005;
+
+ KBU00006: PROC(B#1, B#2) RETURNS(FIXED DEC(15,2));
+     DCL (B#1, B#2) FIXED DEC(15,2);
+   IF B#1 >= B#2 THEN
+      RETURN(B#1);
+     ELSE
+      RETURN(B#2); END KBU00006;
+
+ end KBU00004;

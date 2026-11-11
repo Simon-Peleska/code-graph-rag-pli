@@ -1,0 +1,71 @@
+{
+  "unit": "KBU00024",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates the card number and account number fields within a card record string. It counts and logs warnings for any field that is not purely numeric, returning the total count of validation errors.",
+    "inputs": [
+      "X#S (CHAR(50) card record string)"
+    ],
+    "outputs": [
+      "Return value (FIXED BIN(15) error count)",
+      "Warning log entries via P#WARNUNG"
+    ],
+    "rules": [
+      {
+        "text": "Checks if the first 16 characters of the input string (positions 1-16) are not purely numeric. If they are not numeric, increments the error counter and logs a warning with key 'KARTE' and the first 16 characters of the input.",
+        "lines": [
+          143,
+          144,
+          145,
+          146,
+          147
+        ],
+        "fields": [
+          "X#S",
+          "X#F"
+        ],
+        "values": [
+          "16",
+          "1",
+          "'KBU00024'",
+          "'KARTE'"
+        ]
+      },
+      {
+        "text": "Checks if the 11 characters starting at position 26 (positions 26-36) are not purely numeric. If they are not numeric, increments the error counter and logs a warning with key 'KONTO' and the first 16 characters of the input.",
+        "lines": [
+          148,
+          149,
+          150,
+          151,
+          152
+        ],
+        "fields": [
+          "X#S",
+          "X#F"
+        ],
+        "values": [
+          "26",
+          "11",
+          "1",
+          "16",
+          "'KBU00024'",
+          "'KONTO'"
+        ]
+      },
+      {
+        "text": "Returns the total count of validation errors found in the card number and account number fields.",
+        "lines": [
+          155
+        ],
+        "fields": [
+          "X#F"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 55
+}

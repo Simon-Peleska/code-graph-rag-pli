@@ -1,0 +1,76 @@
+ /*******************************************************************/
+ /*  KBU00012   KONTENTABELE (KBC00002)                              */
+ /*                                                                   */
+ /*    CALL KBU00012;                  LAEDN AUS ACCTFILE             */
+ /*    CALL KBU00013(KONTONR, INDEX);  SUCHEN, INDEX 0 = FEHLT        */
+ /*    CALL KBU00014;                  SCHREIBEN NACH ACCTOUT         */
+ /*                                                                   */
+ /*  REIHENFOLGE DER TABELLE = REIHENFOLGE IN ACCTFILE. NICHT          */
+ /*  SORTIEREN, DIE NACHFOLGEJOBS VERLASSEN SICH DARAUF.              */
+ /*                                                                   */
+ /*  1996-01-15 HKR ERSTELLT                                          */
+ /*  2003-05-05 ALM 2000 KONTEN, PRUEFUNG UEBERLAUF                   */
+ /*  2010-08-19 ALM KBU00013: ERSTER TREFFER ZAEHLT                   */
+ /*******************************************************************/
+ KBU00012: PROC;
+  %INCLUDE KBC00002;
+   DCL ACCTFILE FILE RECORD INPUT;
+   DCL ACCTOUT  FILE RECORD OUTPUT;
+   dcl KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)
+                   EXTERNAL;
+   DCL KBU00007 ENTRY(CHAR(8), CHAR(*) VARYING) EXTERNAL;
+   DCL KBU00022 ENTRY(CHAR(140)) RETURNS(FIXED BIN(15)) EXTERNAL;
+   DCL K@FEHL   FIXED BIN(31) INIT(0);
+  DCL K@SATZ   CHAR(140);
+   DCL K@EOF    BIT(1);
+   DCL K@I      FIXED BIN(31);
+   DCL K@NR     CHAR(11);
+       DCL K@IX     FIXED BIN(31);
+  DCL K@Z      PIC 'ZZZZZ9';
+
+   K@EOF    = '0'B;
+   KTAB_ANZ = 0;
+   ON ENDFILE(ACCTFILE) K@EOF = '1'B;
+       OPEN FILE(ACCTFILE);
+   READ FILE(ACCTFILE) INTO(K@SATZ);
+   DO WHILE(^K@EOF);
+     IF KTAB_ANZ >= HBOUND(KTAB_SATZ,1) THEN
+       call KBU00011('KBU00012', 16, 'KONTENTABELLE VOLL');
+      KTAB_ANZ = KTAB_ANZ + 1;
+     KTAB_SATZ(KTAB_ANZ) = K@SATZ;
+     K@FEHL = K@FEHL + KBU00022(K@SATZ);
+     READ FILE(ACCTFILE) INTO(K@SATZ); END;
+   CLOSE FILE(ACCTFILE);
+    K@Z = KTAB_ANZ;
+   CALL KBU00007('KBU00012', 'KONTEN GELADEN: ' || K@Z);
+   IF K@FEHL > 0 THEN
+   DO;
+      K@Z = K@FEHL;
+        CALL KBU00007('KBU00012', 'UNPLAUSIBLE FELDER: ' || K@Z);
+         END; RETURN;
+
+0/*-------------------------------------------------------------------*/
+ KBU00013: ENTRY(K@NR, K@IX);
+      K@IX = 0;
+   K@I  = 1;
+ K@SUCH:
+   IF K@I > KTAB_ANZ THEN RETURN;
+   IF SUBSTR(KTAB_SATZ(K@I),1,11) = K@NR THEN
+     DO;
+          K@IX = K@I;
+        RETURN;
+     END;
+   K@I = K@I + 1;
+   GOTO K@SUCH;
+
+0/*-------------------------------------------------------------------*/
+ KBU00014: ENTRY;
+   OPEN FILE(ACCTOUT);
+   DO K@I = 1 TO KTAB_ANZ;
+      WRITE FILE(ACCTOUT) FROM(KTAB_SATZ(K@I));
+   end;
+   CLOSE FILE(ACCTOUT);
+  K@Z = KTAB_ANZ;
+   CALL KBU00007('KBU00014', 'KONTEN GESCHRIEBEN: ' || K@Z);
+       return;
+ END KBU00012;

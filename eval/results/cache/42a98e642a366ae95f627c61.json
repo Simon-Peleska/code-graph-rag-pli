@@ -1,0 +1,110 @@
+{
+  "unit": "KBU00018",
+  "member": "KBU00018",
+  "answer": {
+    "summary": "This procedure loads customer data from a flat file into an in-memory indexed table for fast searching. It constructs a full name by concatenating first and last names and provides a lookup mechanism to find a customer's index by their ID.",
+    "inputs": [
+      "CUSTFILE: Input file containing customer records (KDS_NR, KDS_VORN, KDS_NACHN, KDS_FICO)"
+    ],
+    "outputs": [
+      "KD_TAB: Global table containing indexed customer IDs (KD_NR), formatted names (KD_NAME), and credit scores (KD_FICO)",
+      "C@IX: The index position of the found customer (returned via KBU00019)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize customer counter to zero.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "KD_ANZ"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the customer table is full, log an error message 'KBU00018 KUNDENTABELLE VOLL' with error level 16.",
+        "lines": [
+          21,
+          22
+        ],
+        "fields": [
+          "KD_ANZ",
+          "KBU00011"
+        ],
+        "values": [
+          "16",
+          "'KBU00018'",
+          "'KUNDENTABELLE VOLL'"
+        ]
+      },
+      {
+        "text": "Increment the customer counter when a record is added.",
+        "lines": [
+          23
+        ],
+        "fields": [
+          "KD_ANZ"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Store the customer ID from the file into the table.",
+        "lines": [
+          24
+        ],
+        "fields": [
+          "KD_NR",
+          "KDS_NR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Construct the full name by trimming leading/trailing spaces from the first name and last name, then joining them with a single space.",
+        "lines": [
+          25
+        ],
+        "fields": [
+          "KD_NAME",
+          "KDS_VORN",
+          "KDS_NACHN"
+        ],
+        "values": []
+      },
+      {
+        "text": "Store the credit score from the file into the table.",
+        "lines": [
+          26
+        ],
+        "fields": [
+          "KD_FICO",
+          "KDS_FICO"
+        ],
+        "values": []
+      },
+      {
+        "text": "Search for the customer ID (C@NR) in the loaded table and return its index (C@IX).",
+        "lines": [
+          33,
+          34,
+          35
+        ],
+        "fields": [
+          "C@IX",
+          "C@I",
+          "KD_NR",
+          "C@NR"
+        ],
+        "values": [
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 34.2
+}

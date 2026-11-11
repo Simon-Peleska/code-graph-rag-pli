@@ -1,0 +1,80 @@
+ /*******************************************************************/
+ /*  KBU00015   SALDEN JE KONTO/TYP/KATEGORIE (KBC00005, TC_TAB)      */
+ /*                                                                   */
+ /*    CALL KBU00015;              LAEDN AUS TCATFILE                 */
+ /*    CALL KBU00016(SCHL, BTR);   BETARG ZUBUCHEN (NEG = ABBUCHEN),  */
+ /*                                FEHLT DER SCHLUESSEL: NEU MIT 0    */
+ /*    CALL KBU00017;              SCHRIEBEN NACH TCATOUT             */
+ /*                                                                   */
+ /*  DIE TABELLE IST IMMER NACH TC_KEY SORTIERT (EINFUEGEN AN DER      */
+ /*  RICHTIGEN STELLE), DESHALB IST TCATOUT SORTIERT.                 */
+ /*                                                                   */
+ /*  1997-08-02 HKR ERSTELLT                                          */
+ /*  1997-09-15 HKR SORTIERT EINFUEGEN STATT SORT-STEP                */
+ /*******************************************************************/
+ KBU00015: PROC;
+   %INCLUDE KBC00005;
+    dcl TCATFILE FILE RECORD INPUT;
+   DCL TCATOUT  FILE RECORD OUTPUT;
+   DCL KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)
+                EXTERNAL;
+   dcl T@EOF    BIT(1);
+     dcl (T@I, T@J, T@P) FIXED BIN(31);
+   DCL T@SCHL   CHAR(17);
+   DCL T@BTR    FIXED DEC(15,2);
+   DCL T@GEF    BIT(1);
+
+       TC_ANZ = 0;
+   T@EOF  = '0'B;
+   ON ENDFILE(TCATFILE) T@EOF = '1'B; OPEN FILE(TCATFILE);
+   READ FILE(TCATFILE) INTO(TCA_SATZ);
+       do WHILE(^T@EOF);
+     CALL KBU00016(TCA_KTO || TCA_TYP || TCA_KAT, TCA_SLD);
+     READ FILE(TCATFILE) INTO(TCA_SATZ);
+   END;
+   CLOSE FILE(TCATFILE);
+       RETURN;
+
+ /*-------------------------------------------------------------------*/
+ KBU00016: ENTRY(T@SCHL, T@BTR);
+   T@GEF = '0'B;
+   T@P   = TC_ANZ + 1; DO T@I = 1 TO TC_ANZ WHILE(^T@GEF);
+     IF TC_KEY(T@I) = T@SCHL THEN
+       T@GEF = '1'B;
+         else
+       if TC_KEY(T@I) > T@SCHL then
+         DO;
+           T@P = T@I;
+           LEAVE;
+          END;
+  END;
+  if T@GEF then
+     DO;
+           T@I = T@I - 1;           /* DO-SCHLEIFE HAT SCHON ERHOEHT */
+       TC_SLD(T@I) = TC_SLD(T@I) + T@BTR;
+       RETURN; END;
+    IF TC_ANZ >= HBOUND(TC_KEY,1) THEN
+     call KBU00011('KBU00016', 16, 'SALDENTABELLE VOLL');
+      DO T@J = TC_ANZ TO T@P BY -1;
+     TC_KEY(T@J + 1) = TC_KEY(T@J);
+         TC_SLD(T@J + 1) = TC_SLD(T@J);
+   END;
+       TC_ANZ = TC_ANZ + 1;
+   TC_KEY(T@P) = T@SCHL;
+     TC_SLD(T@P) = 0;
+   TC_SLD(T@P) = TC_SLD(T@P) + T@BTR;
+   RETURN;
+
+ /*-------------------------------------------------------------------*/
+  KBU00017: ENTRY;
+  OPEN FILE(TCATOUT);
+       DO T@I = 1 TO TC_ANZ;
+      STRING(TCA_SATZ) = ''; TCA_KTO = SUBSTR(TC_KEY(T@I), 1, 11);
+      TCA_TYP = SUBSTR(TC_KEY(T@I), 12, 2);
+     TCA_KAT = SUBSTR(TC_KEY(T@I), 14, 4);
+        TCA_SLD = TC_SLD(T@I);
+        WRITE FILE(TCATOUT) FROM(TCA_SATZ);
+   END;
+   CLOSE FILE(TCATOUT);
+    return;
+ end KBU00015;

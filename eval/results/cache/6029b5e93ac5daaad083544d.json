@@ -1,0 +1,119 @@
+{
+  "unit": "KBU00009",
+  "member": "KBU00009",
+  "answer": {
+    "summary": "Performs a linear search through a key table to find the index of a specific key. Returns the 1-based index if found, or 0 if not found. Includes a legacy entry point for 9-character keys that searches in reverse order.",
+    "inputs": [
+      "T#TAB: Array of CHAR(16) keys",
+      "T#ANZ: Number of elements in the table",
+      "T#KEY: CHAR(16) key to search for",
+      "T#TAB9: Array of CHAR(9) keys (for legacy entry)",
+      "T#KEY9: CHAR(9) key to search for (for legacy entry)"
+    ],
+    "outputs": [
+      "T#IX: Index of the found key (1-based) or 0 if not found"
+    ],
+    "rules": [
+      {
+        "text": "Initialize result index to 0 to indicate 'not found' by default.",
+        "lines": [
+          16
+        ],
+        "fields": [
+          "T#IX"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Iterate through the table from index 1 to T#ANZ inclusive.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "T#I",
+          "T#ANZ"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Compare each table entry T#TAB(T#I) with the search key T#KEY for exact match.",
+        "lines": [
+          18
+        ],
+        "fields": [
+          "T#TAB",
+          "T#I",
+          "T#KEY"
+        ],
+        "values": []
+      },
+      {
+        "text": "If a match is found, set T#IX to the current index T#I and exit the search immediately.",
+        "lines": [
+          19,
+          20
+        ],
+        "fields": [
+          "T#IX",
+          "T#I"
+        ],
+        "values": []
+      },
+      {
+        "text": "Legacy entry KBU00010 initializes result index to 0.",
+        "lines": [
+          26
+        ],
+        "fields": [
+          "T#IX"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Legacy entry KBU00010 iterates through the table in reverse order from T#ANZ down to 1.",
+        "lines": [
+          27
+        ],
+        "fields": [
+          "T#I",
+          "T#ANZ"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Legacy entry KBU00010 compares each table entry T#TAB9(T#I) with the search key T#KEY9 for exact match.",
+        "lines": [
+          28
+        ],
+        "fields": [
+          "T#TAB9",
+          "T#I",
+          "T#KEY9"
+        ],
+        "values": []
+      },
+      {
+        "text": "Legacy entry KBU00010 updates T#IX to the current index T#I on every match, resulting in the lowest index (first occurrence) being returned because it iterates backwards.",
+        "lines": [
+          28
+        ],
+        "fields": [
+          "T#IX",
+          "T#I"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 71.7
+}

@@ -1,0 +1,11 @@
+ /*******************************************************************/
+ /* KBC00006  OFFENLEGUNGSGRUPPEN / ZINSSAETZE (DISCGRP) LRECL=20     */
+ /*           DSC_ZINS = JAHRESZINS IN PROZENT, 2 NACHKOMMA           */
+ /*           GRUPPE 'DEFAULT' GILT WENN NICHTS ANDERES DA            */
+ /*   1997-08-02  HKR  ERSTELT                                       */
+ /*******************************************************************/
+  DCL 1 DSC_SATZ,
+        3 DSC_GRP         CHAR(10),
+        3 DSC_TYP         CHAR(2),
+        3 DSC_KAT         CHAR(4),
+        3 DSC_ZINS        PIC '99V99';

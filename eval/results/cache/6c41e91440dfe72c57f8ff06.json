@@ -1,0 +1,115 @@
+{
+  "unit": "KBP00004",
+  "member": "KBP00004",
+  "answer": {
+    "summary": "Calculates and applies a monthly interest rate of 18% (or a value specified in the control card) to the positive balances of specific accounts. For eligible accounts, it generates an interest transaction record and updates the account balance.",
+    "inputs": [
+      "CTLCARD: contains the interest rate in positions 9-12",
+      "ACCTFILE: contains account master records (KTO_SATZ)"
+    ],
+    "outputs": [
+      "ACCTOUT: updated account master records (KTO_SATZ)",
+      "TRANOUT: generated interest transaction records (TRN_SATZ)"
+    ],
+    "rules": [
+      {
+        "text": "The processing date (W_LAUFDT) is taken from the first 8 characters of the CTLCARD record.",
+        "lines": [
+          31
+        ],
+        "fields": [
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the interest rate in CTLCARD positions 9-12 is not blank, use this value as the annual interest rate (A_PROZ). Otherwise, use the default 18.00%.",
+        "lines": [
+          32,
+          34,
+          35
+        ],
+        "fields": [
+          "A_PROZ",
+          "A_PROZ_K"
+        ],
+        "values": [
+          "'    '"
+        ]
+      },
+      {
+        "text": "An account is eligible for interest if its account type (KTO_ALT_SCHL) at position 12 is 'A' and its balance (KTO_SLD) is greater than 0.",
+        "lines": [
+          42,
+          43
+        ],
+        "fields": [
+          "KTO_ALT_SCHL",
+          "KTO_SLD"
+        ],
+        "values": [
+          "'A'"
+        ]
+      },
+      {
+        "text": "The monthly interest amount (A_ZINS) is calculated as: Balance * Annual Rate / 1200.",
+        "lines": [
+          45
+        ],
+        "fields": [
+          "A_ZINS",
+          "KTO_SLD",
+          "A_PROZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "If interest is applied, the account balance (KTO_SLD) is increased by the interest amount (A_ZINS).",
+        "lines": [
+          46
+        ],
+        "fields": [
+          "KTO_SLD",
+          "A_ZINS"
+        ],
+        "values": []
+      },
+      {
+        "text": "If interest is applied, a transaction record (TRN_SATZ) is created with: ID = 'ZA' + Account Number + '000', Type = '06', Category = '0001', Text = 'ZINSEN', Amount = Interest Amount, and Date = Processing Date.",
+        "lines": [
+          48,
+          49,
+          50,
+          51
+        ],
+        "fields": [
+          "TRN_ID",
+          "TRN_TYP",
+          "TRN_KAT",
+          "TRN_TXT",
+          "TRN_BTR",
+          "TRN_DT",
+          "KTO_NR"
+        ],
+        "values": [
+          "'06'",
+          "'0001'",
+          "'ZINSEN'"
+        ]
+      },
+      {
+        "text": "The updated account record is written to the output file (ACCTOUT) for every account processed.",
+        "lines": [
+          55
+        ],
+        "fields": [
+          "KTO_SATZ"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 39.9
+}

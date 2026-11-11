@@ -1,0 +1,67 @@
+{
+  "unit": "KBU00009",
+  "member": "KBU00009",
+  "answer": {
+    "summary": "Performs a linear search in a key table to find the index of a specific key. It provides two distinct search modes: a forward search for 16-character keys and a reverse search for 9-character keys.",
+    "inputs": [
+      "T#TAB: Array of 16-character strings to be searched",
+      "T#ANZ: Total number of elements in the table",
+      "T#KEY: 16-character string to match in the 16-character table",
+      "T#TAB9: Array of 9-character strings to be searched",
+      "T#KEY9: 9-character string to match in the 9-character table"
+    ],
+    "outputs": [
+      "T#IX: The index of the found key, or 0 if no match is found"
+    ],
+    "rules": [
+      {
+        "text": "Initialize the result index to 0.",
+        "lines": [
+          16
+        ],
+        "fields": [
+          "T#IX"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Iterate through the 16-character table from the first element to the last element (T#ANZ) and return the index of the first occurrence of T#KEY.",
+        "lines": [
+          17,
+          18,
+          19
+        ],
+        "fields": [
+          "T#I",
+          "T#TAB",
+          "T#KEY",
+          "T#IX"
+        ],
+        "values": []
+      },
+      {
+        "text": "Iterate through the 9-character table in reverse order from T#ANZ down to 1, and return the index of the last occurrence of T#KEY9.",
+        "lines": [
+          26,
+          27,
+          28
+        ],
+        "fields": [
+          "T#IX",
+          "T#I",
+          "T#ANZ",
+          "T#TAB9",
+          "T#KEY9"
+        ],
+        "values": [
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 21.3
+}

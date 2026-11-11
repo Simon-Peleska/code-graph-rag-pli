@@ -1,0 +1,94 @@
+{
+  "unit": "ABWEISEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "This procedure logs rejected transactions by mapping a rejection reason code to a descriptive text and writing the record to the rejects file. It also increments a global counter for the total number of rejected transactions.",
+    "inputs": [
+      "A#GRD (rejection reason code)",
+      "TRN_ID (transaction identifier)",
+      "KO_ABW_CD (lookup table of rejection codes)",
+      "KO_ABW_TX (lookup table of rejection descriptions)",
+      "Z_ABGEW (running total of rejected transactions)"
+    ],
+    "outputs": [
+      "ABW_SATZ (rejected transaction record written to REJECTS file)",
+      "Z_ABGEW (incremented rejection counter)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize the rejection record string to empty.",
+        "lines": [
+          282
+        ],
+        "fields": [
+          "ABW_SATZ"
+        ],
+        "values": [
+          "''"
+        ]
+      },
+      {
+        "text": "Map the current transaction ID to the rejection record.",
+        "lines": [
+          283
+        ],
+        "fields": [
+          "ABW_TRN",
+          "TRN_ID"
+        ],
+        "values": []
+      },
+      {
+        "text": "Set the rejection reason code and default the description to a question mark.",
+        "lines": [
+          284
+        ],
+        "fields": [
+          "ABW_GRD",
+          "ABW_TXT"
+        ],
+        "values": [
+          "'?'"
+        ]
+      },
+      {
+        "text": "If the provided rejection code matches a code in the lookup table, update the description with the corresponding text.",
+        "lines": [
+          286
+        ],
+        "fields": [
+          "KO_ABW_CD",
+          "A#GRD",
+          "ABW_TXT",
+          "KO_ABW_TX"
+        ],
+        "values": []
+      },
+      {
+        "text": "Write the completed rejection record to the REJECTS file.",
+        "lines": [
+          288
+        ],
+        "fields": [
+          "ABW_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increment the global rejected transaction counter.",
+        "lines": [
+          289
+        ],
+        "fields": [
+          "Z_ABGEW"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 22.8
+}

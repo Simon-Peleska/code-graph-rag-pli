@@ -1,0 +1,46 @@
+{
+  "unit": "KBU0Y2",
+  "member": "KBU00001",
+  "answer": {
+    "summary": "Converts a 6-character date string (JJMMTT) into an 8-character format (JJJJMMTT) by prepending a century prefix. It prepends '19' if the year part is 94 or higher, otherwise it prepends '20'. The routine is marked as unused since the year 2000.",
+    "inputs": [
+      "P#D6 (CHAR(6))"
+    ],
+    "outputs": [
+      "Return value (CHAR(8))"
+    ],
+    "rules": [
+      {
+        "text": "If the first two characters of the input date (SUBSTR(P#D6,1,2)) are greater than or equal to the constant D#ALT_JJ ('94'), the function returns the concatenation of D#ALT_JH ('19') and the input P#D6.",
+        "lines": [
+          116,
+          117
+        ],
+        "fields": [
+          "P#D6",
+          "D#ALT_JJ",
+          "D#ALT_JH"
+        ],
+        "values": [
+          "'94'",
+          "'19'"
+        ]
+      },
+      {
+        "text": "If the first two characters of the input date are less than D#ALT_JJ ('94'), the function returns the concatenation of the literal string '20' and the input P#D6.",
+        "lines": [
+          118
+        ],
+        "fields": [
+          "P#D6"
+        ],
+        "values": [
+          "'20'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 39
+}

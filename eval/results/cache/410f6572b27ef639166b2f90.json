@@ -1,0 +1,43 @@
+{
+  "unit": "KBU00006",
+  "member": "KBU00004",
+  "answer": {
+    "summary": "Returns the larger of two fixed-point decimal values. If the first argument is greater than or equal to the second, it returns the first; otherwise, it returns the second.",
+    "inputs": [
+      "B#1 (FIXED DEC(15,2))",
+      "B#2 (FIXED DEC(15,2))"
+    ],
+    "outputs": [
+      "Return value (FIXED DEC(15,2))"
+    ],
+    "rules": [
+      {
+        "text": "If B#1 is greater than or equal to B#2, return B#1.",
+        "lines": [
+          25,
+          26
+        ],
+        "fields": [
+          "B#1",
+          "B#2"
+        ],
+        "values": []
+      },
+      {
+        "text": "If B#1 is less than B#2, return B#2.",
+        "lines": [
+          27,
+          28
+        ],
+        "fields": [
+          "B#1",
+          "B#2"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 26.7
+}

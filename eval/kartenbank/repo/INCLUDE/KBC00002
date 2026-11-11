@@ -1,0 +1,10 @@
+ /*******************************************************************/
+ /* KBC00002  KONTENTABELLE IM SPEICHER, GEMEINSAM FUER ALLE         */
+ /*           PROGRAMME DES LAUFS (EXTERNAL). PFLEGE NUR UEBER       */
+ /*           KBU00012 / KBU00013 / KBU00014 !!!                      */
+ /*   1996-01-15  HKR  ERSTELLT (500 KONTEN)                          */
+ /*   2003-05-05  ALM  AUF 2000 KONTEN ERWEITERT                      */
+ /*******************************************************************/
+    DCL 1 KTAB EXTERNAL,
+      3 KTAB_ANZ        FIXED BIN(31),
+        3 KTAB_SATZ(2000) CHAR(140);

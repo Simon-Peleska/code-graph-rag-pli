@@ -1,0 +1,31 @@
+ /*******************************************************************/
+ /*  KBU00009   LINEARE SUCHE IN EINER SCHLUESSELTABELLE              */
+ /*             ERGEBNIS: INDEX ODER 0                                */
+ /*  KBU00010   DASSELBE FUER 9-STELLIGE SCHLUESSEL (ALT)             */
+ /*  1996-01-15 HKR ERSTELT                                          */
+ /*******************************************************************/
+ KBU00009: PROC(T#TAB, T#ANZ, T#KEY, T#IX);
+   DCL T#TAB(*) CHAR(16);
+     dcl T#ANZ    FIXED BIN(31);
+  DCL T#KEY    CHAR(16);
+  dcl T#IX     FIXED BIN(31);
+   DCL T#I      FIXED BIN(31);
+      DCL T#TAB9(*) CHAR(9);
+   DCL T#KEY9   CHAR(9);
+
+   T#IX = 0;
+   DO T#I = 1 TO T#ANZ;
+         IF T#TAB(T#I) = T#KEY THEN
+       DO; T#IX = T#I;
+         GOTO T#ENDE; END;
+   END;
+ T#ENDE:
+   RETURN;
+
+ KBU00010: ENTRY(T#TAB9, T#ANZ, T#KEY9, T#IX);
+   T#IX = 0;
+   do T#I = T#ANZ TO 1 BY -1;
+     IF T#TAB9(T#I) = T#KEY9 THEN T#IX = T#I;
+   END;
+   RETURN;
+ END KBU00009;

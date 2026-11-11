@@ -1,0 +1,55 @@
+{
+  "passed": 0,
+  "cases": 24,
+  "lineScore": 0,
+  "steps": {
+    "INTEREST": {
+      "cases": 8,
+      "passed": 0,
+      "lines": 411,
+      "matched": 0,
+      "errors": [
+        "CHK001E case01/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case02/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case03/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case04/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case05/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case06/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case07/INTEREST crashed: exit status 1, nothing on stderr",
+        "CHK001E case08/INTEREST crashed: exit status 1, nothing on stderr"
+      ]
+    },
+    "POST": {
+      "cases": 8,
+      "passed": 0,
+      "lines": 1753,
+      "matched": 0,
+      "errors": [
+        "CHK001E case01/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case02/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case03/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case04/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case05/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case06/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case07/POST crashed: exit status 1, nothing on stderr",
+        "CHK001E case08/POST crashed: exit status 1, nothing on stderr"
+      ]
+    },
+    "STATEMENT": {
+      "cases": 8,
+      "passed": 0,
+      "lines": 483,
+      "matched": 0,
+      "errors": [
+        "CHK001E case01/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case02/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case03/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case04/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case05/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case06/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case07/STATEMENT crashed: exit status 1, nothing on stderr",
+        "CHK001E case08/STATEMENT crashed: exit status 1, nothing on stderr"
+      ]
+    }
+  }
+}

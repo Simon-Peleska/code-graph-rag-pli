@@ -1,0 +1,146 @@
+{
+  "unit": "KBP00004",
+  "member": "KBP00004",
+  "answer": {
+    "summary": "This procedure calculates and posts monthly interest at a flat rate of 18% p.a. (or a rate specified in the control card) on positive account balances. It updates the account balance and generates a transaction record for the interest credit. The program is marked as obsolete, replaced by KBP00002 in 1997, but retained for audit purposes.",
+    "inputs": [
+      "CTLCARD (KB.PROD.CTLCARD): Control record containing run date (positions 1-8) and optional interest rate (positions 9-12).",
+      "ACCTFILE (KB.PROD.ACCTFILE): Input file of account master records (KTO_SATZ, LRECL=140).",
+      "KBU00007: External procedure for logging."
+    ],
+    "outputs": [
+      "ACCTOUT (KB.PROD.ACCTFILE): Output file of updated account master records.",
+      "TRANOUT (KB.PROD.TRANZINS): Output file of interest transaction records (TRN_SATZ, LRECL=120).",
+      "SYSPRINT: Log message 'ENDE ALTER ZINSLAUF'."
+    ],
+    "rules": [
+      {
+        "text": "The default interest rate is 18.00% per annum.",
+        "lines": [
+          23
+        ],
+        "fields": [
+          "A_PROZ"
+        ],
+        "values": [
+          "18.00"
+        ]
+      },
+      {
+        "text": "If the control card field at positions 9-12 is not blank, it overrides the default interest rate.",
+        "lines": [
+          32,
+          34,
+          35
+        ],
+        "fields": [
+          "W_STEU",
+          "A_PROZ_K",
+          "A_PROZ"
+        ],
+        "values": [
+          "'    '"
+        ]
+      },
+      {
+        "text": "Interest is only calculated for accounts where the 12th character of KTO_ALT_SCHL is 'A'.",
+        "lines": [
+          42
+        ],
+        "fields": [
+          "KTO_ALT_SCHL"
+        ],
+        "values": [
+          "'A'"
+        ]
+      },
+      {
+        "text": "Interest is only calculated if the account balance (KTO_SLD) is strictly greater than 0.",
+        "lines": [
+          43
+        ],
+        "fields": [
+          "KTO_SLD"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Monthly interest is calculated as Balance * Rate / 1200.",
+        "lines": [
+          45
+        ],
+        "fields": [
+          "A_ZINS",
+          "KTO_SLD",
+          "A_PROZ"
+        ],
+        "values": [
+          "1200"
+        ]
+      },
+      {
+        "text": "The calculated interest is added to the account balance.",
+        "lines": [
+          46
+        ],
+        "fields": [
+          "KTO_SLD",
+          "A_ZINS"
+        ],
+        "values": []
+      },
+      {
+        "text": "A transaction record is created with ID 'ZA' + Account Number + '000', Type '06', Category '0001', and Text 'ZINSEN'.",
+        "lines": [
+          48,
+          49,
+          50
+        ],
+        "fields": [
+          "TRN_ID",
+          "KTO_NR",
+          "TRN_TYP",
+          "TRN_KAT",
+          "TRN_TXT"
+        ],
+        "values": [
+          "'ZA'",
+          "'000'",
+          "'06'",
+          "'0001'",
+          "'ZINSEN'"
+        ]
+      },
+      {
+        "text": "The transaction amount is the calculated interest, and the date is the run date from the control card.",
+        "lines": [
+          51
+        ],
+        "fields": [
+          "TRN_BTR",
+          "A_ZINS",
+          "TRN_DT",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "The program logs 'ENDE ALTER ZINSLAUF' upon completion.",
+        "lines": [
+          59
+        ],
+        "fields": [
+          "W_PGM"
+        ],
+        "values": [
+          "'ENDE ALTER ZINSLAUF'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 125.3
+}

@@ -1,0 +1,64 @@
+{
+  "unit": "XRF_LADEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Loads cross-reference card data from an external file into internal memory arrays for processing. It also tracks the number of records that fail a specific validation check.",
+    "inputs": [
+      "XREFFILE (XRF_SATZ: XRF_KARTE, XRF_KTO, XRF_ST)"
+    ],
+    "outputs": [
+      "#XN (counter)",
+      "#XK (array of card IDs)",
+      "#XA (array of account IDs)",
+      "#XS (array of card statuses)",
+      "Z_GESCHR (error counter)"
+    ],
+    "rules": [
+      {
+        "text": "Iterate through XREFFILE until the end-of-file flag SW_EOF_XRF is true.",
+        "lines": [
+          377
+        ],
+        "fields": [
+          "SW_EOF_XRF"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the validation function KBU00024 returns a value greater than 0 for the current record string, increment the error counter Z_GESCHR.",
+        "lines": [
+          378,
+          379
+        ],
+        "fields": [
+          "KBU00024",
+          "Z_GESCHR"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "For every record read, increment the array index counter #XN, then store the card ID, account ID, and status in the corresponding array positions.",
+        "lines": [
+          380,
+          381,
+          382
+        ],
+        "fields": [
+          "#XN",
+          "#XK",
+          "#XA",
+          "#XS",
+          "XRF_KARTE",
+          "XRF_KTO",
+          "XRF_ST"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 34.2
+}

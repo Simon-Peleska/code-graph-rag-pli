@@ -1,0 +1,262 @@
+{
+  "unit": "BUCHEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Posts a transaction to the account record by updating the balance and cycle totals based on whether it is a debit or credit. It adjusts the account's points balance according to the transaction type (purchase or credit) and MCC code, then writes a formatted transaction history record to the output file.",
+    "inputs": [
+      "KTO_SATZ (Account record: KTO_NR, KTO_SLD, KTO_ZYK_SOL, KTO_ZYK_HAB, KTO_ZYK_ZAHL, KTO_PKT)",
+      "TRN_SATZ (Transaction record: TRN_TYP, TRN_KAT, TRN_MCC)",
+      "W_BTR (Transaction amount)",
+      "W_TSATZ (Transaction text)",
+      "W_LAUFDT (Current date)",
+      "@SOLL (Debit/Credit flag)"
+    ],
+    "outputs": [
+      "KTO_SATZ (Updated: KTO_SLD, KTO_ZYK_SOL, KTO_ZYK_HAB, KTO_ZYK_ZAHL, KTO_PKT)",
+      "TRANOUT (File: KB.PROD.TRANHIST, Record: BUC_SATZ)",
+      "Z_GEBUCHT (Counter)",
+      "W_TGSUM (Total amount accumulator)"
+    ],
+    "rules": [
+      {
+        "text": "Constructs a 17-character key for external aggregation by concatenating Account Number, Transaction Type, and Transaction Category.",
+        "lines": [
+          301
+        ],
+        "fields": [
+          "B#SCHL",
+          "KTO_NR",
+          "TRN_TYP",
+          "TRN_KAT"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction is a debit (@SOLL is true), adds the amount to the account balance (KTO_SLD) and the cycle debit total (KTO_ZYK_SOL).",
+        "lines": [
+          303,
+          305,
+          306
+        ],
+        "fields": [
+          "@SOLL",
+          "KTO_SLD",
+          "W_BTR",
+          "KTO_ZYK_SOL"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction is a debit, calls external procedure KBU00016 with the constructed key and the positive amount.",
+        "lines": [
+          306
+        ],
+        "fields": [
+          "B#SCHL",
+          "W_BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction is a credit (@SOLL is false), subtracts the amount from the account balance (KTO_SLD) and adds it to the cycle credit total (KTO_ZYK_HAB).",
+        "lines": [
+          308,
+          310,
+          311
+        ],
+        "fields": [
+          "@SOLL",
+          "KTO_SLD",
+          "W_BTR",
+          "KTO_ZYK_HAB"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction is a credit, calls external procedure KBU00016 with the constructed key and the negative amount (W_HV2 = -W_BTR).",
+        "lines": [
+          312,
+          313
+        ],
+        "fields": [
+          "B#SCHL",
+          "W_HV2",
+          "W_BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction is a credit and the type is 'Payment' (KO_TYP_ZAHL = '02'), adds the amount to the cycle payment total (KTO_ZYK_ZAHL).",
+        "lines": [
+          314,
+          315
+        ],
+        "fields": [
+          "TRN_TYP",
+          "KO_TYP_ZAHL",
+          "KTO_ZYK_ZAHL",
+          "W_BTR"
+        ],
+        "values": [
+          "'02'"
+        ]
+      },
+      {
+        "text": "Calculates the integer part of the transaction amount (B#EINH) by truncating W_BTR.",
+        "lines": [
+          318
+        ],
+        "fields": [
+          "B#EINH",
+          "W_BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the transaction type is 'Purchase' (KO_TYP_KAUF = '01'), determines a points factor (B#FAKT) based on the MCC code: 2 if MCC is '5411' (Grocery), 3 if MCC is '5812' (Restaurants), otherwise 1.",
+        "lines": [
+          320,
+          321,
+          322,
+          323,
+          324
+        ],
+        "fields": [
+          "TRN_TYP",
+          "KO_TYP_KAUF",
+          "TRN_MCC",
+          "KO_MCC_LEBM",
+          "KO_MCC_REST",
+          "B#FAKT"
+        ],
+        "values": [
+          "'01'",
+          "'5411'",
+          "'5812'",
+          "2",
+          "3",
+          "1"
+        ]
+      },
+      {
+        "text": "For 'Purchase' transactions, adds the product of the truncated amount and the points factor to the current points balance (KTO_PKT).",
+        "lines": [
+          326
+        ],
+        "fields": [
+          "B#PKT",
+          "B#EINH",
+          "B#FAKT",
+          "KTO_PKT"
+        ],
+        "values": []
+      },
+      {
+        "text": "For 'Purchase' transactions, caps the new points balance at the maximum limit (KO_MAX_PKT = 999999999).",
+        "lines": [
+          327
+        ],
+        "fields": [
+          "B#PKT",
+          "KO_MAX_PKT"
+        ],
+        "values": [
+          "999999999"
+        ]
+      },
+      {
+        "text": "If the transaction type is 'Credit' (KO_TYP_GUT = '03'), subtracts the truncated amount from the current points balance.",
+        "lines": [
+          329,
+          331
+        ],
+        "fields": [
+          "TRN_TYP",
+          "KO_TYP_GUT",
+          "B#PKT",
+          "B#EINH"
+        ],
+        "values": [
+          "'03'"
+        ]
+      },
+      {
+        "text": "For 'Credit' transactions, ensures the points balance does not go below 0.",
+        "lines": [
+          331
+        ],
+        "fields": [
+          "B#PKT"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Updates the account record's points field (KTO_PKT) with the calculated value (B#PKT).",
+        "lines": [
+          333
+        ],
+        "fields": [
+          "KTO_PKT",
+          "B#PKT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Populates the transaction history record (BUC_SATZ) with the first 110 characters of the transaction text, the account number, and the current date.",
+        "lines": [
+          335,
+          336,
+          337,
+          338
+        ],
+        "fields": [
+          "BUC_SATZ",
+          "W_TSATZ",
+          "KTO_NR",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "110"
+        ]
+      },
+      {
+        "text": "Writes the populated BUC_SATZ record to the TRANOUT file.",
+        "lines": [
+          339
+        ],
+        "fields": [
+          "BUC_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increments the global counter for booked transactions (Z_GEBUCHT) by 1.",
+        "lines": [
+          340
+        ],
+        "fields": [
+          "Z_GEBUCHT"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Adds the transaction amount to the global total sum accumulator (W_TGSUM).",
+        "lines": [
+          341
+        ],
+        "fields": [
+          "W_TGSUM",
+          "W_BTR"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 196.2
+}

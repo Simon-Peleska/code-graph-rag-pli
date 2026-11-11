@@ -1,0 +1,45 @@
+{
+  "unit": "KBU00007",
+  "member": "KBU00007",
+  "answer": {
+    "summary": "This procedure acts as a wrapper to log a message to the system print file. It passes the program name and text message to a downstream procedure (KBU00008) along with a static status level of 1, which ensures the message is written.",
+    "inputs": [
+      "P#PGM (CHAR(8))",
+      "P#TXT (CHAR(*) VARYING)"
+    ],
+    "outputs": [
+      "System print file (via KBU00008)"
+    ],
+    "rules": [
+      {
+        "text": "The procedure calls KBU00008 with the input program name, input text, and a static status level of 1.",
+        "lines": [
+          13
+        ],
+        "fields": [
+          "P#PGM",
+          "P#TXT",
+          "L#STUFE"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "The status level L#STUFE is statically initialized to 1, which prevents the downstream procedure from acting as a no-op (which occurs if status is zero).",
+        "lines": [
+          12
+        ],
+        "fields": [
+          "L#STUFE"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 33.6
+}

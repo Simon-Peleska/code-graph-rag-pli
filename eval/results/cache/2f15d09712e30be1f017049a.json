@@ -1,0 +1,158 @@
+{
+  "unit": "KBU00012",
+  "member": "KBU00012",
+  "answer": {
+    "summary": "This procedure loads account records from a source file into an internal memory table, validates each record for integrity, and writes the valid records to an output file. It also provides a lookup mechanism to find the index of a specific account number within the loaded table.",
+    "inputs": [
+      "ACCTFILE: Input file containing account records (CHAR 140)"
+    ],
+    "outputs": [
+      "ACCTOUT: Output file containing the loaded and validated account records (CHAR 140)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize error counter and end-of-file flag.",
+        "lines": [
+          31,
+          32,
+          33
+        ],
+        "fields": [
+          "K@EOF",
+          "K@FEHL",
+          "K@EOF"
+        ],
+        "values": [
+          "'0'B",
+          "0",
+          "'1'B"
+        ]
+      },
+      {
+        "text": "Read all records from ACCTFILE into the internal table KTAB_SATZ until EOF.",
+        "lines": [
+          35,
+          36,
+          42
+        ],
+        "fields": [
+          "K@SATZ",
+          "K@EOF",
+          "K@SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the internal table reaches its maximum bound, trigger an error via KBU00011.",
+        "lines": [
+          37,
+          38
+        ],
+        "fields": [
+          "KTAB_ANZ",
+          "KBU00011"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increment the record counter KTAB_ANZ for every record read.",
+        "lines": [
+          39
+        ],
+        "fields": [
+          "KTAB_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Validate each record using KBU00022 and accumulate the error count in K@FEHL.",
+        "lines": [
+          41
+        ],
+        "fields": [
+          "K@FEHL",
+          "KBU00022",
+          "K@SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Log the total number of loaded records.",
+        "lines": [
+          45
+        ],
+        "fields": [
+          "K@Z",
+          "KBU00007"
+        ],
+        "values": []
+      },
+      {
+        "text": "If any validation errors were found (K@FEHL > 0), log the error count and terminate the procedure.",
+        "lines": [
+          46,
+          48,
+          49,
+          50
+        ],
+        "fields": [
+          "K@FEHL",
+          "K@Z",
+          "KBU00007"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Lookup function (KBU00013): Search for the first occurrence where the first 11 characters of a table record match the input account number (K@NR).",
+        "lines": [
+          54,
+          57,
+          58,
+          60
+        ],
+        "fields": [
+          "K@IX",
+          "K@I",
+          "KTAB_SATZ",
+          "K@NR",
+          "K@IX"
+        ],
+        "values": [
+          "0",
+          "1",
+          "11"
+        ]
+      },
+      {
+        "text": "Write all loaded records from the internal table to ACCTOUT in the same order they were read.",
+        "lines": [
+          69,
+          70
+        ],
+        "fields": [
+          "K@I",
+          "ACCTOUT",
+          "KTAB_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Log the total number of records written to the output file.",
+        "lines": [
+          73,
+          74
+        ],
+        "fields": [
+          "K@Z",
+          "KBU00007"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 36.7
+}

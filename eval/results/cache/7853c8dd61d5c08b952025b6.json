@@ -1,0 +1,66 @@
+{
+  "unit": "P#WARNUNG",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "This procedure logs a warning message to the system print file, including the source location, description, and key. It enforces a limit on the number of warnings per run; once the limit is reached, it logs a single suppression notice and ignores all subsequent calls.",
+    "inputs": [
+      "W#WO (CHAR(8)): Source location identifier",
+      "W#WAS (CHAR(*) VARYING): Warning description text",
+      "W#SCHL (CHAR(*)): Key or identifier for the record causing the warning",
+      "P#MAXW (STATIC): Maximum allowed warnings (initialized to 50)",
+      "P#WARN (STATIC): Current warning counter (initialized to 0)"
+    ],
+    "outputs": [
+      "System print file: Warning message or suppression notice via KBU00007",
+      "P#WARN (STATIC): Incremented warning counter"
+    ],
+    "rules": [
+      {
+        "text": "Increment the static warning counter P#WARN by 1. If the new value exceeds P#MAXW, return immediately without logging.",
+        "lines": [
+          34
+        ],
+        "fields": [
+          "P#WARN",
+          "P#MAXW"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "If the warning counter P#WARN equals P#MAXW, log the message 'WEITERE WARNUNGEN UNTERDRUECKT' (Further warnings suppressed) to the print file and return.",
+        "lines": [
+          35,
+          37
+        ],
+        "fields": [
+          "P#WARN",
+          "P#MAXW",
+          "W#WO"
+        ],
+        "values": [
+          "'WEITERE WARNUNGEN UNTERDRUECKT'"
+        ]
+      },
+      {
+        "text": "If the warning counter is less than P#MAXW, log the message 'WARNUNG ' concatenated with W#WAS, ' SATZ ', and W#SCHL to the print file.",
+        "lines": [
+          40
+        ],
+        "fields": [
+          "W#WO",
+          "W#WAS",
+          "W#SCHL"
+        ],
+        "values": [
+          "'WARNUNG '",
+          "' SATZ '"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 54.3
+}

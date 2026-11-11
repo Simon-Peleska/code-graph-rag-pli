@@ -1,0 +1,24 @@
+ /*******************************************************************/
+ /*  KBU00020   EURO-UMRECHNUNG DM -> EUR FUER KONOTAUSZUG            */
+ /*             AUFRUF NUR WENN SW_EURO = 'J'                         */
+ /*  2001-06-14 WBE ERSTELT FUER DOPPELTE AUSWEISUNG 2001            */
+ /*  2002-03-01 WBE DOPPELTE AUSWEISUNG BEENDET, SCHALTER AUS         */
+ /*******************************************************************/
+ KBU00020: PROC(E#BTR, E#ERG);
+      DCL E#BTR  FIXED DEC(15,2);
+   DCL E#ERG  FIXED DEC(15,2);
+   DCL E#KURS FIXED DEC(7,5) STATIC INIT(1.95583);
+     DCL E#ZW   FIXED DEC(31,10);
+   DCL KBU00005 ENTRY(FIXED DEC(31,10)) RETURNS(FIXED DEC(15,2))
+                EXTERNAL;
+
+   IF E#BTR = 0 THEN
+     DO;
+           E#ERG = 0;
+           RETURN; END;
+  E#ZW  = DIVIDE(E#BTR, E#KURS, 31, 10);
+   IF E#BTR < 0 THEN
+     E#ERG = -KBU00005(-E#ZW);
+  ELSE
+    E#ERG = KBU00005(E#ZW);
+     END KBU00020;

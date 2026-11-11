@@ -1,0 +1,32 @@
+ /*******************************************************************/
+ /* KBC00001  KONTOSTAMMSATZ (ACCTFILE / ACCTOUT)   LRECL=140 FB      */
+ /*                                                                   */
+ /* AENDERUNGEN                                                       */
+ /*   1994-03-11  HKR  ERSTELT                                       */
+ /*   1997-08-02  HKR  KTO_GRP NEU (OFFENLEGUNGSGRUPPE)               */
+ /*   1999-11-30  WBE  Y2K: ERDT/ABDT AUF 8 STELLEN                   */
+ /*   2001-06-14  WBE  KTO_PKT BONUSPUNKTE                            */
+ /*   2004-02-09  ALM  KTO_MAHN, KTO_MINZ, KTO_ZYK_ZAHL               */
+ /*   2011-10-21  ALM  KTO_KDNR STATT XREF-SUCHE IM ZINSLAUF          */
+ /*******************************************************************/
+  DCL 1 KTO_SATZ,
+           3 KTO_NR          CHAR(11),          /* KONOTNUMMER        */
+        3 KTO_ST          CHAR(1),           /* A/D/C/X            */
+        3 KTO_SLD         PIC 'S99999999V99',/* SALDO              */
+         3 KTO_KLIM        PIC '99999999V99', /* KREDITLIMIT        */
+        3 KTO_BLIM        PIC '99999999V99', /* BARGELDLIMIT       */
+        3 KTO_ERDT        CHAR(8),           /* ERDT               */
+        3 KTO_ABDT        CHAR(8),           /* ABLAUF KARTE       */
+      3 KTO_ZYK_HAB     PIC 'S99999999V99',
+        3 KTO_ZYK_SOL     PIC 'S99999999V99',
+          3 KTO_GRP         CHAR(10),
+         3 KTO_MAHN        PIC '99',
+        3 KTO_MINZ        PIC 'S99999999V99',
+        3 KTO_ZYK_ZAHL    PIC 'S99999999V99',
+        3 KTO_PKT         PIC '(9)9',
+        3 KTO_KDNR        CHAR(9),
+        3 FILLER          CHAR(7);
+ /* ALTE SICHT AUF DEN SATZ, NUR NOCH VON KBP00004 BENUTZT          */
+  DCL 1 KTO_ALT DEFINED(KTO_SATZ),
+        3 KTO_ALT_SCHL    CHAR(12),
+        3 KTO_ALT_REST    CHAR(128);

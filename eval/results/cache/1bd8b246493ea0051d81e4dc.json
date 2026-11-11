@@ -1,0 +1,67 @@
+{
+  "unit": "NEUER_ZYKLUS",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Resets the account's cycle-specific financial counters to zero and initializes the minimum amount field to the system minimum value. This prepares the account record for a new billing or settlement cycle.",
+    "inputs": [],
+    "outputs": [
+      "KTO_SATZ.KTO_ZYK_SOL",
+      "KTO_SATZ.KTO_ZYK_HAB",
+      "KTO_SATZ.KTO_ZYK_ZAHL",
+      "KTO_SATZ.KTO_MINZ"
+    ],
+    "rules": [
+      {
+        "text": "Sets the cycle debit balance (KTO_ZYK_SOL) to 0.",
+        "lines": [
+          133
+        ],
+        "fields": [
+          "KTO_ZYK_SOL"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Sets the cycle credit balance (KTO_ZYK_HAB) to 0.",
+        "lines": [
+          134
+        ],
+        "fields": [
+          "KTO_ZYK_HAB"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Sets the cycle payment count (KTO_ZYK_ZAHL) to 0.",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_ZYK_ZAHL"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Sets the minimum amount (KTO_MINZ) to the system minimum value (§MIN).",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_MINZ"
+        ],
+        "values": [
+          "§MIN"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 44.1
+}

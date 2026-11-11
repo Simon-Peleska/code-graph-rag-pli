@@ -1,0 +1,103 @@
+{
+  "unit": "ABWEISEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "The procedure records a rejected transaction by writing a fixed-length record to the REJECTS file. It maps a numeric rejection code to a human-readable German text description and increments a global counter for rejected transactions.",
+    "inputs": [
+      "A#GRD (Rejection Code)",
+      "TRN_ID (Transaction ID)",
+      "KO_ABW_CD (Rejection Code Table)",
+      "KO_ABW_TX (Rejection Text Table)"
+    ],
+    "outputs": [
+      "REJECTS file (Record ABW_SATZ)",
+      "Z_ABGEW (Rejected Transaction Counter)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize the rejection record text field to a question mark if no matching code is found.",
+        "lines": [
+          284
+        ],
+        "fields": [
+          "ABW_TXT"
+        ],
+        "values": [
+          "'?'"
+        ]
+      },
+      {
+        "text": "Copy the current transaction ID to the rejection record's transaction ID field.",
+        "lines": [
+          283
+        ],
+        "fields": [
+          "ABW_TRN",
+          "TRN_ID"
+        ],
+        "values": []
+      },
+      {
+        "text": "Copy the input rejection code to the rejection record's code field.",
+        "lines": [
+          284
+        ],
+        "fields": [
+          "ABW_GRD",
+          "A#GRD"
+        ],
+        "values": []
+      },
+      {
+        "text": "Iterate through the rejection code table (indices 1 to 12) to find a matching code.",
+        "lines": [
+          285,
+          287
+        ],
+        "fields": [
+          "KO_ABW",
+          "A#I"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the table code matches the input code, replace the rejection text with the corresponding table text.",
+        "lines": [
+          286
+        ],
+        "fields": [
+          "KO_ABW_CD",
+          "A#GRD",
+          "ABW_TXT",
+          "KO_ABW_TX"
+        ],
+        "values": []
+      },
+      {
+        "text": "Write the constructed rejection record to the REJECTS file.",
+        "lines": [
+          288
+        ],
+        "fields": [
+          "ABW_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increment the global rejected transaction counter by 1.",
+        "lines": [
+          289
+        ],
+        "fields": [
+          "Z_ABGEW"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 71
+}

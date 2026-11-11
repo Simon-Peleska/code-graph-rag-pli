@@ -1,0 +1,135 @@
+{
+  "unit": "AUSZUG",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Generates a single account statement record for a customer if the account has a non-zero balance or cycle amounts. It resolves the customer name, converts the balance to Euros if the system is in Euro mode, and writes the formatted record to the statement output file.",
+    "inputs": [
+      "KTO_SATZ (Account record: KTO_NR, KTO_KDNR, KTO_SLD, KTO_PKT, KTO_ST, KTO_ZYK_SOL, KTO_ZYK_HAB)",
+      "SW_EURO (System flag for Euro mode)",
+      "KBU00019 (Customer lookup routine)",
+      "KBU00020 (Currency conversion routine)"
+    ],
+    "outputs": [
+      "STMTFILE (Output file containing AZG_SATZ records)",
+      "Z_GESCHR (Counter incremented by 1 for each written record)"
+    ],
+    "rules": [
+      {
+        "text": "The procedure exits immediately without writing any output if the account balance (KTO_SLD), cycle debit (KTO_ZYK_SOL), and cycle credit (KTO_ZYK_HAB) are all zero.",
+        "lines": [
+          104,
+          105
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_ZYK_SOL",
+          "KTO_ZYK_HAB"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The customer name is set to 'UNBEKANNT' if the customer lookup (KBU00019) returns an index of 0; otherwise, it is set to the name retrieved from the customer table.",
+        "lines": [
+          108,
+          109,
+          110,
+          112
+        ],
+        "fields": [
+          "KD",
+          "AZG_NAME",
+          "KTO_KDNR"
+        ],
+        "values": [
+          "0",
+          "'UNBEKANNT'"
+        ]
+      },
+      {
+        "text": "If the Euro switch (SW_EURO) is 'J', the account balance (KTO_SLD) is converted to Euros using KBU00020 and stored in AZG_SLD; otherwise, the original balance is copied directly to AZG_SLD.",
+        "lines": [
+          113,
+          116,
+          117,
+          118,
+          121
+        ],
+        "fields": [
+          "SW_EURO",
+          "KTO_SLD",
+          "AZG_SLD",
+          "SLD",
+          "EUR"
+        ],
+        "values": [
+          "'J'"
+        ]
+      },
+      {
+        "text": "The account number (KTO_NR) is copied to the statement record field AZG_KTO.",
+        "lines": [
+          108
+        ],
+        "fields": [
+          "KTO_NR",
+          "AZG_KTO"
+        ],
+        "values": []
+      },
+      {
+        "text": "The global variables MINZ and FAEL are copied to the statement record fields AZG_MINZ and AZG_FAEL respectively.",
+        "lines": [
+          122
+        ],
+        "fields": [
+          "MINZ",
+          "FAEL",
+          "AZG_MINZ",
+          "AZG_FAEL"
+        ],
+        "values": []
+      },
+      {
+        "text": "The account package number (KTO_PKT), status (KTO_ST), cycle debit (KTO_ZYK_SOL), and cycle credit (KTO_ZYK_HAB) are copied directly to the corresponding statement record fields.",
+        "lines": [
+          123,
+          124,
+          125,
+          126
+        ],
+        "fields": [
+          "KTO_PKT",
+          "KTO_ST",
+          "KTO_ZYK_SOL",
+          "KTO_ZYK_HAB",
+          "AZG_PKT",
+          "AZG_ST",
+          "AZG_SOL",
+          "AZG_HAB"
+        ],
+        "values": []
+      },
+      {
+        "text": "The completed statement record (AZG_SATZ) is written to the STMTFILE, and the global counter Z_GESCHR is incremented by 1.",
+        "lines": [
+          127
+        ],
+        "fields": [
+          "AZG_SATZ",
+          "STMTFILE",
+          "Z_GESCHR"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [
+    "rule 5: field MINZ is not declared anywhere"
+  ],
+  "attempts": 2,
+  "seconds": 187.2
+}

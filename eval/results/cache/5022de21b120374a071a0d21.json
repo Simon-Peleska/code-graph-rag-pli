@@ -1,0 +1,71 @@
+{
+  "unit": "KBU00020",
+  "member": "KBU00020",
+  "answer": {
+    "summary": "Converts a given amount from Deutsche Marks (DM) to Euro (EUR) using a fixed exchange rate and applies commercial rounding via an external routine.",
+    "inputs": [
+      "E#BTR: The input amount in DM (FIXED DEC(15,2))"
+    ],
+    "outputs": [
+      "E#ERG: The resulting converted amount in EUR (FIXED DEC(15,2))"
+    ],
+    "rules": [
+      {
+        "text": "If the input amount is zero, the output amount is set to zero.",
+        "lines": [
+          15,
+          17
+        ],
+        "fields": [
+          "E#BTR",
+          "E#ERG"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The intermediate conversion is calculated by dividing the input amount by the fixed exchange rate of 1.95583 with a precision of 10 decimal places.",
+        "lines": [
+          19
+        ],
+        "fields": [
+          "E#ZW",
+          "E#BTR",
+          "E#KURS"
+        ],
+        "values": [
+          "1.95583"
+        ]
+      },
+      {
+        "text": "If the input amount is negative, the absolute value of the converted amount is passed to the rounding routine, and the result is negated.",
+        "lines": [
+          20,
+          21
+        ],
+        "fields": [
+          "E#BTR",
+          "E#ERG",
+          "E#ZW"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the input amount is positive, the converted amount is passed to the rounding routine.",
+        "lines": [
+          22,
+          23
+        ],
+        "fields": [
+          "E#ERG",
+          "E#ZW"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 15.3
+}

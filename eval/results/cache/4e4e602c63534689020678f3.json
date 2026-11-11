@@ -1,0 +1,139 @@
+{
+  "unit": "BELASTEN",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "This procedure updates account balances and records a financial transaction to the transaction output file. It specifically handles debit/credit entries by increasing the account balance and cycle balance, then generates a transaction record for auditing.",
+    "inputs": [
+      "B#PFX (CHAR 2)",
+      "B#TYP (CHAR 2)",
+      "B#KAT (CHAR 4)",
+      "B#TXT (CHAR 30)",
+      "B#BTR (FIXED DEC 15,2)",
+      "KTO_NR (CHAR 11)",
+      "KTO_SLD (FIXED DEC 15,2)",
+      "KTO_ZYK_SOL (FIXED DEC 15,2)",
+      "W_LAUFDT (CHAR 8)"
+    ],
+    "outputs": [
+      "KTO_SLD (updated)",
+      "KTO_ZYK_SOL (updated)",
+      "TRANOUT (new record BUC_SATZ)",
+      "KBU00027 (called with B#TYP, B#BTR, 'E')"
+    ],
+    "rules": [
+      {
+        "text": "Update the account balance (KTO_SLD) by adding the transaction amount.",
+        "lines": [
+          177
+        ],
+        "fields": [
+          "KTO_SLD",
+          "B#BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Update the account cycle balance (KTO_ZYK_SOL) by adding the transaction amount.",
+        "lines": [
+          178
+        ],
+        "fields": [
+          "KTO_ZYK_SOL",
+          "B#BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Construct the transaction ID by concatenating the prefix, account number, and suffix '000'.",
+        "lines": [
+          180
+        ],
+        "fields": [
+          "TRN_ID",
+          "B#PFX",
+          "KTO_NR"
+        ],
+        "values": [
+          "'000'"
+        ]
+      },
+      {
+        "text": "Set transaction metadata: type, category, source as 'ZINSLAUF', text, amount, and handler as '000000000'.",
+        "lines": [
+          181,
+          182
+        ],
+        "fields": [
+          "TRN_TYP",
+          "TRN_KAT",
+          "TRN_QUELLE",
+          "TRN_TXT",
+          "TRN_BTR",
+          "TRN_HDL"
+        ],
+        "values": [
+          "'ZINSLAUF'",
+          "'000000000'"
+        ]
+      },
+      {
+        "text": "Set transaction card details: MCC as '0000', card number as empty, and date from the current processing date.",
+        "lines": [
+          183
+        ],
+        "fields": [
+          "TRN_MCC",
+          "TRN_KARTE",
+          "TRN_DT",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "'0000'",
+          "''"
+        ]
+      },
+      {
+        "text": "Prepare the BUC_SATZ record for output: extract the first 110 characters of the transaction record string, set the account number, and set the date.",
+        "lines": [
+          185,
+          186,
+          187
+        ],
+        "fields": [
+          "BUC_TRN",
+          "BUC_KTO",
+          "BUC_DT",
+          "KTO_NR",
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Write the prepared BUC_SATZ record to the TRANOUT file.",
+        "lines": [
+          188
+        ],
+        "fields": [
+          "BUC_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Call statistical summary procedure KBU00027 to log the transaction type and amount.",
+        "lines": [
+          189
+        ],
+        "fields": [
+          "B#TYP",
+          "B#BTR"
+        ],
+        "values": [
+          "'E'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 41.2
+}

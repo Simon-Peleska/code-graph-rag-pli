@@ -1,0 +1,32 @@
+{
+  "unit": "P#NUMU",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates whether a given string consists entirely of numeric digits.",
+    "inputs": [
+      "N#F (CHAR string to be validated)"
+    ],
+    "outputs": [
+      "BIT(1) (True if numeric, False otherwise)"
+    ],
+    "rules": [
+      {
+        "text": "The input string is valid if every character in it is contained within the set of digits '0123456789'.",
+        "lines": [
+          55
+        ],
+        "fields": [
+          "N#F",
+          "P#ZIFF"
+        ],
+        "values": [
+          "'0123456789'",
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 6.3
+}

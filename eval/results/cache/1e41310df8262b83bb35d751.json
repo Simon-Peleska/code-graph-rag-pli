@@ -1,0 +1,102 @@
+{
+  "unit": "KBU00011",
+  "member": "KBU00011",
+  "answer": {
+    "summary": "This procedure handles error reporting by logging a formatted error message with the program name, severity level, and description. It updates a global return code to the highest severity encountered and terminates the program if the severity level is 16 or higher.",
+    "inputs": [
+      "F#PGM (CHAR(8))",
+      "F#STUFE (FIXED BIN(31))",
+      "F#TXT (CHAR(*) VARYING)"
+    ],
+    "outputs": [
+      "W_RC (FIXED BIN(31) EXTERNAL)",
+      "Log entry via KBU00007"
+    ],
+    "rules": [
+      {
+        "text": "Formats the severity level F#STUFE into a 4-character string F#Z using PIC 'ZZZ9' (zero-suppressed, right-justified).",
+        "lines": [
+          16
+        ],
+        "fields": [
+          "F#Z",
+          "F#STUFE"
+        ],
+        "values": [
+          "'ZZZ9'"
+        ]
+      },
+      {
+        "text": "Logs an error message constructed as '*** FEHLER ' concatenated with the formatted severity F#Z, a colon, a space, and the error text F#TXT, using the program name F#PGM.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "F#PGM",
+          "F#Z",
+          "F#TXT"
+        ],
+        "values": [
+          "'*** FEHLER '",
+          "': '"
+        ]
+      },
+      {
+        "text": "Updates the external variable W_RC to the value of F#STUFE if F#STUFE is strictly greater than the current value of W_RC.",
+        "lines": [
+          18
+        ],
+        "fields": [
+          "F#STUFE",
+          "W_RC"
+        ],
+        "values": []
+      },
+      {
+        "text": "If F#STUFE is greater than or equal to 16, logs the message '*** ABBRUCH' with the program name F#PGM.",
+        "lines": [
+          19,
+          21
+        ],
+        "fields": [
+          "F#STUFE",
+          "F#PGM"
+        ],
+        "values": [
+          "16",
+          "'*** ABBRUCH'"
+        ]
+      },
+      {
+        "text": "If F#STUFE is greater than or equal to 16, calls PLIRETC with the current value of W_RC to return the code to the operating system.",
+        "lines": [
+          19,
+          22
+        ],
+        "fields": [
+          "F#STUFE",
+          "W_RC"
+        ],
+        "values": [
+          "16"
+        ]
+      },
+      {
+        "text": "If F#STUFE is greater than or equal to 16, executes STOP to terminate the program.",
+        "lines": [
+          19,
+          23
+        ],
+        "fields": [
+          "F#STUFE"
+        ],
+        "values": [
+          "16"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 66.3
+}

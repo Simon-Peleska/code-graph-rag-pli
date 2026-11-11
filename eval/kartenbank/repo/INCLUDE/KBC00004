@@ -1,0 +1,26 @@
+ /*******************************************************************/  00000100
+ /* KBC00004  TAGESUMSATZ (DALYTRAN)                  LRECL=120 FB    */00000200
+ /*           GEBUCHTER UMSATZ (TRANOUT)              LRECL=130 FB    */00000300
+ /*                                                                   */00000400
+ /*                                                                   */00000700
+ /*   1994-03-11  HKR  ERSTELLT                                       */00000800
+ /*   1999-11-30  WBE  Y2K TRN_DT                                     */00000900
+ /*   2002-12-01  ALM  TRN_MCC HAENDLERKATEGORIE                      */00001000
+ /*******************************************************************/  00001100
+  DCL 1 TRN_SATZ,                                                       00001200
+        3 TRN_ID          CHAR(16),                                     00001300
+        3 TRN_TYP         CHAR(2),                                      00001400
+        3 TRN_KAT         CHAR(4),                                      00001500
+        3 TRN_QUELLE      CHAR(10),                                     00001600
+        3 TRN_TXT         CHAR(30),                                     00001700
+          3 TRN_BTR         PIC 'S99999999V99',                         00001800
+        3 TRN_HDL         CHAR(9),                                      00001900
+        3 TRN_MCC         CHAR(4),                                      00002000
+        3 TRN_KARTE       CHAR(16),                                     00002100
+        3 TRN_DT          CHAR(8),                                      00002200
+      3 FILLER          CHAR(10);                                       00002300
+  DCL 1 BUC_SATZ,                                                       00002400
+        3 BUC_TRN         CHAR(110),                                    00002500
+        3 BUC_KTO         CHAR(11),                                     00002600
+           3 BUC_DT          CHAR(8),                                   00002700
+        3 FILLER          CHAR(1);                                      00002800

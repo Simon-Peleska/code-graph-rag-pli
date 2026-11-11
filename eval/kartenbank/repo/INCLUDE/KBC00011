@@ -1,0 +1,28 @@
+ /*******************************************************************/
+ /* KBC00011  ARBEITSFELDER, SCHALTER, ZAEHLER                        */
+ /*   W_RC IST EXTERNAL: JEDES UNTERPROGRAMM DARF ES HOCHSETZEN,      */
+ /*   DER JOBSTEP ENDET MIT DIESEM RETURNCODE.                        */
+ /*******************************************************************/
+  DCL W_LAUFDT         CHAR(8);
+  DCL 1 W_LDT          DEFINED(W_LAUFDT),
+        3 W_LDT_JJJJ   CHAR(4),
+        3 W_LDT_MM     CHAR(2),
+        3 W_LDT_TT     CHAR(2);
+  DCL W_STEU           CHAR(80);
+  DCL W_RC             FIXED BIN(31) EXTERNAL;
+      DCL W_PGM            CHAR(8);
+  DCL (SW_EOF_TRN,
+        SW_EOF_KTO,
+        SW_EOF_XRF,
+       SW_EOF_TCA,
+           SW_EOF_DSC,
+        SW_EOF_KDS)     BIT(1) INIT('0'B);
+  DCL SW_EURO          CHAR(1) INIT('N');
+  DCL SW_TEST          BIT(1)  INIT('0'B);
+  dcl (Z_GELESEN,
+          Z_GEBUCHT,
+       Z_ABGEW,
+       Z_GESCHR)       FIXED DEC(7) INIT(0);
+  dcl (W_HV1, W_HV2, W_HV3) FIXED DEC(15,2);
+     DCL W_TXT            CHAR(120) VARYING;
+      DCL W_ZTXT           PIC 'ZZZZZZ9';

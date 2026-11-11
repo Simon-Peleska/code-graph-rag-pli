@@ -1,0 +1,62 @@
+{
+  "unit": "KBU00011",
+  "member": "KBU00011",
+  "answer": {
+    "summary": "This error handling procedure logs error messages and updates the global return code with the highest error level encountered. If the error level reaches or exceeds 16, the system terminates the execution.",
+    "inputs": [
+      "F#PGM: Program identifier (CHAR 8)",
+      "F#STUFE: Current error level/stage (FIXED BIN 31)",
+      "F#TXT: Error description text (VARYING CHAR)",
+      "W_RC: Global return code (FIXED BIN 31, External)"
+    ],
+    "outputs": [
+      "W_RC: Updated global return code (FIXED BIN 31, External)"
+    ],
+    "rules": [
+      {
+        "text": "Log the error message formatted with the program name, a formatted error level, and the error text.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "F#PGM",
+          "F#STUFE",
+          "F#TXT"
+        ],
+        "values": [
+          "'*** FEHLER '"
+        ]
+      },
+      {
+        "text": "If the current error level is greater than the existing global return code, update the global return code to the current error level.",
+        "lines": [
+          18
+        ],
+        "fields": [
+          "F#STUFE",
+          "W_RC"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the error level is 16 or higher, log an 'ABBRUCH' (abort) message, trigger the return code error trap, and stop the program.",
+        "lines": [
+          19,
+          21,
+          22,
+          23
+        ],
+        "fields": [
+          "F#STUFE"
+        ],
+        "values": [
+          "16",
+          "'*** ABBRUCH'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 39.6
+}

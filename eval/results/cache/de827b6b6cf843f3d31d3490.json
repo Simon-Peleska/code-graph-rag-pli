@@ -1,0 +1,66 @@
+{
+  "unit": "NEUER_ZYKLUS",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "Resets the periodic accounting balances and the minimum threshold for a specific account to their starting values.",
+    "inputs": [
+      "KTO_SATZ record: KTO_MINZ (field KTO_MINZ)"
+    ],
+    "outputs": [
+      "KTO_SATZ record: KTO_ZYK_SOL, KTO_ZYK_HAB, KTO_ZYK_ZAHL, KTO_MINZ"
+    ],
+    "rules": [
+      {
+        "text": "Reset the debit periodic balance to zero.",
+        "lines": [
+          133
+        ],
+        "fields": [
+          "KTO_ZYK_SOL"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Reset the credit periodic balance to zero.",
+        "lines": [
+          134
+        ],
+        "fields": [
+          "KTO_ZYK_HAB"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Reset the payment periodic balance to zero.",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_ZYK_ZAHL"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Reset the minimum threshold to the constant value §MIN.",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_MINZ"
+        ],
+        "values": [
+          "§MIN"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 17.9
+}

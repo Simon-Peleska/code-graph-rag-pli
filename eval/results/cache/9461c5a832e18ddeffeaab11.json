@@ -1,0 +1,91 @@
+{
+  "unit": "ZINSSATZ",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "Retrieves the interest rate for a specific group and transaction code from a lookup table. If a specific group code is not found, it falls back to a default group code to find the rate.",
+    "inputs": [
+      "Z#GRP (CHAR(10))",
+      "Z#TK (CHAR(6))",
+      "ZS_SCHL (CHAR(16))",
+      "ZS_P (FIXED DEC(5,2))",
+      "ZS_N (FIXED BIN(31))",
+      "$GRP_DEF (CHAR(10))"
+    ],
+    "outputs": [
+      "$P (FIXED DEC(5,2))",
+      "$GEF (BIT(1))"
+    ],
+    "rules": [
+      {
+        "text": "Initialize the found flag $GEF to 0 (false) and the rate $P to 0.",
+        "lines": [
+          156,
+          157
+        ],
+        "fields": [
+          "$GEF",
+          "$P"
+        ],
+        "values": [
+          "'0'B",
+          "0"
+        ]
+      },
+      {
+        "text": "Iterate through the lookup table ZS from index 1 to ZS_N. If the concatenated parameter Z#GRP and Z#TK matches the key ZS_SCHL, set $P to the corresponding ZS_P, set $GEF to 1 (true), and exit the loop.",
+        "lines": [
+          158,
+          159,
+          160
+        ],
+        "fields": [
+          "K",
+          "ZS_N",
+          "ZS_SCHL",
+          "Z#GRP",
+          "Z#TK",
+          "$P",
+          "ZS_P",
+          "$GEF"
+        ],
+        "values": [
+          "1",
+          "'1'B"
+        ]
+      },
+      {
+        "text": "If a specific match was found ($GEF is true), return immediately without checking the default.",
+        "lines": [
+          163
+        ],
+        "fields": [
+          "$GEF"
+        ],
+        "values": []
+      },
+      {
+        "text": "If no specific match was found, iterate through the lookup table ZS again. If the concatenated default group $GRP_DEF and parameter Z#TK matches the key ZS_SCHL, set $P to the corresponding ZS_P and exit the loop.",
+        "lines": [
+          164,
+          165,
+          166
+        ],
+        "fields": [
+          "K",
+          "ZS_N",
+          "ZS_SCHL",
+          "$GRP_DEF",
+          "Z#TK",
+          "$P",
+          "ZS_P"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 66.8
+}

@@ -1,0 +1,267 @@
+{
+  "unit": "KBP00002",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "This procedure processes the end-of-cycle billing for credit accounts. It calculates and charges interest based on category balances, applies dunning fees and overdraft fees based on payment behavior and limits, and updates the account status (Active, Delinquent, Written-off) accordingly.",
+    "inputs": [
+      "CTLCARD (Control card containing run date)",
+      "ACCTFILE (Account master records)",
+      "TCATFILE (Transaction category balances)",
+      "DISCGRP (Discount group interest rates)",
+      "CUSTFILE (Customer master data)"
+    ],
+    "outputs": [
+      "ACCTOUT (Updated account master records)",
+      "TRANOUT (Transaction records for interest, dunning, and overdraft fees)"
+    ],
+    "rules": [
+      {
+        "text": "Accounts with status 'X' (Written-off) are skipped and not processed for fees or status changes.",
+        "lines": [
+          85
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'X'"
+        ]
+      },
+      {
+        "text": "Interest is calculated only for transaction categories where the balance (TC_SLD) is greater than 0 and the category type is not '02' (Payment).",
+        "lines": [
+          92,
+          93,
+          94
+        ],
+        "fields": [
+          "TC_SLD",
+          "TC_KEY",
+          "KO_TYP_ZAHL"
+        ],
+        "values": [
+          "0",
+          "'02'"
+        ]
+      },
+      {
+        "text": "If the account group is 'AKTION2010' and the run date is between '20100101' and '20111231', the interest rate is set to 0.",
+        "lines": [
+          97,
+          98,
+          99
+        ],
+        "fields": [
+          "KTO_GRP",
+          "W_LAUFDT",
+          "$AKT_GRP",
+          "$AKT_VON",
+          "$AKT_BIS"
+        ],
+        "values": [
+          "'AKTION2010'",
+          "'20100101'",
+          "'20111231'",
+          "0"
+        ]
+      },
+      {
+        "text": "If the account status is 'D' (Delinquent), a surcharge of 3.00 is added to the interest rate.",
+        "lines": [
+          101
+        ],
+        "fields": [
+          "KTO_ST",
+          "KO_AUFS_VERZ"
+        ],
+        "values": [
+          "'D'",
+          "3.00"
+        ]
+      },
+      {
+        "text": "If the customer has a FICO score less than 600, a surcharge of 2.00 is added to the interest rate.",
+        "lines": [
+          102,
+          103,
+          104
+        ],
+        "fields": [
+          "$KD",
+          "KD_FICO",
+          "KO_FICO_GRENZE",
+          "KO_AUFS_FICO"
+        ],
+        "values": [
+          "600",
+          "2.00"
+        ]
+      },
+      {
+        "text": "Interest amount is calculated as (Balance * Rate) / 1200, rounded to 2 decimal places.",
+        "lines": [
+          106
+        ],
+        "fields": [
+          "TC_SLD",
+          "$P"
+        ],
+        "values": [
+          "1200"
+        ]
+      },
+      {
+        "text": "Interest is charged only if the total calculated interest is greater than or equal to 1.00.",
+        "lines": [
+          111,
+          112
+        ],
+        "fields": [
+          "$SUM",
+          "KO_ZINS_FREI"
+        ],
+        "values": [
+          "1.00"
+        ]
+      },
+      {
+        "text": "Dunning fees are only processed for accounts with status 'A' (Active) or 'D' (Delinquent).",
+        "lines": [
+          115
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'A'",
+          "'D'"
+        ]
+      },
+      {
+        "text": "A dunning fee is charged if the minimum payment (KTO_MINZ) is greater than 0 and the cycle payment (KTO_ZYK_ZAHL) is less than the minimum payment.",
+        "lines": [
+          116,
+          117
+        ],
+        "fields": [
+          "KTO_MINZ",
+          "KTO_ZYK_ZAHL"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "The dunning fee amount is 35.00 if the dunning counter (KTO_MAHN) is greater than 0, otherwise 25.00.",
+        "lines": [
+          119,
+          120
+        ],
+        "fields": [
+          "$MAHN",
+          "KO_MAHN_2",
+          "KO_MAHN_1"
+        ],
+        "values": [
+          "0",
+          "35.00",
+          "25.00"
+        ]
+      },
+      {
+        "text": "The dunning counter is incremented by 1 after a fee is charged, capped at a maximum of 99.",
+        "lines": [
+          121,
+          122,
+          123
+        ],
+        "fields": [
+          "$MAHN",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "1",
+          "99"
+        ]
+      },
+      {
+        "text": "If the cycle payment is not less than the minimum payment (or minimum is 0), the dunning counter is reset to 0.",
+        "lines": [
+          126
+        ],
+        "fields": [
+          "KTO_MAHN"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "An overdraft fee of 29.00 is charged if the account balance (KTO_SLD) exceeds the credit limit (KTO_KLIM).",
+        "lines": [
+          127,
+          128,
+          129
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_KLIM",
+          "KO_UEBZ"
+        ],
+        "values": [
+          "29.00"
+        ]
+      },
+      {
+        "text": "Account status changes from 'A' to 'D' if the dunning counter is greater than or equal to 2.",
+        "lines": [
+          134
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN",
+          "KO_VERZ_AB"
+        ],
+        "values": [
+          "'A'",
+          "'D'",
+          "2"
+        ]
+      },
+      {
+        "text": "Account status changes from 'D' to 'X' if the dunning counter is greater than or equal to 6.",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN",
+          "KO_ABSCHR_AB"
+        ],
+        "values": [
+          "'D'",
+          "'X'",
+          "6"
+        ]
+      },
+      {
+        "text": "Account status changes from 'D' to 'A' if the dunning counter is 0.",
+        "lines": [
+          136
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "'D'",
+          "'A'",
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 240.4
+}

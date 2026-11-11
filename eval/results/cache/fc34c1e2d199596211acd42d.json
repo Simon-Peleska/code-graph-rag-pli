@@ -1,0 +1,85 @@
+{
+  "unit": "ZINSSATZ",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "Determines the applicable interest rate by searching for a specific group and account type combination in a table, falling back to a default group if no match is found.",
+    "inputs": [
+      "Z#GRP: Group identifier (CHAR 10)",
+      "Z#TK: Account type identifier (CHAR 6)",
+      "ZS_N: Number of entries in the interest rate table",
+      "ZS_SCHL: Table key (CHAR 16)",
+      "ZS_P: Table interest rate (DEC 5,2)",
+      "$GRP_DEF: Default group identifier (CHAR 10)"
+    ],
+    "outputs": [
+      "$P: The determined interest rate (DEC 5,2)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize search flags and rate to zero/false.",
+        "lines": [
+          156,
+          157
+        ],
+        "fields": [
+          "$GEF",
+          "$P"
+        ],
+        "values": [
+          "'0'B",
+          "0"
+        ]
+      },
+      {
+        "text": "Iterate through the table to find a record where the table key matches the concatenation of the input group and account type.",
+        "lines": [
+          158,
+          159,
+          160
+        ],
+        "fields": [
+          "ZS_N",
+          "ZS_SCHL",
+          "Z#GRP",
+          "Z#TK",
+          "ZS_P",
+          "$GEF"
+        ],
+        "values": []
+      },
+      {
+        "text": "If a match was found in the first loop, exit the procedure without further searching.",
+        "lines": [
+          163
+        ],
+        "fields": [
+          "$GEF"
+        ],
+        "values": [
+          "'1'B"
+        ]
+      },
+      {
+        "text": "If no match was found, iterate through the table to find a record where the table key matches the concatenation of the default group and the input account type.",
+        "lines": [
+          164,
+          165,
+          166
+        ],
+        "fields": [
+          "ZS_N",
+          "ZS_SCHL",
+          "$GRP_DEF",
+          "Z#TK",
+          "ZS_P"
+        ],
+        "values": [
+          "'DEFAULT'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 44.8
+}

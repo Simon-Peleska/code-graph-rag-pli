@@ -1,0 +1,42 @@
+{
+  "unit": "KBU00005",
+  "member": "KBU00004",
+  "answer": {
+    "summary": "Rounds a financial amount to two decimal places using standard PL/I rounding rules. The procedure assumes the input is positive, as negative values are not expected in this context.",
+    "inputs": [
+      "B#IN (FIXED DEC(31,10))"
+    ],
+    "outputs": [
+      "Return value (FIXED DEC(15,2))"
+    ],
+    "rules": [
+      {
+        "text": "Rounds the input value B#IN to 2 decimal places using the PL/I ROUND function.",
+        "lines": [
+          19
+        ],
+        "fields": [
+          "B#IN",
+          "B#HLF"
+        ],
+        "values": [
+          "2"
+        ]
+      },
+      {
+        "text": "Assigns the rounded value to B#OUT and returns it.",
+        "lines": [
+          20
+        ],
+        "fields": [
+          "B#HLF",
+          "B#OUT"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 25.4
+}

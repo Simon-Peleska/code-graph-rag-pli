@@ -1,0 +1,52 @@
+ /*******************************************************************/
+ /* KBC00010  KONSTANTEN KRATENBANK                                   */
+ /*   ACHTUNG: NICHT ALLE PROGRAMME BENUTZEN DIESE KONSTANTEN,        */
+ /*   EINIGE WERTE STEHEN AUCH DIREKT IM CODE.                        */
+ /*   1994-03-11  HKR  ERSTELT                                       */
+ /*   2001-12-28  WBE  EURO-UMSTELLUNG (KO_EURO_KURS)                 */
+ /*   2004-02-09  ALM  MAHNWESEN                                      */
+ /*   2013-07-01  ALM  MCC SPERRE GLUECKSSPIEL                        */
+ /*******************************************************************/
+  dcl KO_TYP_KAUF      CHAR(2) STATIC INIT('01');
+  DCL KO_TYP_ZAHL      CHAR(2) STATIC INIT('02');
+  DCL KO_TYP_GUT       CHAR(2) STATIC INIT('03');
+     DCL KO_TYP_BAR       CHAR(2) STATIC INIT('04');
+     DCL KO_TYP_GEB       CHAR(2) STATIC INIT('05');
+  DCL KO_TYP_ZINS      CHAR(2) STATIC INIT('06');
+     DCL 1 KO_ABW_TAB STATIC,
+        3 KO_ABW(12),
+           5 KO_ABW_CD   FIXED BIN(15)
+           INIT(100,101,102,103,104,105,106,107,108,109,110,111),
+           5 KO_ABW_TX   CHAR(30)
+            INIT('KARTE UNBEKANNT',
+                 'KARTE GESPERRT',
+                 'KONTO UNBEKANNT',
+                 'KONTO GESCHLOSSEN',
+                    'KONTO IM VERZUG',
+                 'KARTE ABGELAUFEN',
+                 'KREDITLIMIT UEBERSCHRITTEN',
+                 'BARGELDLIMIT UEBERSCHRITTEN',
+                 'HAENDLERKATEGORIE GESPERRT',
+                 'BETRAG UNGUELTIG',
+                   'DOPPELTE TRANSAKTION',
+                 'TRANSAKTIONSTYP UNBEKANNT');
+  DCL KO_MCC_SPERR     CHAR(4) STATIC INIT('7995');
+  DCL KO_MCC_LEBM      CHAR(4) STATIC INIT('5411');
+  DCL KO_MCC_REST      CHAR(4) STATIC INIT('5812');
+  DCL KO_MCC_ATM       CHAR(4) STATIC INIT('6011');  /* NICHHT MEHR */
+  dcl KO_GEB_BAR_PROZ  FIXED DEC(15,2) STATIC INIT(5.00);
+    DCL KO_GEB_BAR_MIN   FIXED DEC(15,2) STATIC INIT(10.00);
+  DCL KO_MAHN_1        FIXED DEC(15,2) STATIC INIT(25.00);
+     DCL KO_MAHN_2        FIXED DEC(15,2) STATIC INIT(35.00);
+     DCL KO_UEBZ          FIXED DEC(15,2) STATIC INIT(29.00);
+  DCL KO_MINZ_MIN      FIXED DEC(15,2) STATIC INIT(25.00);
+  DCL KO_MINZ_PROZ     FIXED DEC(15,2) STATIC INIT(2.00);
+  DCL KO_ZINS_FREI     FIXED DEC(15,2) STATIC INIT(1.00);
+  DCL KO_AUFS_VERZ     FIXED DEC(5,2)  STATIC INIT(3.00);
+  DCL KO_AUFS_FICO     FIXED DEC(5,2)  STATIC INIT(2.00);
+      DCL KO_FICO_GRENZE   FIXED BIN(15)   STATIC INIT(600);
+  DCL KO_FAELLIG_TG    FIXED BIN(31)   STATIC INIT(25);
+  dcl KO_VERZ_AB       FIXED BIN(15)   STATIC INIT(2);
+     DCL KO_ABSCHR_AB     FIXED BIN(15)   STATIC INIT(6);
+      DCL KO_EURO_KURS     FIXED DEC(7,5)  STATIC INIT(1.95583);
+  DCL KO_MAX_PKT       FIXED DEC(11)   STATIC INIT(999999999);

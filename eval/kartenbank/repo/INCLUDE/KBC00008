@@ -1,0 +1,16 @@
+ /*******************************************************************/
+ /* KBC00008  KONTOAUSZUG (STMTFILE)                  LRECL=120 FB    */
+ /*   1995-02-20  HKR  ERSTELLT                                       */
+ /*   2004-02-09  ALM  AZG_MINZ, AZG_FAEL                             */
+ /*******************************************************************/
+  DCL 1 AZG_SATZ,
+        3 AZG_KTO         CHAR(11),
+           3 AZG_NAME        CHAR(46),
+            3 AZG_SLD         PIC 'S99999999V99',
+         3 AZG_MINZ        PIC 'S99999999V99',
+        3 AZG_FAEL        CHAR(8),
+        3 AZG_PKT         PIC '(9)9',
+        3 AZG_ST          CHAR(1),
+        3 AZG_SOL         PIC 'S99999999V99',
+        3 AZG_HAB         PIC 'S99999999V99',
+      3 FILLER          CHAR(1);

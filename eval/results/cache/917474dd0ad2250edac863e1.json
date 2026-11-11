@@ -1,0 +1,126 @@
+{
+  "unit": "UMSATZ",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Processes a single credit card transaction by checking for duplicates, validating business rules, and posting the amount to the account. If the transaction is a cash withdrawal, it additionally calculates and posts a fee. The procedure updates the account record and writes a transaction history entry.",
+    "inputs": [
+      "TRN_SATZ (Transaction record containing TRN_ID, TRN_TYP, TRN_BTR, TRN_KARTE)",
+      "#GS (Array of already seen transaction IDs)",
+      "#GN (Count of seen transaction IDs)",
+      "KTO_SATZ (Account record)"
+    ],
+    "outputs": [
+      "KTO_SATZ (Updated account record with new balance and cycle totals)",
+      "KTAB_SATZ (Transaction history record written to output file)",
+      "@DOPP (Duplicate flag)",
+      "@SOLL (Debit/Credit flag)",
+      "@GRD (Rejection code)"
+    ],
+    "rules": [
+      {
+        "text": "Checks if the transaction ID already exists in the seen transactions array. If found, sets duplicate flag to '1'B; otherwise, adds the ID to the array if capacity allows, else logs error 'ZU VIELE UMSAETZE' and terminates.",
+        "lines": [
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202
+        ],
+        "fields": [
+          "TRN_ID",
+          "#GS",
+          "#GN",
+          "@DOPP"
+        ],
+        "values": [
+          "'1'B",
+          "'0'B",
+          "16",
+          "'ZU VIELE UMSAETZE'"
+        ]
+      },
+      {
+        "text": "Sets the debit/credit flag (@SOLL) to '1'B if transaction type is Purchase ('01') or Cash ('04'), otherwise sets it to '0'B.",
+        "lines": [
+          205,
+          206,
+          208
+        ],
+        "fields": [
+          "TRN_TYP",
+          "@SOLL"
+        ],
+        "values": [
+          "'01'",
+          "'04'",
+          "'1'B",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "Calls validation procedure PRUEFEN. If a rejection code (@GRD) is non-zero, records the rejection, logs it, and returns without posting.",
+        "lines": [
+          210,
+          211,
+          212,
+          213,
+          214,
+          215
+        ],
+        "fields": [
+          "@GRD",
+          "TRN_TYP",
+          "W_BTR"
+        ],
+        "values": [
+          "0",
+          "'A'"
+        ]
+      },
+      {
+        "text": "If validation passes, posts the transaction to the account (BUCHEN) and logs it as successful ('G').",
+        "lines": [
+          217,
+          218
+        ],
+        "fields": [
+          "TRN_TYP",
+          "W_BTR"
+        ],
+        "values": [
+          "'G'"
+        ]
+      },
+      {
+        "text": "If the transaction type is Cash ('04'), calculates and posts a cash withdrawal fee (GEBUEHR).",
+        "lines": [
+          219,
+          220
+        ],
+        "fields": [
+          "TRN_TYP"
+        ],
+        "values": [
+          "'04'"
+        ]
+      },
+      {
+        "text": "Writes the updated account record to the transaction history table (KTAB_SATZ).",
+        "lines": [
+          221
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "KTO_SATZ",
+          "@KI"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 116.2
+}

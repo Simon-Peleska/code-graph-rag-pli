@@ -1,0 +1,62 @@
+{
+  "unit": "P#WARNUNG",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "This procedure manages the logging of warning messages, ensuring that the number of warnings issued does not exceed a predefined maximum limit per run.",
+    "inputs": [
+      "W#WO (CHAR 8): Work area identifier",
+      "W#WAS (CHAR * VARYING): Warning description",
+      "W#SCHL (CHAR *): Record key/identifier",
+      "P#MAXW (FIXED BIN 31): Maximum allowed warnings per run",
+      "P#WARN (FIXED BIN 31): Current warning counter"
+    ],
+    "outputs": [
+      "P#WARN (FIXED BIN 31): Incremented warning counter",
+      "KBU00007: Logged message"
+    ],
+    "rules": [
+      {
+        "text": "Increment the warning counter and terminate the procedure if the counter exceeds the maximum allowed warnings.",
+        "lines": [
+          34
+        ],
+        "fields": [
+          "P#WARN",
+          "P#MAXW"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the warning counter reaches the maximum allowed limit, log a suppression message and terminate the procedure.",
+        "lines": [
+          35,
+          37
+        ],
+        "fields": [
+          "P#WARN",
+          "P#MAXW"
+        ],
+        "values": [
+          "'WEITERE WARNUNGEN UNTERDRUECKT'"
+        ]
+      },
+      {
+        "text": "If the limit has not been reached, log a warning message containing the description and the record key.",
+        "lines": [
+          40
+        ],
+        "fields": [
+          "W#WAS",
+          "W#SCHL"
+        ],
+        "values": [
+          "'WARNUNG '",
+          "' SATZ '"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 14.6
+}

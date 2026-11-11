@@ -1,0 +1,36 @@
+ /*******************************************************************/
+ /*  KBU00018   KUNDENTABELLE (KBC00007, KD_TAB)                      */
+ /*    CALL KBU00018;               LADEN AUS CUSTFILE                */
+ /*    CALL KBU00019(KDNR, INDEX);  SUCHEN, 0 = UNBEKANNT             */
+ /*  KD_NAME = VORNAME + ' ' + NACHNAME, BEIDE OHNE LEERZEICHEN       */
+ /*  2009-04-01 ALM ERSTELLT (VORHER CUSTFILE JE PROGRAMM GELESEN)    */
+ /*******************************************************************/
+     KBU00018: PROC;
+      %INCLUDE KBC00007;
+       DCL CUSTFILE FILE RECORD INPUT;
+   DCL KBU00011 ENTRY(CHAR(8), FIXED BIN(31), CHAR(*) VARYING)
+                EXTERNAL;
+   DCL C@EOF BIT(1) INIT('0'B);
+   DCL C@NR  CHAR(9);
+  DCL (C@IX, C@I) FIXED BIN(31);
+
+   KD_ANZ = 0; ON ENDFILE(CUSTFILE) C@EOF = '1'B;
+   OPEN FILE(CUSTFILE);
+   READ FILE(CUSTFILE) INTO(KDS_SATZ);
+   DO WHILE(C@EOF = '0'B);
+        IF KD_ANZ = HBOUND(KD_NR,1) THEN
+       CALL KBU00011('KBU00018', 16, 'KUNDENTABELLE VOLL');
+         KD_ANZ = KD_ANZ + 1;
+        KD_NR(KD_ANZ)   = KDS_NR;
+     KD_NAME(KD_ANZ) = TRIM(KDS_VORN) || ' ' || TRIM(KDS_NACHN);
+     KD_FICO(KD_ANZ) = KDS_FICO;
+     READ FILE(CUSTFILE) INTO(KDS_SATZ);
+   END;
+   CLOSE FILE(CUSTFILE);
+   RETURN;
+
+   KBU00019: ENTRY(C@NR, C@IX);
++  C@IX = 0;
+   do C@I = 1 TO KD_ANZ UNTIL(C@IX > 0);
+   if KD_NR(C@I) = C@NR then C@IX = C@I;
+   END; END KBU00018;

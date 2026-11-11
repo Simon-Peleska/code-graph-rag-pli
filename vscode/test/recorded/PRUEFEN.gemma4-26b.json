@@ -1,0 +1,201 @@
+{
+  "summary": "This procedure validates financial transactions against account status, card validity, and credit/cash limits. It returns a specific error code (R#) if the transaction fails any business rule, or 0 if the transaction is valid.",
+  "inputs": [
+    "TRN_SATZ.TRN_TYP",
+    "TRN_SATZ.TRN_DT",
+    "TRN_SATZ.TRN_MCC",
+    "W_BTR",
+    "@DOPP",
+    "W_KARTE",
+    "#XS",
+    "KTO_SATZ.KTO_ST",
+    "KTO_SATZ.KTO_SLD",
+    "KTO_SATZ.KTO_KLIM",
+    "KTO_SATZ.KTO_BLIM",
+    "KTO_SATZ.KTO_ABDT",
+    "@SOLL"
+  ],
+  "outputs": [
+    "R# (Return Code)"
+  ],
+  "rules": [
+    {
+      "text": "If duplicate flag is set, return error 110.",
+      "lines": [
+        227
+      ],
+      "fields": [
+        "@DOPX"
+      ],
+      "values": []
+    },
+    {
+      "text": "If transaction amount is zero or negative, return error 109.",
+      "lines": [
+        229
+      ],
+      "fields": [
+        "W_BTR"
+      ],
+      "values": [
+        "0"
+      ]
+    },
+    {
+      "text": "If transaction type is fee (KO_TYP_GEB) or interest (KO_TYP_ZINS), return error 111.",
+      "lines": [
+        233
+      ],
+      "fields": [
+        "TRN_TYP"
+      ],
+      "values": [
+        "'05'",
+        "'06'"
+      ]
+    },
+    {
+      "text": "If transaction type is not one of the allowed types (KO_TYP_KAUF, KO_TYP_ZAHL, KO_TYP_GUT, KO_TYP_BAR), return error 111.",
+      "lines": [
+        232
+      ],
+      "fields": [
+        "TRN_TYP"
+      ],
+      "values": [
+        "'01'",
+        "'02'",
+        "'03'",
+        "'04'"
+      ]
+    },
+    {
+      "text": "If the card lookup returns no index, return error 100.",
+      "lines": [
+        244
+      ],
+      "fields": [
+        "@XI"
+      ],
+      "values": [
+        "0"
+      ]
+    },
+    {
+      "text": "If the card status is not 'Y', return error 101.",
+      "lines": [
+        246
+      ],
+      "fields": [
+        "#XS"
+      ],
+      "values": [
+        "'Y'"
+      ]
+    },
+    {
+      "text": "If the account lookup returns no index, return error 102.",
+      "lines": [
+        250
+      ],
+      "fields": [
+        "@KI"
+      ],
+      "values": [
+        "0"
+      ]
+    },
+    {
+      "text": "If account status is 'C' or 'X', return error 103.",
+      "lines": [
+        252
+      ],
+      "fields": [
+        "KTO_ST"
+      ],
+      "values": [
+        "'C'",
+        "'X'"
+      ]
+    },
+    {
+      "text": "If the transaction date is after the card expiry date, return error 105.",
+      "lines": [
+        254
+      ],
+      "fields": [
+        "TRN_DT",
+        "KTO_ABDT"
+      ],
+      "values": []
+    },
+    {
+      "text": "If account status is 'D' and the debit flag is set, return error 104.",
+      "lines": [
+        256
+      ],
+      "fields": [
+        "KTO_ST",
+        "@SOLL"
+      ],
+      "values": [
+        "'D'"
+      ]
+    },
+    {
+      "text": "If transaction is a purchase and the MCC is a blocked MCC, return error 108.",
+      "lines": [
+        258
+      ],
+      "fields": [
+        "TRN_TYP",
+        "TRN_MCC"
+      ],
+      "values": [
+        "'01'",
+        "'7995'"
+      ]
+    },
+    {
+      "text": "If transaction is cash and exceeds the cash limit, return error 107.",
+      "lines": [
+        260
+      ],
+      "fields": [
+        "TRN_TYP",
+        "W_BTR",
+        "KTO_BLIM"
+      ],
+      "values": [
+        "'04'"
+      ]
+    },
+    {
+      "text": "If the debit flag is set, check if the new balance (current balance + transaction amount) exceeds the credit limit; if so, return error 106.",
+      "lines": [
+        262,
+        265,
+        266
+      ],
+      "fields": [
+        "@SOLL",
+        "KTO_SLD",
+        "W_BTR",
+        "KTO_KLIM"
+      ],
+      "values": []
+    },
+    {
+      "text": "The rule checking if daily total exceeds daily limit was removed in 1999.",
+      "lines": [
+        270
+      ],
+      "fields": [
+        "W_TGSUM",
+        "W_BTR",
+        "W_TGLIM"
+      ],
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,262 @@
+{
+  "unit": "KBP00002",
+  "member": "KBP00002",
+  "answer": {
+    "summary": "This procedure calculates and applies interest charges, late fees, and overdraft fees to customer accounts based on account status, balances, and customer credit scores. It also manages account status transitions (e.g., from active to delinquent or written-off) based on the number of warning notices issued.",
+    "inputs": [
+      "CTLCARD: Control record containing the processing date (W_STEU)",
+      "ACCTFILE: Account records (KTO_SATZ) including balance, status, group, and credit limit",
+      "TCATFILE: Transaction category data (TC_TAB) containing keys and balances",
+      "DISCGRP: Interest rate configuration data",
+      "CUSTFILE: Customer data including FICO scores"
+    ],
+    "outputs": [
+      "TRANOUT: Financial transaction records for interest (ZI), warning fees (MG), and overdraft fees (UL)"
+    ],
+    "rules": [
+      {
+        "text": "Skip accounts that are already written off (status 'X').",
+        "lines": [
+          85
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'X'"
+        ]
+      },
+      {
+        "text": "For each transaction category, if the category key does not match the account number, skip it.",
+        "lines": [
+          92
+        ],
+        "fields": [
+          "TC_KEY",
+          "KTO_NR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Skip transaction categories with a balance less than or equal to zero.",
+        "lines": [
+          93
+        ],
+        "fields": [
+          "TC_SLD"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the account belongs to the 'AKTION2010' group and the processing date is between 2010-01-01 and 2011-12-31, the base interest rate is set to 0.",
+        "lines": [
+          97,
+          98,
+          99
+        ],
+        "fields": [
+          "KTO_GRP",
+          "W_LAUFDT",
+          "$P"
+        ],
+        "values": [
+          "'AKTION2010'",
+          "'20100101'",
+          "'20111231'",
+          "0"
+        ]
+      },
+      {
+        "text": "If the base interest rate is greater than zero, add a surcharge of 3.00 if the account status is 'D' (delinquent).",
+        "lines": [
+          100,
+          101
+        ],
+        "fields": [
+          "$P",
+          "KTO_ST"
+        ],
+        "values": [
+          "> 0",
+          "'D'"
+        ]
+      },
+      {
+        "text": "If the customer has a valid ID and their FCTO score is below 600, add a surcharge of 2.00 to the interest rate.",
+        "lines": [
+          102,
+          103,
+          104
+        ],
+        "fields": [
+          "$KD",
+          "KD_FICO",
+          "$P"
+        ],
+        "values": [
+          "> 0",
+          "600",
+          "2.00",
+          "KO_FICO_GRENZE",
+          "KO_AUFS_FICO"
+        ]
+      },
+      {
+        "text": "Calculate interest amount as (Category Balance * Interest Rate) / 1200, rounded to 2 decimal places.",
+        "lines": [
+          106
+        ],
+        "fields": [
+          "TC_SLD",
+          "$P",
+          "$ZW"
+        ],
+        "values": [
+          ", 1200, 31, 10"
+        ]
+      },
+      {
+        "text": "If the total accumulated interest for the account is at least the threshold KO_ZINS_FREI, generate a 'SOLLZINSEN' transaction.",
+        "lines": [
+          111,
+          112
+        ],
+        "fields": [
+          "$SUM",
+          "KTO_ST"
+        ],
+        "values": [
+          "KO_ZINS_FREI",
+          "'ZI'",
+          "'0001'",
+          "'SOLLZINSEN'"
+        ]
+      },
+      {
+        "text": "For accounts with status 'A' (Active) or 'D' (Delinquent), if the minimum cycle count is greater than 0 and the current cycle count is less than the minimum, increment the warning count and charge a warning fee.",
+        "lines": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MINZ",
+          "KTO_ZYK_ZAHL",
+          "KTO_MAHN",
+          "$MAHN",
+          "$ZW",
+          "KTO_MAHN",
+          "KO_MAHN_1",
+          "KO_MAHN_2",
+          "KO_TYP_GEB"
+        ],
+        "values": [
+          "'A'",
+          "'D'",
+          "> 0",
+          "<",
+          "0",
+          "25.00",
+          "35.00",
+          "99",
+          "'05'",
+          "'0002'",
+          "'MAHNGEBUEHR']",
+          "1"
+        ]
+      },
+      {
+        "text": "If the warning count exceeds 99, cap it at 99.",
+        "lines": [
+          122
+        ],
+        "fields": [
+          "$MAHN"
+        ],
+        "values": [
+          "> 99",
+          "99"
+        ]
+      },
+      {
+        "text": "If the account balance exceeds the credit limit, generate an 'UEBERZIEHUNGSGEBUEHR' transaction.",
+        "lines": [
+          127,
+          128,
+          129
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_KLIM",
+          "KO_UEBZ"
+        ],
+        "values": [
+          ">",
+          "KO_TYP_GEB",
+          "'UL'",
+          "'0003'",
+          "'UEBERZIEHUNGSGEBUEHR'",
+          "29.00",
+          "KO_UEBZ"
+        ]
+      },
+      {
+        "text": "Transition account status from 'A' to 'D' if the warning count is at least the threshold KO_VERZ_AB.",
+        "lines": [
+          134
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "'A'",
+          "KO_VERZ_AB"
+        ]
+      },
+      {
+        "text": "Transition account status from 'D' to 'X' if the warning count is at least the threshold KO_ABSCHR_AB.",
+        "lines": [
+          135
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "'D'",
+          "KO_ABSCHR_AB"
+        ]
+      },
+      {
+        "text": "Transition account status from 'D' to 'A' if the warning count is 0.",
+        "lines": [
+          136
+        ],
+        "fields": [
+          "KTO_ST",
+          "KTO_MAHN"
+        ],
+        "values": [
+          "'D'",
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [
+    "rule 9: value 'MAHNGEBUEHR'] is not in the code of KBP00002 or the declarations it uses"
+  ],
+  "attempts": 2,
+  "seconds": 151.2
+}

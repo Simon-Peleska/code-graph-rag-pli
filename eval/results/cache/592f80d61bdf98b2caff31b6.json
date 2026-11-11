@@ -1,0 +1,162 @@
+{
+  "unit": "KBU00026",
+  "member": "KBU00026",
+  "answer": {
+    "summary": "This procedure accumulates transaction counts and sums by type and status (Booked, Rejected, Produced) during batch processing. It then prints a summary report to the SYSPRINT file for reconciliation with the general ledger, which does not affect the main processing flow.",
+    "inputs": [
+      "S#PGM (CHAR(8))",
+      "S#DT (CHAR(8))",
+      "S#TYP (CHAR(2))",
+      "S#BTR (FIXED DEC(15,2))",
+      "S#ART (CHAR(1))"
+    ],
+    "outputs": [
+      "SYSPRINT (PRINT FILE)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize 9 rows of the static table S#TAB. Each row's type code S#Z_TYP is set to the digit 1-9 (e.g., '1', '2', ..., '9') by concatenating '0' with the row index and translating '0' to space. All counts and sums are initialized to 0.",
+        "lines": [
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
+        "fields": [
+          "S#Z_TYP",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": [
+          "'0'",
+          "' '"
+        ]
+      },
+      {
+        "text": "In entry KBU00027, determine the column index S#J based on S#ART. If S#ART is 'G', S#J=1; if 'A', S#J=2; if 'E', S#J=3. If S#ART is not one of these, the procedure returns without updating the table.",
+        "lines": [
+          52,
+          53
+        ],
+        "fields": [
+          "S#J",
+          "S#ART"
+        ],
+        "values": [
+          "'GAE'"
+        ]
+      },
+      {
+        "text": "In entry KBU00027, convert the character string S#TYP to an integer S#I. If conversion fails or the result is outside the range 1 to 9, S#I is set to 9 (the 'Other' or overflow bucket).",
+        "lines": [
+          54,
+          55,
+          56,
+          57,
+          58
+        ],
+        "fields": [
+          "S#I",
+          "S#TYP"
+        ],
+        "values": [
+          "1",
+          "9"
+        ]
+      },
+      {
+        "text": "In entry KBU00027, increment the count S#Z_ANZ(S#I, S#J) by 1 and add the amount S#BTR to the sum S#Z_SUM(S#I, S#J).",
+        "lines": [
+          59,
+          60
+        ],
+        "fields": [
+          "S#Z_ANZ",
+          "S#Z_SUM",
+          "S#BTR"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "In entry KBU00028, skip printing a row if the total count for that type (sum of all three statuses) is 0.",
+        "lines": [
+          68
+        ],
+        "fields": [
+          "S#Z_ANZ"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "In entry KBU00028, print a new header if the line counter S#ZL exceeds 50. S#ZL is initialized to 99, so the first call to KBU00028 will always print a header.",
+        "lines": [
+          69,
+          33
+        ],
+        "fields": [
+          "S#ZL"
+        ],
+        "values": [
+          "50",
+          "99"
+        ]
+      },
+      {
+        "text": "In entry KBU00028, print the row data to SYSPRINT. The format includes the type code, followed by three pairs of count and sum. The sum is formatted with a pattern 'ZZZ.ZZZ.ZZZ.ZZ9V,99-' and a negative sign indicator '99-'.",
+        "lines": [
+          70,
+          71,
+          72,
+          73
+        ],
+        "fields": [
+          "S#Z_TYP",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": [
+          "'ZZZ.ZZZ.ZZZ.ZZ9V,99-'"
+        ]
+      },
+      {
+        "text": "In entry KBU00028, accumulate the total counts and sums for each status column (1, 2, 3) into S#GES_ANZ and S#GES_SUM.",
+        "lines": [
+          75,
+          76,
+          77
+        ],
+        "fields": [
+          "S#GES_ANZ",
+          "S#GES_SUM",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": []
+      },
+      {
+        "text": "In entry KBU00028, print a 'SUMME' line with the accumulated totals for each status column. The format is the same as the data rows.",
+        "lines": [
+          79,
+          80,
+          81
+        ],
+        "fields": [
+          "S#GES_ANZ",
+          "S#GES_SUM"
+        ],
+        "values": [
+          "'SUMME'",
+          "'ZZZ.ZZZ.ZZZ.ZZ9V,99-'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 138.5
+}

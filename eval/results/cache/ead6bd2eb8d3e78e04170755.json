@@ -1,0 +1,85 @@
+{
+  "unit": "KBU00025",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates a date string in YYYYMMDD format to ensure it represents a plausible calendar date. It checks that the input is purely numeric, the year is between 1900 and 2099, the month is between 1 and 12, and the day does not exceed the maximum days for that specific month. It does not validate leap years for February.",
+    "inputs": [
+      "D#DT (CHAR(8))"
+    ],
+    "outputs": [
+      "Return value (BIT(1)): '1'B if valid, '0'B if invalid"
+    ],
+    "rules": [
+      {
+        "text": "The input string must consist exclusively of numeric digits (0-9). If it contains any non-numeric character, the procedure returns '0'B.",
+        "lines": [
+          62
+        ],
+        "fields": [
+          "D#DT"
+        ],
+        "values": [
+          "'0'B"
+        ]
+      },
+      {
+        "text": "The year (first 4 characters) must be greater than or equal to 1900 and less than or equal to 2099. If outside this range, the procedure returns '0'B.",
+        "lines": [
+          63,
+          66
+        ],
+        "fields": [
+          "D#J"
+        ],
+        "values": [
+          "1900",
+          "2099",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "The month (characters 5-6) must be greater than or equal to 1 and less than or equal to 12. If outside this range, the procedure returns '0'B.",
+        "lines": [
+          64,
+          67
+        ],
+        "fields": [
+          "D#M"
+        ],
+        "values": [
+          "1",
+          "12",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "The day (characters 7-8) must be greater than or equal to 1 and less than or equal to the maximum days for the given month (defined in P#TMON). If outside this range, the procedure returns '0'B.",
+        "lines": [
+          65,
+          68
+        ],
+        "fields": [
+          "D#T",
+          "P#TMON"
+        ],
+        "values": [
+          "1",
+          "'0'B"
+        ]
+      },
+      {
+        "text": "If all previous checks pass, the procedure returns '1'B indicating a valid date. Note: It does not check for leap years, so 29.02 in non-leap years is considered valid.",
+        "lines": [
+          70
+        ],
+        "fields": [],
+        "values": [
+          "'1'B"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 60.3
+}

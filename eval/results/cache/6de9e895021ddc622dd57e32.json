@@ -1,0 +1,188 @@
+{
+  "unit": "KBU00026",
+  "member": "KBU00026",
+  "answer": {
+    "summary": "Generates a statistical summary report (SYSPRINT) for reconciliation purposes, aggregating counts and amounts for different transaction types (booked, allocated, generated). The report provides a breakdown by type and a final total, used for reconciliation with the general ledger.",
+    "inputs": [
+      "S#PGM (Program ID)",
+      "S#DT (Date)",
+      "S#TYP (Type Index)",
+      "S#BTR (Amount)",
+      "S#ART (Transaction Category: 'G', 'A', or 'E')"
+    ],
+    "outputs": [
+      "SYSPRINT (Report containing aggregated counts and sums)"
+    ],
+    "rules": [
+      {
+        "text": "Initialize the internal table with 9 rows, setting type labels to '01' through '09' and all counts and sums to zero.",
+        "lines": [
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
+        "fields": [
+          "S#Z_TYP",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": [
+          "0",
+          "0"
+        ]
+      },
+      {
+        "text": "Identify the transaction category index (J) by searching for the character S#ART within the string 'GAE'.",
+        "lines": [
+          52
+        ],
+        "fields": [
+          "S#J",
+          "S#ART"
+        ],
+        "values": [
+          "'GAE'"
+        ]
+      },
+      {
+        "text": "If the transaction category is not 'G', 'A', or 'E', the entry is ignored.",
+        "lines": [
+          53
+        ],
+        "fields": [
+          "S#J"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Convert the input S#TYP to a numeric index S#I; if conversion fails or the index is outside the range 1-9, default the index to 9.",
+        "lines": [
+          56,
+          58
+        ],
+        "fields": [
+          "S#I",
+          "S#TYP"
+        ],
+        "values": [
+          "1",
+          "9"
+        ]
+      },
+      {
+        "text": "Increment the count (S#Z_ANZ) and add the amount (S#BTR) to the corresponding type and category cell.",
+        "lines": [
+          59,
+          60
+        ],
+        "fields": [
+          "S#Z_ANZ",
+          "S#Z_SUM",
+          "S#BTR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Reset global totals (S#GES_ANZ and S#GES_SUM) to zero before processing the print loop.",
+        "lines": [
+          65
+        ],
+        "fields": [
+          "S#GES_ANZ",
+          "S#GES_SUM"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "During report generation, skip any type row where the total count for all categories is zero.",
+        "lines": [
+          68
+        ],
+        "fields": [
+          "S#Z_ANZ"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the line counter (S#ZL) exceeds 50, trigger a new page header via S#KOPF.",
+        "lines": [
+          69
+        ],
+        "fields": [
+          "S#ZL"
+        ],
+        "values": [
+          "50"
+        ]
+      },
+      {
+        "text": "Print the detailed rows for each type, formatting the amount with a specific numeric mask (ZZZ.ZZZ.ZZZ.ZZ9V,99-).",
+        "lines": [
+          70,
+          71,
+          72,
+          73
+        ],
+        "fields": [
+          "S#Z_TYP",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": []
+      },
+      {
+        "text": "Increment the line counter (S#ZL) after printing a row.",
+        "lines": [
+          74
+        ],
+        "fields": [
+          "S#ZL"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Accumulate the totals for the final summary row by summing counts and amounts across all categories for the current type.",
+        "lines": [
+          75,
+          76,
+          77
+        ],
+        "fields": [
+          "S#GES_ANZ",
+          "S#GES_SUM",
+          "S#Z_ANZ",
+          "S#Z_SUM"
+        ],
+        "values": []
+      },
+      {
+        "text": "Print the final summary row containing the grand totals for all categories.",
+        "lines": [
+          79,
+          80,
+          81
+        ],
+        "fields": [
+          "S#GES_ANZ",
+          "S#GES_SUM"
+        ],
+        "values": [
+          "'SUMME'"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 44.3
+}

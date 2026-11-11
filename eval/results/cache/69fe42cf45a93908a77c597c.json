@@ -1,0 +1,190 @@
+{
+  "unit": "KBP00003",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "This procedure processes active credit accounts to calculate minimum payments, generate account statements if there is activity or a balance, and reset cycle counters for the new billing period. It reads the control card for the run date, loads account and customer data, and writes updated account records and statement files.",
+    "inputs": [
+      "CTLCARD (control card with run date)",
+      "ACCTFILE (account master records)",
+      "CUSTFILE (customer master records)"
+    ],
+    "outputs": [
+      "ACCTOUT (updated account records with reset cycle fields and calculated minimum payments)",
+      "STMTFILE (generated account statements)",
+      "SYSPRINT (log messages)"
+    ],
+    "rules": [
+      {
+        "text": "The run date is extracted from the first 8 characters of the control card record.",
+        "lines": [
+          57
+        ],
+        "fields": [
+          "W_STEU",
+          "W_LAUFDT"
+        ],
+        "values": [
+          "1",
+          "8"
+        ]
+      },
+      {
+        "text": "The due date is calculated by adding 25 days to the run date.",
+        "lines": [
+          58
+        ],
+        "fields": [
+          "W_LAUFDT",
+          "KO_FAELLIG_TG",
+          "FAEL"
+        ],
+        "values": [
+          "25"
+        ]
+      },
+      {
+        "text": "A log message is written indicating the calculated due date.",
+        "lines": [
+          59
+        ],
+        "fields": [
+          "W_PGM",
+          "FAEL"
+        ],
+        "values": [
+          "FAELLIG AM "
+        ]
+      },
+      {
+        "text": "Account records are loaded from ACCTFILE into memory and written to ACCTOUT.",
+        "lines": [
+          61
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "KTAB_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Customer master data is loaded into memory for name lookup.",
+        "lines": [
+          62
+        ],
+        "fields": [],
+        "values": []
+      },
+      {
+        "text": "The procedure iterates through all account records in the in-memory table.",
+        "lines": [
+          66
+        ],
+        "fields": [
+          "I",
+          "KTAB_ANZ"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Processing is skipped if the account status (KTO_ST) is 'X'.",
+        "lines": [
+          68
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'X'"
+        ]
+      },
+      {
+        "text": "Minimum payment is calculated for active accounts.",
+        "lines": [
+          70
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_KLIM",
+          "KTO_MINZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "An account statement is generated if there is movement or a balance.",
+        "lines": [
+          71
+        ],
+        "fields": [
+          "KTO_SLD",
+          "KTO_ZYK_HAB",
+          "KTO_ZYK_SOL"
+        ],
+        "values": []
+      },
+      {
+        "text": "Cycle fields are reset for the new cycle.",
+        "lines": [
+          71
+        ],
+        "fields": [
+          "KTO_ZYK_HAB",
+          "KTO_ZYK_SOL",
+          "KTO_ZYK_ZAHL",
+          "KTO_MINZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "The updated account record is written back to the in-memory table.",
+        "lines": [
+          72
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "KTO_SATZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "The statement file is closed after processing all accounts.",
+        "lines": [
+          76
+        ],
+        "fields": [
+          "STMTFILE"
+        ],
+        "values": []
+      },
+      {
+        "text": "The final account records are written to ACCTOUT.",
+        "lines": [
+          77
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "KTAB_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "A log message is written with the count of statements generated.",
+        "lines": [
+          78
+        ],
+        "fields": [
+          "W_PGM",
+          "Z_GESCHR",
+          "W_ZTXT"
+        ],
+        "values": [
+          "AUSZUEGE "
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 132.7
+}

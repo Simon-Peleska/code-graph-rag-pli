@@ -1,0 +1,134 @@
+{
+  "unit": "KBU00018",
+  "member": "KBU00018",
+  "answer": {
+    "summary": "Loads the customer master file into an in-memory array for fast lookup. It constructs a full name field by concatenating first and last names with a single space. Provides a search entry point to find a customer index by their number.",
+    "inputs": [
+      "CUSTFILE (KDS_SATZ record: KDS_NR, KDS_VORN, KDS_NACHN, KDS_FICO)"
+    ],
+    "outputs": [
+      "KD_TAB (KD_ANZ, KD_NR, KD_NAME, KD_FICO)"
+    ],
+    "rules": [
+      {
+        "text": "Initializes the customer count to 0 before loading.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "KD_ANZ"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "Sets an end-of-file flag when the file read reaches the end.",
+        "lines": [
+          17
+        ],
+        "fields": [
+          "C@EOF"
+        ],
+        "values": [
+          "'1'B"
+        ]
+      },
+      {
+        "text": "Continues reading records until the end-of-file flag is set.",
+        "lines": [
+          20
+        ],
+        "fields": [
+          "C@EOF"
+        ],
+        "values": [
+          "'0'B"
+        ]
+      },
+      {
+        "text": "Checks if the in-memory array is full before adding a new record; if full, calls error procedure KBU00011 with severity 16 and message 'KUNDENTABELLE VOLL'.",
+        "lines": [
+          21,
+          22
+        ],
+        "fields": [
+          "KD_ANZ",
+          "KD_NR"
+        ],
+        "values": [
+          "16",
+          "'KUNDENTABELLE VOLL'"
+        ]
+      },
+      {
+        "text": "Increments the customer count if the array is not full.",
+        "lines": [
+          23
+        ],
+        "fields": [
+          "KD_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Stores the customer number from the file record into the array.",
+        "lines": [
+          24
+        ],
+        "fields": [
+          "KD_NR",
+          "KDS_NR"
+        ],
+        "values": []
+      },
+      {
+        "text": "Constructs the full name by trimming the first name, adding a single space, and appending the trimmed last name.",
+        "lines": [
+          25
+        ],
+        "fields": [
+          "KD_NAME",
+          "KDS_VORN",
+          "KDS_NACHN"
+        ],
+        "values": [
+          "' '"
+        ]
+      },
+      {
+        "text": "Stores the FICO score (bonitaet) from the file record into the array.",
+        "lines": [
+          26
+        ],
+        "fields": [
+          "KD_FICO",
+          "KDS_FICO"
+        ],
+        "values": []
+      },
+      {
+        "text": "Searches the in-memory array for a matching customer number; returns the 1-based index if found, or 0 if not found.",
+        "lines": [
+          32,
+          33,
+          34,
+          35
+        ],
+        "fields": [
+          "C@IX",
+          "C@I",
+          "KD_ANZ",
+          "KD_NR",
+          "C@NR"
+        ],
+        "values": [
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 85.1
+}

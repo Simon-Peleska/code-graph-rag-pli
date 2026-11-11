@@ -1,0 +1,83 @@
+{
+  "unit": "KBU00012",
+  "member": "KBU00012",
+  "answer": {
+    "summary": "Loads all account records from the ACCTFILE into an in-memory table, validating each record's structure. If any validation errors are found, the process aborts. Otherwise, it writes the loaded records to ACCTOUT in their original file order, preserving the sequence for downstream jobs.",
+    "inputs": [
+      "ACCTFILE (input file, 140-char records)",
+      "KBU00022 (external validation routine)"
+    ],
+    "outputs": [
+      "ACCTOUT (output file, 140-char records)",
+      "KTAB_ANZ (global counter of loaded records)",
+      "KTAB_SATZ (global array of loaded records)"
+    ],
+    "rules": [
+      {
+        "text": "The in-memory table has a maximum capacity defined by the upper bound of the KTAB_SATZ array. If the number of loaded records (KTAB_ANZ) reaches or exceeds this bound before a new record is added, the system logs a 'KONTENTABELLE VOLL' error with severity 16 and terminates.",
+        "lines": [
+          37,
+          38
+        ],
+        "fields": [
+          "KTAB_ANZ",
+          "KTAB_SATZ"
+        ],
+        "values": [
+          "16",
+          "'KONTENTABELLE VOLL'"
+        ]
+      },
+      {
+        "text": "Each record read from ACCTFILE is validated by KBU00022. The return value (count of invalid fields) is accumulated into K@FEHL. If the total K@FEHL is greater than 0 after all records are processed, the procedure logs the count of 'UNPLAUSIBLE FELDER' and returns without writing to ACCTOUT.",
+        "lines": [
+          41,
+          46,
+          49,
+          50
+        ],
+        "fields": [
+          "K@FEHL",
+          "K@SATZ"
+        ],
+        "values": [
+          "0",
+          "'UNPLAUSIBLE FELDER: '"
+        ]
+      },
+      {
+        "text": "Records are written to ACCTOUT in the exact order they were read from ACCTFILE (1 to KTAB_ANZ). No sorting is performed, as downstream jobs rely on this specific sequence.",
+        "lines": [
+          69,
+          70
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "KTAB_ANZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "The search entry point KBU00013 performs a linear scan of the in-memory table. It compares the first 11 characters of each stored record (KTAB_SATZ) against the input account number (K@NR). It returns the index of the first match or 0 if not found.",
+        "lines": [
+          53,
+          57,
+          58,
+          60
+        ],
+        "fields": [
+          "KTAB_SATZ",
+          "K@NR",
+          "K@IX"
+        ],
+        "values": [
+          "11",
+          "0"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 2,
+  "seconds": 138.8
+}

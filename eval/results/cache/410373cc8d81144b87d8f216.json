@@ -1,0 +1,72 @@
+{
+  "unit": "XRF_LADEN",
+  "member": "KBP00001",
+  "answer": {
+    "summary": "Loads all card cross-reference records from the XREFFILE into in-memory arrays for subsequent processing. It counts records where the card or account number fields contain non-numeric characters, flagging them as 'free' or misused fields.",
+    "inputs": [
+      "XREFFILE (KB.PROD.XREFFILE)",
+      "XRF_SATZ record (XRF_KARTE, XRF_KTO, XRF_ST)"
+    ],
+    "outputs": [
+      "#XN (record count)",
+      "#XK (array of card numbers)",
+      "#XA (array of account numbers)",
+      "#XS (array of status flags)",
+      "Z_GESCHR (count of records with validation errors)"
+    ],
+    "rules": [
+      {
+        "text": "Reads records from XREFFILE until end-of-file is reached.",
+        "lines": [
+          376,
+          377,
+          383
+        ],
+        "fields": [
+          "XRF_SATZ",
+          "SW_EOF_XRF"
+        ],
+        "values": []
+      },
+      {
+        "text": "If the external validation routine KBU00024 returns a value greater than 0 (indicating non-numeric characters in card or account fields), the global counter Z_GESCHR is incremented by 1.",
+        "lines": [
+          378,
+          379
+        ],
+        "fields": [
+          "KBU00024",
+          "XRF_SATZ",
+          "Z_GESCHR"
+        ],
+        "values": [
+          "0",
+          "1"
+        ]
+      },
+      {
+        "text": "For every record read, the local index #XN is incremented by 1, and the card number, account number, and status flag are stored in the respective arrays at that index.",
+        "lines": [
+          380,
+          381,
+          382
+        ],
+        "fields": [
+          "#XN",
+          "#XK",
+          "#XA",
+          "#XS",
+          "XRF_KARTE",
+          "XRF_KTO",
+          "XRF_ST"
+        ],
+        "values": [
+          "1"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 63.1
+}

@@ -1,0 +1,89 @@
+{
+  "unit": "S#KOPF",
+  "member": "KBU00026",
+  "answer": {
+    "summary": "Generates the header for a printed ballot list report. It increments the page counter, prints a title line with program and date information, and prints a column header line for the transaction types (Booked, Rejected, Produced).",
+    "inputs": [
+      "S#KOPF_PGM",
+      "S#KOPF_DT",
+      "S#SEITE",
+      "S#TXT"
+    ],
+    "outputs": [
+      "SYSPRINT",
+      "S#SEITE",
+      "S#ZL"
+    ],
+    "rules": [
+      {
+        "text": "Increment the page counter by 1 before printing the header.",
+        "lines": [
+          86
+        ],
+        "fields": [
+          "S#SEITE"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Print the report title line to SYSPRINT with specific column positions: 'KARTENBANK  ABSTIMMLISTE' at col 2, S#KOPF_PGM at col 40, 'LAUF' at col 52, S#KOPF_DT at col 53, 'SEITE' at col 70, and S#SEITE at col 70 (formatted as F(4)).",
+        "lines": [
+          87,
+          88,
+          89,
+          90
+        ],
+        "fields": [
+          "S#KOPF_PGM",
+          "S#KOPF_DT",
+          "S#SEITE"
+        ],
+        "values": [
+          "'KARTENBANK  ABSTIMMLISTE'",
+          "'LAUF'",
+          "'SEITE'",
+          "COL(2)",
+          "COL(40)",
+          "COL(52)",
+          "COL(70)",
+          "F(4)"
+        ]
+      },
+      {
+        "text": "Print the column header line to SYSPRINT with specific column positions: 'TYP' at col 2, S#TXT(1) at col 10, S#TXT(2) at col 43, and S#TXT(3) at col 76.",
+        "lines": [
+          91,
+          92,
+          93
+        ],
+        "fields": [
+          "S#TXT"
+        ],
+        "values": [
+          "'TYP'",
+          "COL(2)",
+          "COL(10)",
+          "COL(43)",
+          "COL(76)"
+        ]
+      },
+      {
+        "text": "Set the line counter S#ZL to 4 after printing the header.",
+        "lines": [
+          93
+        ],
+        "fields": [
+          "S#ZL"
+        ],
+        "values": [
+          "4"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 62.5
+}

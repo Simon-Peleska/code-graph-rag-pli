@@ -1,0 +1,52 @@
+{
+  "unit": "KBU00024",
+  "member": "KBU00021",
+  "answer": {
+    "summary": "Validates the numeric integrity of the card and account segments within a data string. It tracks the count of validation errors and logs warnings for non-numeric values found in specific positions.",
+    "inputs": [
+      "X#S: A 50-character string containing the card and account data."
+    ],
+    "outputs": [
+      "X#F: An integer representing the total count of validation errors encountered.",
+      "P#WARNUNG: A log entry containing the procedure name, the error type (KARTE or KONTO), and the extracted substring."
+    ],
+    "rules": [
+      {
+        "text": "If the first 16 characters of the input string are not numeric, increment the error counter and log a warning for 'KARTE' using the first 16 characters.",
+        "lines": [
+          143,
+          145,
+          146
+        ],
+        "fields": [
+          "X#S",
+          "X#F"
+        ],
+        "values": [
+          "1",
+          "16"
+        ]
+      },
+      {
+        "text": "If the characters from position 26 to 36 (length 11) of the input string are not numeric, increment the error counter and log a warning for 'KONTO' using the first 16 characters.",
+        "lines": [
+          148,
+          150,
+          151
+        ],
+        "fields": [
+          "X#S",
+          "X#F"
+        ],
+        "values": [
+          "1",
+          "26",
+          "11"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 18.4
+}

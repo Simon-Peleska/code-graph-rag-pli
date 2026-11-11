@@ -1,0 +1,82 @@
+{
+  "unit": "KBP00003",
+  "member": "KBP00003",
+  "answer": {
+    "summary": "This procedure processes bank account records to calculate minimum payments, generate account statements, and reset periodic accounting cycles. It iterates through loaded accounts, performing financial calculations and writing statements for all accounts not marked with status 'X'.",
+    "inputs": [
+      "CTLCARD: Control file containing execution parameters (W_STEU).",
+      "ACCTFILE: Source file containing account records (KTO_SATZ).",
+      "CUSTFILE: Customer data file for name lookups.",
+      "KO_FAELLIG_TG: Constant value (25) used for date calculation."
+    ],
+    "outputs": [
+      "STMTFILE: Output file containing generated account statements.",
+      "W_RC: Return code for the job step.",
+      "W_LAUFDT: Execution date extracted from the control card."
+    ],
+    "rules": [
+      {
+        "text": "Extract the execution date from the first 8 characters of the control card record.",
+        "lines": [
+          57
+        ],
+        "fields": [
+          "W_LAUFDT"
+        ],
+        "values": []
+      },
+      {
+        "text": "Calculate a future due date by adding 25 days to the execution date.",
+        "lines": [
+          58
+        ],
+        "fields": [
+          "§FAEL"
+        ],
+        "values": [
+          "25"
+        ]
+      },
+      {
+        "text": "Iterate through all loaded accounts in the internal table (KTAB_ANZ).",
+        "lines": [
+          66
+        ],
+        "fields": [
+          "§I"
+        ],
+        "values": []
+      },
+      {
+        "text": "Only process accounts where the account status (KTO_ST) is not equal to 'X'.",
+        "lines": [
+          68
+        ],
+        "fields": [
+          "KTO_ST"
+        ],
+        "values": [
+          "'X'"
+        ]
+      },
+      {
+        "text": "For eligible accounts, execute minimum payment calculation, statement generation, and cycle reset, then update the internal table with the modified record.",
+        "lines": [
+          70,
+          71,
+          72
+        ],
+        "fields": [
+          "KTO_SATZ"
+        ],
+        "values": []
+      }
+    ]
+  },
+  "errors": [
+    "rule 2: field §FAEL is not declared anywhere",
+    "rule 3: field §I is not declared anywhere"
+  ],
+  "attempts": 2,
+  "seconds": 48
+}

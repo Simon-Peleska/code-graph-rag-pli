@@ -1,0 +1,150 @@
+{
+  "unit": "BRIEF",
+  "member": "KBP00005",
+  "answer": {
+    "summary": "Generates a formatted dunning letter (reminder) for a credit card account. It selects the appropriate salutation based on whether a specific customer code exists, displays the outstanding minimum payment amount, and includes a deadline date and closing remarks based on the dunning stage.",
+    "inputs": [
+      "KTO_NR (Account Number)",
+      "M_KD (Customer Code Index)",
+      "M_STUFE (Dunning Stage)",
+      "KTO_MINZ (Minimum Payment Amount)",
+      "M_FRIST (Due Date)",
+      "KD_NAME (Customer Name from KD_TAB)"
+    ],
+    "outputs": [
+      "BRIEFE (Output File for Dunning Letters)"
+    ],
+    "rules": [
+      {
+        "text": "Writes a header line with the bank name 'KARTENBANK' and the account number prefixed by 'KONTO '.",
+        "lines": [
+          77,
+          78
+        ],
+        "fields": [
+          "KTO_NR"
+        ],
+        "values": [
+          "'KARTENBANK'",
+          "'KONTO '"
+        ]
+      },
+      {
+        "text": "If the customer code index M_KD is greater than 0, the salutation line uses the customer name from the KD_NAME table at index M_KD.",
+        "lines": [
+          79,
+          80
+        ],
+        "fields": [
+          "M_KD",
+          "KD_NAME"
+        ],
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "text": "If the customer code index M_KD is not greater than 0, the salutation line defaults to the generic text 'AN DEN KONTOINHABER' (To the account holder).",
+        "lines": [
+          81,
+          82
+        ],
+        "fields": [
+          "M_KD"
+        ],
+        "values": [
+          "'AN DEN KONTOINHABER'"
+        ]
+      },
+      {
+        "text": "Writes the first line of the dunning message body corresponding to the current dunning stage (M_STUFE) from the M_TXT array.",
+        "lines": [
+          83
+        ],
+        "fields": [
+          "M_TXT",
+          "M_STUFE"
+        ],
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "text": "Writes the second line of the dunning message body corresponding to the current dunning stage (M_STUFE) from the M_TXT array.",
+        "lines": [
+          84
+        ],
+        "fields": [
+          "M_TXT",
+          "M_STUFE"
+        ],
+        "values": [
+          "2"
+        ]
+      },
+      {
+        "text": "Assigns the minimum payment amount KTO_MINZ to the display variable M_BTR.",
+        "lines": [
+          85
+        ],
+        "fields": [
+          "M_BTR",
+          "KTO_MINZ"
+        ],
+        "values": []
+      },
+      {
+        "text": "Writes the outstanding amount line with the label 'OFFENER BETRAG: ', the formatted amount M_BTR, and the currency ' EUR'.",
+        "lines": [
+          86,
+          87
+        ],
+        "fields": [
+          "M_BTR"
+        ],
+        "values": [
+          "'OFFENER BETRAG: '",
+          "' EUR'"
+        ]
+      },
+      {
+        "text": "Writes the third line of the dunning message body, followed by the due date formatted as DD.MM.YYYY extracted from M_FRIST (positions 7-8 for day, 5-6 for month, 1-4 for year).",
+        "lines": [
+          88,
+          89,
+          90
+        ],
+        "fields": [
+          "M_TXT",
+          "M_STUFE",
+          "M_FRIST"
+        ],
+        "values": [
+          "3",
+          "7",
+          "2",
+          "5",
+          "2",
+          "1",
+          "4"
+        ]
+      },
+      {
+        "text": "Writes the fourth line of the dunning message body corresponding to the current dunning stage (M_STUFE) from the M_TXT array.",
+        "lines": [
+          91
+        ],
+        "fields": [
+          "M_TXT",
+          "M_STUFE"
+        ],
+        "values": [
+          "4"
+        ]
+      }
+    ]
+  },
+  "errors": [],
+  "attempts": 1,
+  "seconds": 102.5
+}
