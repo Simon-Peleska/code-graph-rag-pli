@@ -3710,8 +3710,8 @@ index 000000000..0876984c9
 +Subproject commit 0876984c9c2a51130cd7dec5315c3c734ffda0ad
 diff --git a/grammars/tree-sitter-pli b/grammars/tree-sitter-pli
 new file mode 160000
-index 000000000..4b4dc00df
+index 000000000..2aa2abd12
 --- /dev/null
 +++ b/grammars/tree-sitter-pli
 @@ -0,0 +1 @@
-+Subproject commit 4b4dc00df841d6e00644d5aba8676e57c8797300
++Subproject commit 2aa2abd12cc37543b842eab764fc52501d0a9343

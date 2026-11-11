@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 13;
+const INDEXER_VERSION = 18;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -1338,9 +1338,12 @@ function readPli(root, file, db2) {
         elseId = node.childForFieldName("alternative")?.id ?? -1;
         break;
       }
+      case "on_statement":
+      case "revert_statement":
+        file.statements[statement].detail = node.namedChildren.filter((c) => c?.type === "condition_spec").map((c) => source(/** @type {Node} */ (c))).join(", ");
+        break;
       case "select_statement":
       case "do_statement":
-      case "on_statement":
       case "return_statement":
       case "signal_statement":
       case "goto_statement": {
@@ -1377,7 +1380,9 @@ function readPli(root, file, db2) {
           if (!isPackage || caller < 0) caller = parent;
           const heading = node.namedChildren.find((c) => c?.type === "procedure_heading");
           const options = heading?.namedChildren.filter((c) => c?.type === "options_attribute" || c?.type === "returns_attribute") ?? [];
-          if (options.length) file.symbols[parent].detail = options.map((c) => tidy(c?.text ?? "")).join(" ");
+          const details = options.map((c) => tidy(c?.text ?? ""));
+          if (node.type === "entry_statement") details.unshift("ENTRY");
+          if (details.length) file.symbols[parent].detail = details.join(" ");
           const list = heading?.namedChildren.find((c) => c?.type === "parameter_list");
           parameters.set(parent, list?.namedChildren.map((c) => c?.text.toUpperCase() ?? "") ?? []);
         }
@@ -1394,13 +1399,12 @@ function readPli(root, file, db2) {
       case "write_statement":
       case "rewrite_statement":
       case "delete_statement":
+      case "unlock_statement":
+      case "flush_statement":
       case "get_statement":
       case "put_statement":
+      case "locate_statement":
         readFileIo(text, node, file, caller);
-        break;
-      case "ERROR":
-        // The grammar knows no LOCATE.
-        if (/^LOCATE\b/i.test(node.text)) readFileIo(text, node, file, caller);
         break;
       case "preprocessor_include":
         // One %INCLUDE can name several members; in DDNAME(MEMBER) the
@@ -1457,7 +1461,7 @@ function readPli(root, file, db2) {
         const up = node.parent;
         const isCallEntry = up?.type === "call_statement" || up?.type === "fetch_statement";
         const isAssigned = up?.type === "assignment_statement" && up.namedChildren[0]?.id === node.id;
-        if (!isCallEntry && !isAssigned && node.children.some((c) => c?.type === "argument")) {
+        if (!isCallEntry && !isAssigned && node.children.some((c) => c?.type === "argument" || c?.type === "(")) {
           const name = referenceName(node);
           if (name) addRef(file, caller, "invoke", name, node);
         }
@@ -1549,14 +1553,14 @@ const COMPARISONS = new Set(["=", "^=", "<>", "<", ">", "<=", ">=", "^<", "^>"])
 const STATEMENT_KINDS = new Map([
   ...["allocate", "assert", "assignment", "begin", "call", "close", "delete", "display", "do", "exec", "fetch", "free", "get", "goto",
     "if", "iterate", "leave", "null", "on", "open", "put", "read", "release", "resignal", "return", "revert", "rewrite", "select",
-    "signal", "stop", "write"].map((kind) => /** @type {[string, string]} */ ([`${kind}_statement`, kind])),
+    "signal", "stop", "write", "locate", "delay", "attach", "wait", "detach", "flush", "unlock"].map((kind) => /** @type {[string, string]} */ ([`${kind}_statement`, kind])),
   ["when_clause", "when"],
   ["otherwise_clause", "otherwise"],
 ]);
 
 const LITERALS = new Set(["string_literal", "bit_literal", "hex_literal", "number"]);
 
-const IO_KINDS = new Set(["open", "close", "read", "write", "rewrite", "delete", "get", "put"]);
+const IO_KINDS = new Set(["open", "close", "read", "write", "rewrite", "delete", "get", "put", "flush", "unlock"]);
 
 /**
  * Whether a reference reads or writes, or undefined for one that is no field:
@@ -1586,6 +1590,10 @@ function readAccess(text, node, up, kind) {
       return { mode: "arg", value: null, position: list.namedChildren.findIndex((c) => c?.id === up.id) + 1 };
     }
   }
+  if (up.childForFieldName("file")?.id === node.id) return undefined;
+  if (up.childForFieldName("key")?.id === node.id) return { mode: "read", value: null, position: null };
+  // LOCATE allocates its based variable and sets the pointer.
+  if (up.type === "locate_statement") return { mode: "write", value: null, position: null };
   if (!IO_KINDS.has(kind)) return { mode: "read", value: null, position: null };
   // READ FILE(F) INTO(X) KEY(K): the grammar keeps FILE's reference bare and
   // the others in an option whose keyword is only in the source.
@@ -1631,12 +1639,14 @@ function readFileIo(text, node, file, caller) {
     const option = keyword.toUpperCase();
     const written = tidy(value).toUpperCase();
     if (option === "FILE") {
+      // FLUSH FILE(*) flushes every file.
+      if (written === "*") continue;
       found.push({ caller, operation, name: written, record, key: null, title: null, statement, line });
       continue;
     }
     if (option === "STRING") toString = true;
     const io = found.at(-1);
-    if (option === "INTO" || option === "FROM" || option === "SET") {
+    if (option === "INTO" || option === "FROM" || (option === "SET" && operation !== "LOCATE")) {
       if (io) io.record = written;
       else record = written;
     } else if (option.startsWith("KEY") && io) io.key = written;
@@ -1682,87 +1692,102 @@ function readDeclaration(statement, file, scope, parameters) {
     const levelNode = item.childForFieldName("level");
     const level = levelNode ? Number(levelNode.text) : 1;
     const nameNode = item.childForFieldName("name");
-    const names =
-      nameNode?.type === "factored_name_list"
-        ? nameNode.namedChildren.map((n) => n?.text.toUpperCase() ?? "")
-        : [nameNode && nameNode.type === "identifier" ? nameNode.text.toUpperCase() : "*"];
-    const attributes = tidy(item.text.slice(nameNode ? nameNode.endIndex - item.startIndex : 0).replace(/^\s*\*/, ""));
-
-    let type = null;
-    let size = null;
-    let dims = null;
-    let storage = null;
-    let base = null;
-    let init = null;
-    let like = null;
-    let external = false;
-    /** @param {Node} node */
-    const inParens = (node) => {
-      const spec = node.namedChildren.find((c) => c?.type === "length_spec" || c?.type === "precision");
-      return spec ? spec.namedChildren.map((c) => c?.text).join(",") : null;
-    };
-    for (const attribute of item.namedChildren) {
-      if (!attribute || attribute === levelNode || attribute === nameNode) continue;
-      const word = attribute.text.toUpperCase();
-      switch (attribute.type) {
-        case "fixed_attribute":
-          type = type ? `FIXED ${type}` : "FIXED";
-          break;
-        case "decimal_attribute":
-        case "binary_attribute": {
-          const base = attribute.type === "decimal_attribute" ? "DEC" : "BIN";
-          type = type === "FIXED" || type === "FLOAT" ? `${type} ${base}` : base;
-          size = inParens(attribute) ?? size;
-          break;
-        }
-        case "char_attribute":
-          type = /\bVAR(YING)?\b/i.test(attributes) ? "VARCHAR" : "CHAR";
-          size = inParens(attribute);
-          break;
-        case "picture_attribute":
-          type = "PIC";
-          size = attribute.namedChildren[0]?.text.replace(/^'|'$/g, "") ?? null;
-          break;
-        case "dimension_attribute":
-          dims = attribute.namedChildren.map((bound) => tidy(bound?.text ?? "")).join(",");
-          break;
-        case "based_attribute":
-          storage = "BASED";
-          base = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
-          break;
-        case "defined_attribute":
-          storage = "DEFINED";
-          base = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
-          break;
-        case "value_attribute":
-          storage = "CONSTANT";
-          init = tidy(attribute.namedChildren.map((c) => c?.text).join(","));
-          break;
-        case "init_attribute":
-          init = tidy(attribute.text.replace(/^\s*INIT(IAL)?\s*\(/i, "").replace(/\)\s*$/, ""));
-          break;
-        case "like_attribute":
-          like = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
-          break;
-        case "simple_attribute":
-          if (word in STORAGE) storage = STORAGE[word];
-          else if (word === "EXTERNAL" || word === "EXT") external = true;
-          else if (word === "FILE") type = "FILE";
-          else if (word === "LABEL") type = "LABEL";
-          break;
-        default:
-          if (attribute.type in TYPES) {
-            type = type === "FIXED" && attribute.type === "float_attribute" ? "FLOAT" : TYPES[attribute.type];
-            size = inParens(attribute) ?? size;
-          }
+    const shared = item.namedChildren.filter((c) => c !== null && c.id !== levelNode?.id && c.id !== nameNode?.id);
+    const sharedText = tidy(item.text.slice(nameNode ? nameNode.endIndex - item.startIndex : 0).replace(/^\s*\*/, ""));
+    // DCL ((A, B) FIXED, C CHAR(8)) STATIC: each name gets the attributes
+    // inside its parentheses, then the shared ones.
+    /** @type {{ name: string, nodes: Node[], text: string }[]} */
+    const declared = [];
+    /** @param {Node} list @param {Node[]} outer @param {string} outerText */
+    const unfactor = (list, outer, outerText) => {
+      for (const factored of list.namedChildren) {
+        if (factored?.type !== "factored_name") continue;
+        const inner = factored.namedChildren.find((c) => c?.type === "factored_name_list");
+        const id = factored.namedChildren.find((c) => c?.type === "identifier");
+        const own = factored.namedChildren.filter((c) => c !== null && c !== inner && c !== id);
+        const nodes = [...own, ...outer];
+        const text = tidy([...own.map((n) => n.text), outerText].join(" "));
+        if (inner) unfactor(inner, nodes, text);
+        else if (id) declared.push({ name: id.text.toUpperCase(), nodes, text });
       }
-    }
-    if (type === "FIXED") type = "FIXED DEC";
+    };
+    if (nameNode?.type === "factored_name_list") unfactor(nameNode, shared, sharedText);
+    else declared.push({ name: nameNode?.type === "identifier" ? nameNode.text.toUpperCase() : "*", nodes: shared, text: sharedText });
 
     while (structure.length && file.variables[structure[structure.length - 1]].level >= level) structure.pop();
     const parent = structure.length ? structure[structure.length - 1] : -1;
     if (parent >= 0) file.variables[parent].type ??= "STRUCTURE";
-    for (const name of names) {
+    for (const { name, nodes, text: attributes } of declared) {
+      let type = null;
+      let size = null;
+      let dims = null;
+      let storage = null;
+      let base = null;
+      let init = null;
+      let like = null;
+      let external = false;
+      /** @param {Node} node */
+      const inParens = (node) => {
+        const spec = node.namedChildren.find((c) => c?.type === "length_spec" || c?.type === "precision");
+        return spec ? spec.namedChildren.map((c) => c?.text).join(",") : null;
+      };
+      for (const attribute of nodes) {
+        const word = attribute.text.toUpperCase();
+        switch (attribute.type) {
+          case "fixed_attribute":
+            type = type ? `FIXED ${type}` : "FIXED";
+            break;
+          case "decimal_attribute":
+          case "binary_attribute": {
+            const base = attribute.type === "decimal_attribute" ? "DEC" : "BIN";
+            type = type === "FIXED" || type === "FLOAT" ? `${type} ${base}` : base;
+            size = inParens(attribute) ?? size;
+            break;
+          }
+          case "char_attribute":
+            type = /\bVAR(YING)?\b/i.test(attributes) ? "VARCHAR" : "CHAR";
+            size = inParens(attribute);
+            break;
+          case "picture_attribute":
+            type = "PIC";
+            size = attribute.namedChildren[0]?.text.replace(/^'|'$/g, "") ?? null;
+            break;
+          case "dimension_attribute":
+            dims = attribute.namedChildren.map((bound) => tidy(bound?.text ?? "")).join(",");
+            break;
+          case "based_attribute":
+            storage = "BASED";
+            base = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
+            break;
+          case "defined_attribute":
+            storage = "DEFINED";
+            base = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
+            break;
+          case "value_attribute":
+            storage = "CONSTANT";
+            init = tidy(attribute.namedChildren.map((c) => c?.text).join(","));
+            break;
+          case "init_attribute":
+            init = tidy(attribute.text.replace(/^\s*INIT(IAL)?\s*\(/i, "").replace(/\)\s*$/, ""));
+            break;
+          case "like_attribute":
+            like = attribute.namedChildren[0] ? tidy(attribute.namedChildren[0].text).toUpperCase() : null;
+            break;
+          case "simple_attribute":
+            if (word in STORAGE) storage = STORAGE[word];
+            else if (word === "EXTERNAL" || word === "EXT") external = true;
+            else if (word === "FILE") type = "FILE";
+            else if (word === "LABEL") type = "LABEL";
+            break;
+          default:
+            if (attribute.type in TYPES) {
+              type = type === "FIXED" && attribute.type === "float_attribute" ? "FLOAT" : TYPES[attribute.type];
+              size = inParens(attribute) ?? size;
+            }
+        }
+      }
+      if (type === "FIXED") type = "FIXED DEC";
+
       const parameter = level === 1 ? parameters.indexOf(name) + 1 || null : null;
       file.variables.push({
         scope,
@@ -1782,7 +1807,7 @@ function readDeclaration(statement, file, scope, parameters) {
         attributes,
         line: item.startPosition.row + 1,
       });
-      if (names.length === 1) structure.push(file.variables.length - 1);
+      if (declared.length === 1) structure.push(file.variables.length - 1);
     }
   }
 }
@@ -2393,6 +2418,7 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  * @property {SymbolKind} kind
  * @property {string} name
  * @property {string | null} qualifier
+ * @property {string | null} [detail]
  */
 
 /**
@@ -2626,7 +2652,7 @@ function link(db, refs) {
   const files = /** @type {{ id: number, path: string, member: string, language: string }[]} */ (
     db.prepare("SELECT id, path, member, language FROM files").all()
   );
-  const symbols = /** @type {SymbolRow[]} */ (db.prepare("SELECT id, file, parent, kind, name, qualifier FROM symbols").all());
+  const symbols = /** @type {SymbolRow[]} */ (db.prepare("SELECT id, file, parent, kind, name, qualifier, detail FROM symbols").all());
   const includeRows = /** @type {{ file: number, name: string }[]} */ (
     db.prepare("SELECT file, name FROM refs WHERE kind = 'include'").all()
   );
@@ -2662,8 +2688,19 @@ function link(db, refs) {
   const genFiles = new Set();
   /** @type {Record<string, Map<string, SymbolRow[]> | undefined>} */
   const definedBy = { format: screens, message: screens, table: tables, view: tables, alias: tables, psb: psbs, dbd: dbds, segment: segments };
+  for (const symbol of symbols) symbolById.set(symbol.id, symbol);
+  // What another member can call by name besides the member itself: a
+  // package's procedures and the ENTRY points of a procedure.
+  /** @type {Map<string, SymbolRow[]>} */
+  const entries = new Map();
   for (const symbol of symbols) {
-    symbolById.set(symbol.id, symbol);
+    if (symbol.kind !== "procedure" || symbol.parent === null) continue;
+    if (symbolById.get(symbol.parent)?.kind !== "package" && !symbol.detail?.startsWith("ENTRY")) continue;
+    const list = entries.get(symbol.name);
+    if (list) list.push(symbol);
+    else entries.set(symbol.name, [symbol]);
+  }
+  for (const symbol of symbols) {
     const list = symbolsOf.get(symbol.file);
     if (list) list.push(symbol);
     else symbolsOf.set(symbol.file, [symbol]);
@@ -2789,7 +2826,10 @@ function link(db, refs) {
       const found = symbolNamed(included, ref.name);
       if (found) return [at(found)];
     }
-    return ref.kind === "invoke" ? [] : program(ref.name, ref.file);
+    const called = ref.kind === "invoke" ? [] : program(ref.name, ref.file);
+    if (called.length) return called;
+    const entry = entries.get(ref.name)?.filter((s) => s.file !== ref.file);
+    return entry?.length ? nearest(entry, ref.file).map(at) : [];
   };
 
   const deleteLinks = db.prepare("DELETE FROM links WHERE ref = ?");

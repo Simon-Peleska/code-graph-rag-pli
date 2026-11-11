@@ -28,10 +28,10 @@ the patch set in `patches/` implements. The grammar notes still hold.
 ## The grammar: tree-sitter-pli
 
 - Local checkout: `~/projects/tree-sitter-pli`. Remote:
-  `https://github.com/Simon-Peleska/tree-sitter-pli`. The latest local commit
-  (`a570fb8`, Enterprise PL/I gap fixes) was **not pushed yet** when this was
-  written. Check `git -C ~/projects/tree-sitter-pli status` and ask the user
-  to push before pointing a submodule at the GitHub URL.
+  `https://github.com/Simon-Peleska/tree-sitter-pli`. The extension's wasm is
+  built from the commit in `vscode/grammars/VERSIONS` (`2aa2abd`, pushed).
+  Check `git -C ~/projects/tree-sitter-pli status` for unpushed commits
+  before pointing a submodule at the GitHub URL.
 - `tree-sitter.json`: language name `pli`, scope `source.pli`, file types
   `pli`, `pl1`, `pco`, `inc`. It ships `queries/highlights.scm` only (no
   tags.scm).

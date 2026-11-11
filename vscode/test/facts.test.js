@@ -51,6 +51,20 @@ test("constants, initial values, LIKE and parameters", () => {
   assert.deepEqual(rows(`SELECT dims, init FROM variables WHERE name = 'TAGE'`), [{ dims: "12", init: "31,28,31,30,31,30,31,31,30,31,30,31" }]);
 });
 
+test("factored declarations give each name its own and the shared attributes", () => {
+  assert.deepEqual(
+    rows(`SELECT v.name, v.type, v.size, v.dims, v.storage, v.attributes FROM variables v JOIN files f ON f.id = v.file
+          WHERE f.member = 'KDP00001' AND v.name IN ('ZINS', 'RATE', 'ANZ', 'VON', 'BIS') ORDER BY v.id`),
+    [
+      { name: "ZINS", type: "FIXED DEC", size: "5,2", dims: null, storage: "STATIC", attributes: "FIXED DEC(5,2) STATIC" },
+      { name: "RATE", type: "FIXED DEC", size: "5,2", dims: null, storage: "STATIC", attributes: "FIXED DEC(5,2) STATIC" },
+      { name: "ANZ", type: "FIXED BIN", size: "31", dims: "3", storage: "STATIC", attributes: "(3) FIXED BIN(31) STATIC" },
+      { name: "VON", type: "CHAR", size: "8", dims: null, storage: null, attributes: "CHAR(8)" },
+      { name: "BIS", type: "CHAR", size: "8", dims: null, storage: null, attributes: "CHAR(8)" },
+    ],
+  );
+});
+
 test("a procedure keeps its OPTIONS and RETURNS", () => {
   assert.deepEqual(rows(`SELECT s.name, s.detail FROM symbols s JOIN files f ON f.id = s.file WHERE f.member = 'KDP00001' ORDER BY s.line`), [
     { name: "KDP00001", detail: "OPTIONS(MAIN)" },
@@ -125,12 +139,25 @@ test("record and stream I/O name the file, record and key", () => {
   );
 });
 
-test("statements the grammar misses: REWRITE with KEY, LOCATE, and PUT without FILE", () => {
+test("REWRITE with KEY, LOCATE with SET, DELETE, UNLOCK, FLUSH, and PUT without FILE", () => {
   assert.deepEqual(rows(`SELECT operation, name, record, key FROM file_io io JOIN files f ON f.id = io.file WHERE f.member = 'KDP00003' ORDER BY io.id`), [
     { operation: "REWRITE", name: "KUNDEN", record: "K", key: "K.KDNR" },
     { operation: "LOCATE", name: "AUSG", record: "A_SATZ", key: null },
+    { operation: "DELETE", name: "KUNDEN", record: null, key: "K.KDNR" },
+    { operation: "UNLOCK", name: "KUNDEN", record: null, key: "K.KDNR" },
+    { operation: "FLUSH", name: "AUSG", record: null, key: null },
     { operation: "PUT", name: "SYSPRINT", record: null, key: null },
   ]);
+  const accesses = rows(
+    `SELECT s.line, s.kind, a.name, a.mode FROM statements s LEFT JOIN accesses a ON a.statement = s.id JOIN files f ON f.id = s.file
+     WHERE f.member = 'KDP00003' AND s.line >= 7 ORDER BY s.id, a.id`,
+  ).map((a) => [a.line, a.kind, a.name ?? "-", a.mode ?? "-"].join(" "));
+  assert.deepEqual(accesses, [
+    "7 locate A_SATZ write", "7 locate AP write", "8 delay - -", "9 delete K.KDNR read", "10 unlock K.KDNR read",
+    "11 flush - -", "12 flush - -", "13 on - -", "13 stop - -", "14 put - -",
+  ]);
+  const on = rows(`SELECT s.detail FROM statements s JOIN files f ON f.id = s.file WHERE f.member = 'KDP00003' AND s.kind = 'on'`);
+  assert.deepEqual(on, [{ detail: "ENDFILE(KUNDEN), KEY(KUNDEN)" }]);
 });
 
 test("a program's files go to the datasets of the steps running it", () => {
@@ -452,7 +479,7 @@ const spans = (sites) => sites.map((s) => `${s.path}:${s.line}:${s.col}-${s.endC
 test("every relation goes from the name to the name, both ways", () => {
   /** @type {[string, number, string, string[], string[]][]} where, the name, its definitions, its references */
   const cases = [
-    ["SRC/KDP00001", 13, "PRUEFEN", ["SRC/KDP00001:14:1-8"], ["SRC/KDP00001:13:8-15"]],
+    ["SRC/KDP00001", 14, "PRUEFEN", ["SRC/KDP00001:15:1-8"], ["SRC/KDP00001:14:8-15"]],
     ["SRC/KDP00004", 8, "KUNDE", ["INCLUDE/KDT00001:1:18-23"], ["SRC/KDP00004:14:64-69", "SRC/KDP00004:7:22-27", "SRC/KDP00004:8:51-56", "SRC/KDP00004:9:24-29"]],
     ["MFS/KDF00001", 19, "KDF001O", ["MFS/KDF00001:19:0-7"], ["MFS/KDF00001:14:50-57", "SRC/KDP00005:28:36-43"]],
     ["MFS/KDF00001", 1, "KDF001", ["MFS/KDF00001:1:0-6"], ["MFS/KDF00001:14:31-37", "MFS/KDF00001:19:32-38"]],
