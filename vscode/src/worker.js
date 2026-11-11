@@ -18,7 +18,14 @@ import { createIndexer, grammarsIn, openGraph, sync } from "./indexer.js";
  */
 
 /**
+ * @typedef {object} FocusRequest the file open in the editor, read first
+ * @property {string} root
+ * @property {string} focus relative, with forward slashes
+ */
+
+/**
  * @typedef {{ id: number, progress: import("./indexer.js").Progress }
+ *   | { id: number, focused: true }
  *   | { id: number, result: import("./indexer.js").SyncResult }
  *   | { id: number, error: string }} SyncReply
  */
@@ -33,9 +40,17 @@ const graphs = new Map();
 /** @param {SyncReply} reply */
 const reply = (reply) => port.postMessage(reply);
 
-// A sync waits for its parser threads; the next request waits for it.
+/** @type {Map<string, string>} the focused file by root */
+const focus = new Map();
+
+// A sync waits for its parser threads; the next request waits for it. A
+// focus arrives meanwhile and steers the running sync.
 let queue = Promise.resolve();
-port.on("message", (/** @type {SyncRequest} */ request) => {
+port.on("message", (/** @type {SyncRequest | FocusRequest} */ request) => {
+  if ("focus" in request) {
+    focus.set(request.root, request.focus);
+    return;
+  }
   queue = queue.then(() => handle(request));
 });
 
@@ -55,6 +70,8 @@ async function handle(request) {
       paths: request.paths,
       members: request.members,
       parsers,
+      focus: () => focus.get(request.root),
+      onFocus: () => reply({ id: request.id, focused: true }),
       onProgress: (progress) => reply({ id: request.id, progress }),
     });
     reply({ id: request.id, result });

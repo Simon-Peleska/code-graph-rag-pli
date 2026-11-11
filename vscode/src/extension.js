@@ -255,6 +255,13 @@ function startWorker(context) {
       progressed(workspace, reply.id, reply.progress);
       return;
     }
+    if ("focused" in reply) {
+      log.info(`${workspace.folder.name}: the open file and what it uses are indexed, reading the rest`);
+      openGraph(workspace);
+      changed.fire(undefined);
+      void graphPanel?.panel.webview.postMessage({ type: "changed" });
+      return;
+    }
     requests.delete(reply.id);
     workspace.running--;
     endIndexing(workspace);
@@ -465,6 +472,12 @@ function followEditor() {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     return;
+  }
+  const where = locate(editor.document.uri);
+  if (where && worker) {
+    /** @type {import("./worker.js").FocusRequest} */
+    const focus = { root: where.workspace.folder.uri.fsPath, focus: where.path };
+    worker.postMessage(focus);
   }
   void vscode.commands.executeCommand("setContext", "pliGraph.activeEditorIsPli", inGraph(editor.document));
   const fromTree = editor.document.uri.toString() === openedFromTree;

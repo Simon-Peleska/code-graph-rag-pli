@@ -686,7 +686,11 @@ export function openGraph(path) {
  * @param {DatabaseSync} db
  * @param {string} root
  * @param {Indexer} indexer
- * @param {{ paths?: string[], members?: boolean, onProgress?: (progress: Progress) => void, parsers?: { script: string, grammars: Grammars } }} [options]
+ * With `focus`, the file it names (as it names it when asked, which may
+ * change meanwhile) and the files it uses, transitively, are read first and
+ * committed on their own, then `onFocus` is called, then the rest is read.
+ * @param {{ paths?: string[], members?: boolean, onProgress?: (progress: Progress) => void, parsers?: { script: string, grammars: Grammars },
+ *   focus?: () => string | undefined, onFocus?: () => void }} [options]
  * @returns {Promise<SyncResult>}
  */
 export async function sync(db, root, indexer, options = {}) {
@@ -769,6 +773,7 @@ export async function sync(db, root, indexer, options = {}) {
   db.exec("CREATE TEMP TABLE IF NOT EXISTS pending_accesses (file INTEGER PRIMARY KEY, accesses TEXT NOT NULL)");
   const insertPending = db.prepare("INSERT INTO pending_accesses (file, accesses) VALUES (?, ?)");
   const deletePending = db.prepare("DELETE FROM pending_accesses WHERE file = ?");
+  const pendingOf = db.prepare("SELECT 1 FROM pending_accesses WHERE file = ?");
   const insertComparison = db.prepare("INSERT INTO comparisons (statement, left, operator, right) VALUES (?, ?, ?, ?)");
   const insertLiteral = db.prepare("INSERT INTO literals (statement, text) VALUES (?, ?)");
   const insertVariable = db.prepare(
@@ -789,33 +794,128 @@ export async function sync(db, root, indexer, options = {}) {
   // go to threads while this one writes. A few are faster here than
   // starting the threads, which load the grammars first.
   const pool = options.parsers && changed.length >= PARALLEL_FROM ? startParsers(options.parsers.script, options.parsers.grammars, PARSER_THREADS) : null;
-  /** @type {Promise<ParseReply>[]} */
-  const ahead = [];
-  let parsing = 0;
+
+  // The order files are read in: the focused file, then what it uses, then the rest.
+  /** @type {Map<string, string[]>} */
+  const byMember = new Map();
+  for (const path of onDisk.keys()) {
+    const member = memberOf(path);
+    const paths = byMember.get(member);
+    if (paths) paths.push(path);
+    else byMember.set(member, [path]);
+  }
+  const waiting = new Set(changed.map(([path]) => path));
+  const rest = changed.map(([path]) => path);
+  let restAt = 0;
+  /** @type {string[]} */
+  const front = [];
+  /** @type {Map<string, number>} the focused file (0), what it uses (1), what that uses (2)... found so far */
+  const closure = new Map();
+  let focused = /** @type {string | undefined} */ (undefined);
+  let focusRead = false;
+  let directDone = false;
+  // What a fresh sync's last link can leave alone: the refs linked at the
+  // last early commit, unless a file read later defines their name.
+  /** @type {number[]} */
+  let linkedEarly = [];
+  /** @type {Set<string>} */
+  const definedLater = new Set();
+  const fileAt = db.prepare("SELECT id FROM files WHERE path = ?");
+  const refNamesOf = db.prepare("SELECT DISTINCT name FROM refs WHERE file = ?");
+  // A file whose text didn't change says what it uses in the graph already.
+  /** @param {string} path @param {number} distance */
+  const use = (path, distance) => {
+    if (closure.has(path)) return;
+    closure.set(path, distance);
+    front.push(path);
+    if (waiting.has(path)) return;
+    const row = /** @type {{ id: number } | undefined} */ (fileAt.get(path));
+    if (!row) return;
+    for (const { name } of /** @type {{ name: string }[]} */ (refNamesOf.all(row.id))) for (const used of byMember.get(name) ?? []) use(used, distance + 1);
+  };
+  /** @param {boolean} focusOnly */
+  const pick = (focusOnly) => {
+    const now = options.focus?.();
+    if (now !== focused) {
+      focused = now;
+      closure.clear();
+      front.length = 0;
+      directDone = false;
+      if (now) use(now, 0);
+    }
+    while (front.length) {
+      const path = /** @type {string} */ (front.shift());
+      if (waiting.delete(path)) return path;
+    }
+    if (focusOnly) return undefined;
+    while (restAt < rest.length) {
+      const path = rest[restAt++];
+      if (waiting.delete(path)) return path;
+    }
+    return undefined;
+  };
+  // While a focused file is read, nothing else is started: what it uses is
+  // known only once it is read.
+  /** @type {{ path: string, reply: Promise<ParseReply> | null }[]} */
+  const reading = [];
+  const readAhead = () => {
+    while (reading.length < (pool ? 2 * PARSER_THREADS : 1)) {
+      const path = pick(reading.some((r) => closure.has(r.path)));
+      if (!path) return;
+      reading.push({ path, reply: pool ? pool.parse(root, path) : null });
+    }
+  };
+
+  // The focused files are linked and resolved and committed now, so the
+  // editor can use them while the rest is read.
+  const commitFocus = () => {
+    const files = [...closure.keys()].map((path) => /** @type {{ id: number } | undefined} */ (fileAt.get(path))?.id).filter((id) => id !== undefined);
+    const ofFiles = db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE file IN (SELECT value FROM json_each(?))`);
+    link(db, /** @type {RefRow[]} */ (ofFiles.all(JSON.stringify(files))));
+    const pending = files.filter((id) => pendingOf.get(id));
+    resolveAccesses(db, pending, failures, fresh);
+    for (const id of pending) deletePending.run(id);
+    linkedEarly = files;
+    definedLater.clear();
+    db.exec(`INSERT INTO meta (name, value) VALUES ('graph_version', 1) ON CONFLICT (name) DO UPDATE SET value = value + 1`);
+    db.exec("COMMIT");
+    db.exec("BEGIN");
+    focusRead = false;
+    options.onFocus?.();
+  };
+
   db.exec("BEGIN");
   try {
     if (fresh) for (const name of NAME_INDEXES) db.exec(`DROP INDEX IF EXISTS ${name}`);
-    for (const [done, path] of [...removed, ...changed.map(([path]) => path)].entries()) {
+    for (const path of removed) {
+      const old = /** @type {{ id: number }} */ (known.get(path));
+      names.add(memberOf(path));
+      for (const row of /** @type {{ name: string }[]} */ (oldNames.all(old.id))) names.add(row.name);
+      deleteFile.run(old.id);
+    }
+    for (let done = removed.length; ; done++) {
+      readAhead();
+      const next = reading.shift();
+      if (!next) break;
+      const path = next.path;
       if (done % 200 === 0) onProgress({ phase: "parse", done, total });
       const old = known.get(path);
       names.add(memberOf(path));
+      if (linkedEarly.length) definedLater.add(memberOf(path));
       if (old) {
         for (const row of /** @type {{ name: string }[]} */ (oldNames.all(old.id))) names.add(row.name);
         deleteFile.run(old.id);
       }
-      const stat = onDisk.get(path);
-      if (!stat) continue;
+      const stat = /** @type {{ mtime: number, size: number }} */ (onDisk.get(path));
+      const focusedFile = closure.has(path);
       // One odd file must not stop the sync: its facts go, deleting its row
       // cascades to all of them, and it stays in the graph with the failure
       // until it changes again. Cheaper than a savepoint per file.
       let file = 0;
       try {
         let parse;
-        if (pool) {
-          const at = parsing++;
-          for (let k = at; k < Math.min(at + 2 * PARSER_THREADS, changed.length); k++) ahead[k] ??= pool.parse(root, changed[k][0]);
-          const reply = await ahead[at];
-          delete ahead[at];
+        if (next.reply) {
+          const reply = await next.reply;
           if ("error" in reply) throw Object.assign(new Error(reply.error), { stack: reply.error, code: reply.code });
           parse = reply;
         } else {
@@ -828,6 +928,7 @@ export async function sync(db, root, indexer, options = {}) {
         const symbolIds = [];
         for (const symbol of parsed.symbols) {
           names.add(symbol.name);
+          if (linkedEarly.length) definedLater.add(symbol.name);
           const parent = symbol.parent < 0 ? null : symbolIds[symbol.parent];
           const id = insertSymbol.run(file, parent, symbol.kind, symbol.name, symbol.qualifier, symbol.detail ?? null, symbol.comment ?? null, symbol.line, symbol.endLine, symbol.nameLine, symbol.nameCol).lastInsertRowid;
           symbolIds.push(Number(id));
@@ -912,6 +1013,11 @@ export async function sync(db, root, indexer, options = {}) {
           insertRef.run(file, caller, ref.kind, ref.name, ref.qualifier, ref.detail, ref.line, ref.col, ref.endLine, ref.endCol);
         }
         added.push(file);
+        if (focusedFile) {
+          focusRead = true;
+          const distance = /** @type {number} */ (closure.get(path));
+          for (const ref of parsed.refs) for (const used of byMember.get(ref.name) ?? []) use(used, distance + 1);
+        }
       } catch (error) {
         if (file) {
           deleteFile.run(file);
@@ -920,8 +1026,19 @@ export async function sync(db, root, indexer, options = {}) {
         const failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
         failures.push({ path, code: error instanceof Error && "code" in error && error.code === "PLG025E" ? "PLG025E" : "PLG022E", error: failure });
         added.push(Number(insertFile.run(path, languageOf(path) ?? "pli", memberOf(path), stat.mtime, stat.size, 0, null, failure).lastInsertRowid));
-        continue;
+        if (focusedFile) focusRead = true;
       }
+      // Committed twice: once what the file uses directly is read, a few
+      // files, and once all it uses is, which may be half the repository.
+      /** @param {number} distance */
+      const unread = (distance) =>
+        front.some((p) => waiting.has(p) && /** @type {number} */ (closure.get(p)) <= distance) ||
+        reading.some((r) => (closure.get(r.path) ?? Infinity) <= distance);
+      if (focusRead && !directDone && !unread(1)) {
+        directDone = true;
+        commitFocus();
+      }
+      if (focusRead && !unread(Infinity)) commitFocus();
     }
     const parsedAt = performance.now();
 
@@ -930,8 +1047,10 @@ export async function sync(db, root, indexer, options = {}) {
     let refs;
     let relinked;
     if (fresh) {
-      refs = /** @type {Iterable<RefRow>} */ (db.prepare(`SELECT ${REF_COLUMNS} FROM refs`).iterate());
-      relinked = /** @type {{ n: number }} */ (db.prepare("SELECT count(*) AS n FROM refs").get()).n;
+      const stale = `file NOT IN (SELECT value FROM json_each(?)) OR name IN (SELECT value FROM json_each(?))`;
+      const args = [JSON.stringify(linkedEarly), JSON.stringify([...definedLater])];
+      refs = /** @type {Iterable<RefRow>} */ (db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE ${stale}`).iterate(...args));
+      relinked = /** @type {{ n: number }} */ (db.prepare(`SELECT count(*) AS n FROM refs WHERE ${stale}`).get(...args)).n;
     } else {
       const ofNames = db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE name IN (SELECT value FROM json_each(?))`);
       const ofFiles = db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE file IN (SELECT value FROM json_each(?))`);

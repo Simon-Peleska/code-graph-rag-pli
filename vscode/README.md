@@ -130,6 +130,14 @@ three more threads while the worker writes.
   re-reads it and re-links the references whose targets may have moved.
   Changes that arrive while a sync runs, such as a git checkout's, are
   synced together when it ends.
+- A sync reads the file in the active editor first, then the members it
+  uses (includes, calls, fetches, programs, ... by member name), then what
+  those use, transitively, then the rest. The editor gets the graph twice
+  before the sync ends: once the file and what it uses directly are read,
+  and once all it uses is. Switching editors mid-sync starts over from the
+  new file. On the 20,000-member sample, where one program reaches half of
+  all members, that is after 0.13 and 2.6 seconds of a 4.4-second sync
+  (3.7 without an open file).
 
 Clicking the status bar item opens a menu: Show Graph, Show Log and Rebuild
 Graph. **Rebuild Graph** (also in the command palette) throws the graph away
