@@ -17,7 +17,6 @@ import { Symbols } from "./symbols.js";
 
 /** @typedef {import("./graph.js").Target} Target */
 /** @typedef {import("./graph.js").TreeRow} TreeRow */
-/** @typedef {import("./graph.js").WholeGraph} WholeGraph */
 /** @typedef {import("./symbols.js").Symbol} Symbol */
 /** @typedef {import("./worker.js").SyncRequest} SyncRequest */
 /** @typedef {import("./worker.js").SyncReply} SyncReply */
@@ -116,6 +115,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.menu", async () => {
       const items = [
         { label: "$(type-hierarchy) Show Graph", run: () => vscode.commands.executeCommand("pliGraph.show") },
+        { label: "$(checklist) Coverage Report", detail: "What the grammars could not read and which names resolve to nothing.", run: () => vscode.commands.executeCommand("pliGraph.coverage") },
         { label: "$(output) Show Log", run: () => log.show() },
         { label: "$(refresh) Rebuild Graph", detail: "Reads every file again, which takes minutes on a large repository.", run: () => vscode.commands.executeCommand("pliGraph.rebuild") },
       ];
@@ -125,6 +125,7 @@ export function activate(context) {
     }),
     vscode.commands.registerCommand("pliGraph.open", open),
     vscode.commands.registerCommand("pliGraph.show", () => showGraph(context)),
+    vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     registerMcpServer(context),
     vscode.languages.registerDefinitionProvider(
@@ -794,18 +795,23 @@ async function open(folder, target) {
 }
 
 /**
- * What the graph page posts: the view it switched to, or a file to open, or a reload request.
+ * What the graph page posts: the view it switched to, a file to open, or a
+ * question for the graph.
  * @typedef {object} PageMessage
- * @property {"route" | "open" | "reload"} type
+ * @property {"route" | "open" | "ask"} type
  * @property {string} [hash]
  * @property {number} [drawMs]
  * @property {number} [sinceLoadMs]
  * @property {string} [path]
  * @property {number} [line]
+ * @property {number} [id]
+ * @property {import("./graphpage.js").PageQuestion["what"]} [what]
+ * @property {unknown[]} [args]
  */
 
-// The graph website's page, filled with this workspace's whole graph. A page
-// for 20,000 files holds about 24 MB of JSON and takes a second to export.
+// The graph page asks for what each view draws. A worker of its own with its
+// own connection answers, so the overview's second of SQL on a big graph
+// never stalls the editor.
 /** @param {vscode.ExtensionContext} context */
 function showGraph(context) {
   const document = vscode.window.activeTextEditor?.document;
@@ -818,19 +824,8 @@ function showGraph(context) {
     void vscode.window.showErrorMessage(message);
     return;
   }
-  const started = Date.now();
-  /** @type {WholeGraph} */
-  let whole;
-  try {
-    whole = workspace.graph.whole();
-  } catch (error) {
-    const message = `[PLG007E] Reading the graph for ${workspace.folder.name} failed: ${error}`;
-    log.error(message);
-    void vscode.window.showErrorMessage(message);
-    return;
-  }
-  const module = where && whole.nodes.find((n) => n.kind === "module" && n.path === where.path);
-  const hash = module ? `v=module&id=${encodeURIComponent(module.id)}` : (graphPanel?.hash ?? "");
+  const module = where && workspace.graph.module(where.path);
+  const hash = module ? `v=module&id=${encodeURIComponent(module.path)}` : (graphPanel?.hash ?? "");
 
   if (graphPanel?.workspace === workspace) {
     graphPanel.panel.reveal(undefined, true);
@@ -843,20 +838,57 @@ function showGraph(context) {
   const panel = vscode.window.createWebviewPanel(
     "pliGraph",
     `PL/I Graph: ${workspace.folder.name}`,
-    { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
+    { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
     { enableScripts: true, retainContextWhenHidden: true },
   );
   const shown = { panel, workspace, hash };
   graphPanel = shown;
-  panel.webview.html = graphPage(context, whole, hash);
-  log.info(`graph page for ${workspace.folder.name}: ${whole.nodes.length} nodes, ${whole.edges.length} edges in ${Date.now() - started} ms`);
+  panel.webview.html = graphPage(context, workspace.folder.name, hash);
+
+  const name = workspace.folder.name;
+  /** @type {Map<number, { what: string, started: number }>} */
+  const pending = new Map();
+  const queries = new Worker(join(context.extensionPath, "out", "graphpage.cjs"), {
+    workerData: { graph: workspace.graphFile, root: workspace.folder.uri.fsPath, grammars: join(context.extensionPath, "out") },
+  });
+  queries.on("message", (/** @type {import("./graphpage.js").PageAnswer} */ answer) => {
+    const asked = pending.get(answer.id);
+    pending.delete(answer.id);
+    if ("error" in answer) {
+      const text = `[PLG026E] The graph page's question ${asked?.what} for ${name} failed: ${answer.error}`;
+      log.error(text);
+      void panel.webview.postMessage({ type: "answer", id: answer.id, error: text });
+      return;
+    }
+    log.info(`graph page ${asked?.what}: ${answer.ms} ms in SQL, ${Date.now() - (asked?.started ?? 0)} ms in all`);
+    void panel.webview.postMessage({ type: "answer", id: answer.id, result: answer.result });
+  });
+  /** @type {string | undefined} */
+  let stopped;
+  const failed = (/** @type {unknown} */ why) => {
+    stopped ??= `[PLG027E] The graph page's worker for ${name} stopped: ${why}`;
+    log.error(stopped);
+    for (const id of pending.keys()) void panel.webview.postMessage({ type: "answer", id, error: stopped });
+    pending.clear();
+  };
+  queries.on("error", failed);
+  queries.on("exit", (code) => {
+    if (graphPanel === shown) failed(`exit code ${code}`);
+  });
+
   panel.onDidDispose(() => {
     if (graphPanel === shown) {
       graphPanel = undefined;
     }
+    void queries.terminate();
   });
   panel.webview.onDidReceiveMessage((/** @type {PageMessage} */ message) => {
-    if (message.type === "route") {
+    if (message.type === "ask" && message.id !== undefined && stopped) {
+      void panel.webview.postMessage({ type: "answer", id: message.id, error: stopped });
+    } else if (message.type === "ask" && message.id !== undefined) {
+      pending.set(message.id, { what: `${message.what}(${JSON.stringify(message.args).slice(1, -1)})`, started: Date.now() });
+      queries.postMessage({ id: message.id, what: message.what, args: message.args ?? [] });
+    } else if (message.type === "route") {
       shown.hash = message.hash ?? "";
       log.info(`graph page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
     } else if (message.type === "open" && message.path) {
@@ -869,28 +901,65 @@ function showGraph(context) {
           log.error(text);
           void vscode.window.showErrorMessage(text);
         });
-    } else if (message.type === "reload" && workspace.graph) {
-      try {
-        panel.webview.html = graphPage(context, workspace.graph.whole(), shown.hash);
-        log.info(`graph page for ${workspace.folder.name} reloaded`);
-      } catch (error) {
-        const text = `[PLG007E] Reading the graph for ${workspace.folder.name} failed: ${error}`;
-        log.error(text);
-        void vscode.window.showErrorMessage(text);
-      }
     }
   });
+  log.info(`graph page for ${name} opened at #${hash}`);
+}
+
+/**
+ * Opens the coverage report of the active file's folder as a new Markdown
+ * document: what the grammars could not read, what resolves to nothing.
+ * @param {vscode.ExtensionContext} context
+ */
+async function showCoverage(context) {
+  const document = vscode.window.activeTextEditor?.document;
+  const workspace = (document && locate(document.uri)?.workspace) ?? [...workspaces.values()][0];
+  if (!workspace?.graph) {
+    const message = sqliteError ?? workspace?.error ?? "[PLG029E] There is no graph to report on yet: it is still being built, or no folder is open.";
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  const name = workspace.folder.name;
+  const started = Date.now();
+  log.info(`coverage report for ${name} started`);
+  const worker = new Worker(join(context.extensionPath, "out", "graphpage.cjs"), {
+    workerData: { graph: workspace.graphFile, root: workspace.folder.uri.fsPath, grammars: join(context.extensionPath, "out") },
+  });
+  try {
+    const report = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Reading the coverage of the ${name} graph…` },
+      () =>
+        new Promise((resolve, reject) => {
+          worker.on("message", (/** @type {import("./graphpage.js").PageAnswer} */ answer) =>
+            "error" in answer ? reject(new Error(answer.error)) : resolve(answer.result),
+          );
+          worker.on("error", reject);
+          worker.on("exit", (code) => reject(new Error(`the worker stopped with exit code ${code}`)));
+          worker.postMessage({ id: 0, what: "coverage", args: [] });
+        }),
+    );
+    log.info(`coverage report for ${name}: ${Date.now() - started} ms`);
+    const opened = await vscode.workspace.openTextDocument({ language: "markdown", content: /** @type {string} */ (report) });
+    await vscode.window.showTextDocument(opened, { viewColumn: vscode.ViewColumn.Active });
+  } catch (error) {
+    const text = `[PLG028E] The coverage report for ${name} failed: ${error instanceof Error ? error.message : error}`;
+    log.error(text);
+    void vscode.window.showErrorMessage(text);
+  } finally {
+    void worker.terminate();
+  }
 }
 
 /** @type {string | undefined} */
 let pageTemplate;
 /**
  * @param {vscode.ExtensionContext} context
- * @param {WholeGraph} whole
+ * @param {string} project
  * @param {string} hash
  * @returns {string}
  */
-function graphPage(context, whole, hash) {
+function graphPage(context, project, hash) {
   pageTemplate ??= readFileSync(vscode.Uri.joinPath(context.extensionUri, "out", "graph.html").fsPath, "utf-8");
   /** @param {string} text */
   const html = (text) => text.replace(/[<>&"]/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -899,8 +968,7 @@ function graphPage(context, whole, hash) {
   return /** @type {string} */ (pageTemplate)
     .replace("<head>", () => `<head>${WEBVIEW_CSP}`)
     .replace("<body>", () => `<body>${route}`)
-    .replaceAll("__PROJECT__", () => html(whole.project))
-    .replace("__GRAPH_JSON__", () => JSON.stringify(whole).replaceAll("</", "<\\/"));
+    .replaceAll("__PROJECT__", () => html(project));
 }
 
 // ---- 3270 screen --------------------------------------------------------------

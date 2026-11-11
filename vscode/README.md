@@ -52,8 +52,9 @@ extension keeps of each workspace folder:
   sync runs, and a sync of 50 files or more, such as the first one, also
   shows a notification with the step (`Reading files: 5,000 of 20,000`).
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
-  whole graph next to the editor, starting at the active file's module. It is
-  the page from `viz/`, drawn from the same database:
+  graph in the editor, starting at the active file's module. It is the page
+  from `viz/`; it asks for what each view draws, and a worker thread of its
+  own reads that from the database:
   - the overview is one folder at a time: its subfolders and its modules,
     with the calls and includes between them summed up. A folder with more
     than 300 modules shows the 300 most connected; search (`/`) and the
@@ -64,8 +65,18 @@ extension keeps of each workspace folder:
   - When the graph changes, a **graph changed · reload** button appears;
     reloading keeps the current view.
 
-  For 20,000 files the page holds about 24 MB of graph data: reading it takes
-  about a second, and each view draws in under half a second.
+  For 20,000 files a module or procedure view reads in under 60 ms. The first
+  overview after a sync takes about 2 seconds, because it sums up every call;
+  the sums are kept until the next sync changes the graph.
+- **PL/I Graph: Coverage Report** (also in the status bar menu) opens a
+  Markdown document on how much of the code the graph understood: files the
+  grammars could not read and the shapes of those lines, references and
+  field accesses that resolve to nothing, DL/I calls without a known
+  function or segment, and other incomplete facts. Part 1 has only counts
+  and line shapes, which keep the grammars' keywords and turn every name
+  into `x`, number into `9` and string into `'…'`, so it can be shared
+  without the code; part 2 has the names and paths. It takes about 8
+  seconds for 6 million lines, in a worker thread.
 - **PL/I Graph: Show 3270 Screen** (the window icon on an MFS file, or its
   context menu in the explorer) draws the MFS format at the cursor as a 3270
   terminal next to the editor, with
@@ -243,7 +254,7 @@ can read it while VS Code runs:
 - `PLG004E` a file from the tree could not be opened.
 - `PLG005E` this VS Code has no `node:sqlite`; update VS Code.
 - `PLG006E` Show Graph: there is no graph yet (first sync still running).
-- `PLG007E` Show Graph: reading the graph failed.
+- `PLG007E` no longer raised; it was Show Graph reading the whole graph.
 - `PLG008E` Show Graph: **Go to source** could not open the file.
 - `PLG009E` reading the declarations of a file failed (Go to Definition, Find All References).
 - `PLG010E` completion failed.
@@ -269,6 +280,21 @@ can read it while VS Code runs:
 - `PLG025E` a parser thread stopped (crashed or ran out of memory) while
   reading a file; the sync goes on without that file's facts. Please report
   it with the file.
+- `PLG026E` Show Graph: a question of the page failed (a view, the details,
+  search or a list); the page shows it, the output has the stack.
+- `PLG027E` Show Graph: the page's worker thread stopped; close and reopen the page.
+- `PLG028E` the coverage report failed; the output has the stack.
+- `PLG029E` there is no graph to make a coverage report of yet: it is still
+  being built, or no folder is open.
+- `PLG030E` the model explaining a procedure answered with an error (HTTP
+  status or an error in the stream); the procedure is left unexplained.
+- `PLG031E` the model's answer is not JSON or lacks the summary or rules; it
+  is asked once more.
+- `PLG032E` the model is not reachable at its URL (not running, wrong port).
+
+The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
+`VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
+sidebar list, `VIZ-105` search could not be read.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

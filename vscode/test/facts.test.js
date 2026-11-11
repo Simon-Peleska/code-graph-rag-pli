@@ -59,8 +59,8 @@ test("a procedure keeps its OPTIONS and RETURNS", () => {
 });
 
 test("the graph page marks the OPTIONS(MAIN) procedure", () => {
-  const procedures = new Graph(db, root).whole().nodes.filter((n) => n.kind === "function" && n.path === "SRC/KDP00001");
-  assert.deepEqual(procedures.map((n) => [n.name, n.mods]), [["KDP00001", ["MAIN"]], ["PRUEFEN", undefined]]);
+  const procedures = /** @type {any} */ (new Graph(db, root).pageDetails("SRC/KDP00001")).procedures;
+  assert.deepEqual(procedures.map((/** @type {any} */ n) => [n.name, n.mods]).sort(), [["KDP00001", ["MAIN"]], ["PRUEFEN", undefined]]);
 });
 
 test("JCL steps run programs under a PSB", () => {

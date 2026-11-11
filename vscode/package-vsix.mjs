@@ -19,12 +19,13 @@ const files = [
   "syntaxes/jcl.tmLanguage.json",
   "syntaxes/hlasm.tmLanguage.json",
   "syntaxes/db2.tmLanguage.json",
-  "out/extension.cjs",
-  "out/worker.cjs",
-  "out/mcp.cjs",
   "out/graph.html",
   "out/screen.html",
   "out/web-tree-sitter.wasm",
+  // Every bundle build.mjs writes: the extension starts some of them as threads.
+  ...readdirSync("out")
+    .filter((name) => name.endsWith(".cjs"))
+    .map((name) => `out/${name}`),
   ...readdirSync("out")
     .filter((name) => name.startsWith("tree-sitter-") && (name.endsWith(".wasm") || name.endsWith(".scm")))
     .map((name) => `out/${name}`),

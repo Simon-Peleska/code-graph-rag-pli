@@ -32,7 +32,10 @@ header {
 header h1 { font-size: 1em; margin: 0; font-weight: 600; }
 .crumbs { display: flex; gap: 6px; align-items: center; color: var(--muted); min-width: 0; flex-wrap: wrap; }
 .crumbs a { color: var(--accent); text-decoration: none; cursor: pointer; }
-.crumbs a:hover { text-decoration: underline; }
+.crumbs a:hover { color: var(--vscode-textLink-activeForeground, var(--text)); text-decoration: underline; }
+.crumbs a, .results div[data-i], vscode-tree-item::part(wrapper), vscode-button::part(base) {
+  transition: color .15s, background-color .15s;
+}
 .crumbs .here { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
 .spacer { flex: 1; }
 .tools { display: flex; gap: 4px; align-items: center; }
@@ -120,72 +123,65 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
   </vscode-split-layout>
 </vscode-split-layout>
 <script>/*__CYTOSCAPE__*/</script>
-<script type="application/json" id="graph-data">__GRAPH_JSON__</script>
 <script>
 "use strict";
 
 // ---- data -----------------------------------------------------------------
-const G = JSON.parse(document.getElementById("graph-data").textContent);
-const byId = new Map(G.nodes.map(n => [n.id, n]));
+// The page asks VS Code for what each view draws; a big graph does not fit in
+// a page. byId keeps every node seen, for labels and links.
+const host = acquireVsCodeApi();
+const byId = new Map();
+const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
+let asked = 0;
+const waiting = new Map();
+function ask(what, ...args) {
+  const id = ++asked;
+  return new Promise((resolve, reject) => {
+    waiting.set(id, { resolve, reject });
+    host.postMessage({ type: "ask", id, what, args });
+  });
+}
+window.addEventListener("message", event => {
+  const message = event.data;
+  if (message?.type === "answer") {
+    const asking = waiting.get(message.id);
+    waiting.delete(message.id);
+    if (message.error) asking?.reject(new Error(message.error));
+    else asking?.resolve(message.result);
+  }
+  if (message?.type === "changed") document.getElementById("reload-tool").hidden = false;
+  if (message?.type === "go") location.hash = message.hash;
+});
+
 const isProc = n => n && (n.kind === "function" || n.kind === "method");
 const isModule = n => n && (n.kind === "module" || n.kind === "external");
-
-const callees = new Map(), callers = new Map();
-const imports = new Map(), importedBy = new Map();
-const parentOf = new Map(), childrenOf = new Map();
 const push = (map, key, value) => (map.get(key) || map.set(key, []).get(key)).push(value);
-// The extension sends edge ends as positions in G.nodes, which keeps 20,000
-// files' worth of graph at half the size; the website writes ids.
-const nodeId = end => typeof end === "number" ? G.nodes[end].id : end;
-for (const [from, type, to] of G.edges) {
-  const source = nodeId(from), target = nodeId(to);
-  if (type === "CALLS") { push(callees, source, target); push(callers, target, source); }
-  else if (type === "IMPORTS") { push(imports, source, target); push(importedBy, target, source); }
-  else { parentOf.set(target, source); push(childrenOf, source, target); }
-}
-
-const moduleOf = new Map();
-for (const n of G.nodes) {
-  let id = n.id;
-  while (id && !isModule(byId.get(id))) id = parentOf.get(id);
-  moduleOf.set(n.id, id);
-}
-const procsOf = new Map();
-for (const n of G.nodes) if (isProc(n) && moduleOf.get(n.id)) push(procsOf, moduleOf.get(n.id), n.id);
-
-// Folders come from module paths; the overview draws one folder at a time.
-const parentFolder = folder => folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
-const folderOf = id => { const path = byId.get(id)?.path || ""; return path.includes("/") ? parentFolder(path) : ""; };
-const modulesUnder = new Map();  // folder -> modules in it and below
-for (const n of G.nodes) if (n.kind === "module") {
-  for (let folder = folderOf(n.id); ; folder = parentFolder(folder)) {
-    modulesUnder.set(folder, (modulesUnder.get(folder) || 0) + 1);
-    if (!folder) break;
+// The edges of the view drawn now.
+let callees = new Map(), callers = new Map(), parentOf = new Map();
+function useGraph(graph) {
+  remember(graph.nodes);
+  callees = new Map(); callers = new Map(); parentOf = new Map();
+  for (const [source, type, target] of graph.edges) {
+    if (type === "CALLS") { push(callees, source, target); push(callers, target, source); }
+    else if (type === "DEFINES") parentOf.set(target, source);
   }
 }
+const moduleOf = id => { const n = byId.get(id); return isModule(n) ? id : n?.path; };
 
-const unresolved = new Map();  // name -> modules referencing it
-for (const n of G.nodes) for (const name of n.unresolved || []) push(unresolved, name, n.id);
-
-const short = id => G.project && id.startsWith(G.project + ".") ? id.slice(G.project.length + 1) : id;
-const label = id => { const n = byId.get(id); return isModule(n) ? short(id) : n.name; };
+const parentFolder = folder => folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "";
+const label = id => { const n = byId.get(id); return isModule(n) ? id : n?.name ?? id; };
 const isMain = n => (n.mods || []).some(m => m.toUpperCase() === "MAIN");
-const totals = {
-  modules: G.nodes.filter(isModule).length,
-  procs: G.nodes.filter(isProc).length,
-  calls: G.edges.filter(e => e[1] === "CALLS").length,
-};
-const byName = (a, b) => label(a).localeCompare(label(b));
-const sortedUnique = ids => [...new Set(ids)].sort(byName);
-
-// Inside the VS Code extension the page can open files and hear about updates.
-const host = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
+const byLabel = (a, b) => label(a.id).localeCompare(label(b.id));
 
 // ---- small DOM helper -----------------------------------------------------
+// A tree item stops its clicks; its tree reports them as a (non-bubbling) select.
+const pickSelected = event => event.detail[0]?.pick?.();
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
+  if (tag === "vscode-tree") node.addEventListener("vsc-tree-select", pickSelected);
   for (const [key, value] of Object.entries(props || {})) {
-    if (key === "onclick") node.addEventListener("click", value);
+    if (key === "onclick" && tag === "vscode-tree-item") node.pick = value;
+    else if (key === "onclick") node.addEventListener("click", value);
     else if (key === "class") node.className = value;
     else node.setAttribute(key, value);
   }
@@ -239,7 +235,8 @@ function cyStyle() {
     { selector: "node", style: {
       label: "data(label)", "font-size": 11, color: css("--text"), "text-valign": "center", "text-halign": "center",
       "text-wrap": "wrap", "background-color": css("--node"), "border-width": 1, "border-color": css("--node-border"),
-      shape: "round-rectangle", width: "data(w)", height: "data(h)" } },
+      shape: "round-rectangle", width: "data(w)", height: "data(h)",
+      "transition-property": "opacity, background-color, border-color", "transition-duration": 150 } },
     { selector: "node.module", style: { "font-weight": 600 } },
     { selector: "node.folder", style: { "font-weight": 600, "background-color": css("--group"), "border-width": 2 } },
     { selector: "node.external", style: { "border-style": "dashed", color: css("--muted") } },
@@ -251,11 +248,13 @@ function cyStyle() {
       "background-color": css("--group"), "border-color": css("--line"), "text-valign": "top", "text-halign": "center",
       "font-size": 12, "font-weight": 600, color: css("--muted"), padding: 14, shape: "round-rectangle" } },
     { selector: ":parent.other", style: { "border-style": "dashed" } },
+    { selector: "node.hover", style: { "background-color": css("--accent-soft"), "border-color": css("--accent") } },
     { selector: "node:selected", style: { "border-color": css("--accent"), "border-width": 3 } },
     { selector: "edge", style: {
       width: "data(width)", "line-color": css("--edge"), "target-arrow-color": css("--edge"),
       "target-arrow-shape": "triangle", "arrow-scale": 0.9, "curve-style": "unbundled-bezier",
-      "control-point-weights": edge => sCurve(edge).weights, "control-point-distances": edge => sCurve(edge).distances } },
+      "control-point-weights": edge => sCurve(edge).weights, "control-point-distances": edge => sCurve(edge).distances,
+      "transition-property": "opacity, line-color, target-arrow-color", "transition-duration": 150 } },
     { selector: "edge:loop", style: { "curve-style": "bezier" } },
     { selector: "edge.imports", style: { "line-style": "dashed", "line-color": css("--imports"), "target-arrow-color": css("--imports") } },
     // Edges inside one layer bend out up or down, further the longer they are,
@@ -275,18 +274,20 @@ const cy = cytoscape({
   minZoom: 0.05, maxZoom: 3, boxSelectionEnabled: false,
 });
 // The panes get their sizes after the first draw, and the sashes move.
-new ResizeObserver(() => { cy.resize(); fit(); }).observe(document.getElementById("cy"));
+// Resizing clears the canvas and Cytoscape redraws only on a later frame,
+// so it draws here, before the browser paints the blank canvas.
+new ResizeObserver(() => { cy.resize(); fit(); cy.renderer().render(); }).observe(document.getElementById("cy"));
 cytoscape.use(cytoscapeFcose);
 // VS Code switches themes by changing the body's class.
 new MutationObserver(() => cy.style(cyStyle())).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
 // The width nodeData gives the widest of these nodes.
 const widest = (ids, withModule = false) => Math.max(44, ...ids.map(id =>
-  Math.max(label(id).length, withModule && isProc(byId.get(id)) ? short(moduleOf.get(id) || "").length : 0) * 7 + 18));
+  Math.max(label(id).length, withModule && isProc(byId.get(id)) ? (moduleOf(id) || "").length : 0) * 7 + 18));
 
 function nodeData(id, extra = {}) {
   const n = byId.get(id);
-  const text = extra.label || (isProc(n) && extra.withModule ? `${n.name}\n${short(moduleOf.get(id) || "")}` : label(id));
+  const text = extra.label || (isProc(n) && extra.withModule ? `${n.name}\n${moduleOf(id) || ""}` : label(id));
   const lines = text.split("\n");
   return {
     data: { id, label: text, w: Math.max(44, Math.max(...lines.map(l => l.length)) * 7 + 18), h: 14 * lines.length + 14, ...extra.data },
@@ -310,80 +311,51 @@ cy.on("tap", event => { if (event.target === cy) showDetails(route().id); });
 cy.on("mouseover", "node", event => {
   const node = event.target;
   if (node.isParent()) return;
+  node.addClass("hover");
   cy.elements().addClass("faded");
   const near = node.closedNeighborhood();
   near.union(near.ancestors()).removeClass("faded");
 });
-cy.on("mouseout", "node", () => cy.elements().removeClass("faded"));
+cy.on("mouseout", "node", () => cy.elements().removeClass("faded hover"));
 
 // ---- views ----------------------------------------------------------------
 // One folder: its subfolders and its own modules, with the calls and includes
-// between them summed up. Past OVERVIEW_LIMIT items only the most connected
-// are drawn: a force layout of 20,000 modules never finishes, and could not be
-// read if it did. Search and the module list reach the rest.
-const OVERVIEW_LIMIT = 300;
-function overview(state) {
-  const folder = state.id || "";
-  const inside = folder ? `${folder}/` : "";
-  const itemOf = new Map();
-  const item = moduleId => {
-    if (!moduleId) return null;
-    if (itemOf.has(moduleId)) return itemOf.get(moduleId);
-    const at = folderOf(moduleId);
-    const drawnAs = at === folder ? moduleId
-      : at.startsWith(inside) ? `dir:${inside}${at.slice(inside.length).split("/")[0]}` : null;
-    itemOf.set(moduleId, drawnAs);
-    return drawnAs;
-  };
-  const pairs = new Map();
-  const degree = new Map();
-  const bump = (a, b, kind) => {
-    if (!a || !b || a === b) return;
-    const key = `${kind}\t${a}\t${b}`;
-    pairs.set(key, (pairs.get(key) || 0) + 1);
-    degree.set(a, (degree.get(a) || 0) + 1);
-    degree.set(b, (degree.get(b) || 0) + 1);
-  };
-  for (const [source, targets] of callees) for (const target of targets) bump(item(moduleOf.get(source)), item(moduleOf.get(target)), "calls");
-  for (const [source, targets] of imports) for (const target of targets) bump(item(source), item(target), "imports");
-
-  const folders = [...modulesUnder.keys()].filter(f => f !== folder && f.startsWith(inside) && !f.slice(inside.length).includes("/")).sort();
-  const modules = G.nodes.filter(n => folderOf(n.id) === folder && (n.kind === "module" || (n.kind === "external" && degree.has(n.id))));
-  const connected = modules.filter(n => state.isolated || degree.has(n.id));
-  const room = Math.max(0, OVERVIEW_LIMIT - folders.length);
-  const shown = connected.length <= room ? connected
-    : [...connected].sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0)).slice(0, room);
+// between them summed up. Past 300 items VS Code sends only the most
+// connected: a force layout of 20,000 modules never finishes, and could not
+// be read if it did. Search and the module list reach the rest.
+function overview(state, data) {
+  const inside = state.id ? `${state.id}/` : "";
+  remember(data.modules);
   const elements = [
-    ...folders.map(f => nodeData(`dir:${f}`, { label: `${f.slice(inside.length)}/\n${modulesUnder.get(f)} modules`, classes: ["folder"] })),
-    ...shown.map(n => nodeData(n.id)),
+    ...data.folders.map(f => nodeData(f.id, { label: `${f.id.slice(4 + inside.length)}/\n${f.modules} modules`, classes: ["folder"] })),
+    ...data.modules.map(n => nodeData(n.id)),
+    ...data.edges.map(([a, b, kind, weight]) => edgeData(a, b, kind, weight)),
   ];
-  const drawn = new Set(elements.map(e => e.data.id));
-  for (const [key, weight] of pairs) {
-    const [kind, a, b] = key.split("\t");
-    if (drawn.has(a) && drawn.has(b)) elements.push(edgeData(a, b, kind, weight));
-  }
   const notes = [];
-  if (folders.length) notes.push(`${folders.length} folders`);
-  notes.push(`${shown.length} modules`);
-  if (shown.length < connected.length) notes.push(`the ${shown.length} most connected of ${connected.length}; search finds the rest`);
-  if (modules.length > connected.length) notes.push(`${modules.length - connected.length} without links hidden`);
+  if (data.folders.length) notes.push(`${data.folders.length} folders`);
+  notes.push(`${data.modules.length} modules`);
+  if (data.modules.length < data.connected) notes.push(`the ${data.modules.length} most connected of ${data.connected}; search finds the rest`);
+  if (data.unlinked) notes.push(`${data.unlinked} without links hidden`);
   return {
     elements,
     // fcose: force-directed, edges act as springs, so linked modules end up close together.
-    layout: { name: "fcose", animate: false, randomize: true, quality: drawn.size > 1500 ? "draft" : "default",
+    layout: { name: "fcose", animate: false, randomize: true, quality: elements.length > 1500 ? "draft" : "default",
               nodeRepulsion: () => 400000, idealEdgeLength: () => 220, edgeElasticity: () => 0.3, nodeDimensionsIncludeLabels: true,
               nodeSeparation: 140, gravity: 0.15, numIter: 3000, packComponents: true },
     status: `${notes.join(", ")} · double-click to open`,
   };
 }
 
-function moduleView(state) {
+function moduleView(state, graph) {
+  useGraph(graph);
   const moduleId = state.id;
-  const own = procsOf.get(moduleId) || [];
+  const own = graph.nodes.filter(n => isProc(n) && n.path === moduleId).map(n => n.id);
   const ownSet = new Set(own);
   const side = new Map();  // procedure outside the module -> layer: -1 callers above, 1 callees below
   for (const id of own) for (const target of callees.get(id) || []) if (!ownSet.has(target)) side.set(target, 1);
   for (const id of own) for (const source of callers.get(id) || []) if (!ownSet.has(source) && !side.has(source)) side.set(source, -1);
+  // The module calling its own procedures from the top level is drawn once, in the middle.
+  side.delete(moduleId);
 
   const LAYER_GAP = 170, STEP = widest([...own, ...side.keys()]) + 24, GROUP_GAP = 60, SIDE_LIMIT = 60;
   const elements = [];
@@ -417,7 +389,7 @@ function moduleView(state) {
       return [id, xs.reduce((a, b) => a + b, 0) / xs.length];
     }));
     const groups = new Map();
-    for (const id of ids) push(groups, moduleOf.get(id) || "", id);
+    for (const id of ids) push(groups, moduleOf(id) || "", id);
     const mean = list => list.reduce((a, id) => a + want.get(id), 0) / list.length;
     const order = [...groups.keys()].sort((a, b) => mean(groups.get(a)) - mean(groups.get(b)));
     let cursor = -Infinity, drift = 0;
@@ -432,7 +404,7 @@ function moduleView(state) {
     // A module can show up in both outer layers, so each layer gets its own box.
     for (const group of order) {
       const box = group && `${group} @${layer}`;
-      if (box) elements.push(nodeData(box, { label: label(group), classes: ["module", "other"], data: { ref: group } }));
+      if (box) elements.push(nodeData(box, { label: group, classes: ["module", "other"], data: { ref: group } }));
       for (const id of groups.get(group)) add(id, box, layer);
     }
     if (more) elements.push({
@@ -459,7 +431,7 @@ function moduleView(state) {
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${own.length} procedures in ${short(moduleId)} · callers above, callees below${hiddenCount ? ` · ${hiddenCount} less connected not drawn, the details list them` : ""} · double-click to follow`,
+    status: `${own.length} procedures in ${moduleId} · callers above, callees below${hiddenCount ? ` · ${hiddenCount} less connected not drawn, the details list them` : ""} · double-click to follow`,
   };
 }
 
@@ -485,7 +457,10 @@ function orderColumns(columns, neighbours) {
   }
 }
 
-function procView(state) {
+// VS Code sends the procedures `depth` calls away; this walks them again to
+// put each on the level it is reached at first, callees before callers.
+function procView(state, graph) {
+  useGraph(graph);
   const focus = state.id;
   const level = new Map([[focus, 0]]);
   const walk = (neighbours, sign) => {
@@ -505,7 +480,7 @@ function procView(state) {
   for (const [id, column] of level) push(columns, column, id);
   const elements = [];
   const PER_COLUMN = 60, LAYER_GAP = 150, STEP = widest([...level.keys()], true) + 24;
-  for (const ids of columns.values()) ids.sort(byName);
+  for (const ids of columns.values()) ids.sort((a, b) => label(a).localeCompare(label(b)));
   orderColumns(columns, id => [...(callees.get(id) || []), ...(callers.get(id) || [])]);
   for (const [column, ids] of columns) {
     const shown = ids.slice(0, PER_COLUMN);
@@ -537,51 +512,62 @@ function section(title, count, ...content) {
   return el("vscode-collapsible", { heading: title, open: "" },
     el("vscode-badge", { slot: "decorations", variant: "counter" }, String(count)), ...content);
 }
-function linkList(title, ids, empty, home) {
-  return [section(title, ids.length,
-    ids.length ? el("vscode-tree", null, ids.slice(0, LIST_LIMIT).map(id => el("vscode-tree-item", { onclick: () => open(id), title: id }, label(id),
-      isProc(byId.get(id)) && moduleOf.get(id) !== home ? el("span", { slot: "description" }, short(moduleOf.get(id) || "")) : null)))
-               : el("div", { class: "empty" }, empty),
-    ids.length > LIST_LIMIT ? el("div", { class: "empty" }, `… ${ids.length - LIST_LIMIT} more`) : null)];
+function linkList(title, nodes, empty, home) {
+  const unique = [...new Map(remember(nodes).map(n => [n.id, n])).values()].sort(byLabel);
+  return [section(title, unique.length,
+    unique.length ? el("vscode-tree", null, unique.slice(0, LIST_LIMIT).map(n => el("vscode-tree-item", { onclick: () => open(n.id), title: n.id }, label(n.id),
+      isProc(n) && n.path !== home ? el("span", { slot: "description" }, n.path || "") : null)))
+                  : el("div", { class: "empty" }, empty),
+    unique.length > LIST_LIMIT ? el("div", { class: "empty" }, `… ${unique.length - LIST_LIMIT} more`) : null)];
 }
 const button = (text, onclick) => el("vscode-button", { onclick }, text);
 
-function showDetails(id) {
+let detailsAsked = 0;
+async function showDetails(id) {
+  const mine = ++detailsAsked;
   const panel = document.getElementById("details");
-  panel.replaceChildren();
   const n = byId.get(id);
-  if (!n) {
-    panel.append(el("div", { class: "head" }, el("h2", null, G.project || "Code graph"),
-      el("p", { class: "sub" }, `${totals.modules} modules · ${totals.procs} procedures · ${totals.calls} calls · ${unresolved.size} unresolved names`),
-      el("p", null, "Click a node for details, double-click to open it. Hover to highlight its neighbours."),
-      el("p", { class: "sub" }, "Arrows point from caller to callee and from including to included module.")));
+  let details = null;
+  try {
+    details = n ? await ask("details", id) : null;
+    if (mine !== detailsAsked) return;
+    if (!n) {
+      const sum = await ask("summary");
+      if (mine !== detailsAsked) return;
+      panel.replaceChildren(el("div", { class: "head" }, el("h2", null, sum.project),
+        el("p", { class: "sub" }, `${sum.modules} modules · ${sum.procedures} procedures · ${sum.calls} calls · ${sum.unresolved} unresolved names`),
+        el("p", null, "Click a node for details, double-click to open it. Hover to highlight its neighbours."),
+        el("p", { class: "sub" }, "Arrows point from caller to callee and from including to included module.")));
+      return;
+    }
+  } catch (error) {
+    if (mine === detailsAsked) showError("VIZ-103", `could not read the details of ${id}: ${error.message}`, error);
     return;
   }
+  panel.replaceChildren();
   const where = n.path ? `${n.path}${n.line ? `:${n.line}–${n.end}` : ""}` : "";
   panel.append(el("div", { class: "head" },
     el("div", null, el("vscode-badge", null, n.kind), ...(n.mods || []).map(m => el("vscode-badge", { variant: m.toUpperCase() === "MAIN" ? "activity-bar-counter" : "default" }, m))),
     el("h2", null, label(id)), isModule(n) ? null : el("div", { class: "qn" }, id), where && where !== label(id) ? el("div", { class: "sub" }, where) : null,
-    host && n.path ? button("Go to source", () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 })) : null));
+    n.path ? button("Go to source", () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 })) : null));
   const head = panel.firstChild;
+  // An include the repository lacks has nothing more to show.
+  if (!details) return;
   if (isModule(n)) {
-    panel.append(...linkList("Procedures", sortedUnique(procsOf.get(id) || []), "none", id),
-      ...linkList("Includes", sortedUnique(imports.get(id) || []), "none"),
-      ...linkList("Included by", sortedUnique(importedBy.get(id) || []), "none"));
-    const own = procsOf.get(id) || [];
-    const out = sortedUnique(own.flatMap(p => callees.get(p) || []).map(t => moduleOf.get(t)).filter(m => m && m !== id));
-    const inc = sortedUnique(own.flatMap(p => callers.get(p) || []).map(s => moduleOf.get(s)).filter(m => m && m !== id));
-    panel.append(...linkList("Calls into", out, "none"), ...linkList("Called from", inc, "none"));
-    panel.append(section("Unresolved names", (n.unresolved || []).length,
-      (n.unresolved || []).length ? el("div", { class: "sub text" }, n.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
+    panel.append(...linkList("Procedures", details.procedures, "none", id),
+      ...linkList("Includes", details.includes, "none"),
+      ...linkList("Included by", details.includedBy, "none"),
+      ...linkList("Calls into", details.callsInto, "none"),
+      ...linkList("Called from", details.calledFrom, "none"),
+      section("Unresolved names", details.unresolved.length,
+        details.unresolved.length ? el("div", { class: "sub text" }, details.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
     if (route().id !== id || route().view !== "module") head.append(" ", button("Open module", () => open(id)));
   } else {
-    const parent = parentOf.get(id);
-    if (parent) panel.append(...linkList("Defined in", [parent], ""));
-    panel.append(...linkList("Called by", sortedUnique(callers.get(id) || []), "no callers found"),
-      ...linkList("Calls", sortedUnique(callees.get(id) || []), "calls nothing known"));
-    const nested = (childrenOf.get(id) || []).filter(c => isProc(byId.get(c)));
-    if (nested.length) panel.append(...linkList("Defines", sortedUnique(nested), "", moduleOf.get(id)));
-    if (isProc(n) && (route().id !== id || route().view !== "proc")) head.append(" ", button("Show call graph", () => open(id)));
+    panel.append(...linkList("Defined in", details.definedIn, ""),
+      ...linkList("Called by", details.calledBy, "no callers found"),
+      ...linkList("Calls", details.calls, "calls nothing known"));
+    if (details.defines.length) panel.append(...linkList("Defines", details.defines, "", n.path));
+    if (route().id !== id || route().view !== "proc") head.append(" ", button("Show call graph", () => open(id)));
   }
 }
 
@@ -603,34 +589,33 @@ function renderCrumbs(state) {
     const parts = folderCrumbs(state.id || "");
     return crumbs.replaceChildren(...parts.slice(0, -1), here(parts.at(-1).textContent));
   }
-  const moduleId = state.view === "module" ? state.id : moduleOf.get(state.id);
-  const parts = [...folderCrumbs(folderOf(moduleId)), "›"];
-  if (state.view === "module") parts.push(here(short(moduleId)));
-  else parts.push(el("a", { onclick: () => go({ view: "module", id: moduleId }) }, short(moduleId || "")), "›", here(byId.get(state.id).name));
+  const moduleId = moduleOf(state.id) || "";
+  const parts = [...folderCrumbs(parentFolder(moduleId)), "›"];
+  if (state.view === "module") parts.push(here(moduleId));
+  else parts.push(el("a", { onclick: () => go({ view: "module", id: moduleId }) }, moduleId), "›", here(label(state.id)));
   crumbs.replaceChildren(...parts);
 }
 
 let tab = "modules";
-function renderList() {
-  const query = document.getElementById("filter").value.trim().toUpperCase();
-  let rows;
-  if (tab === "modules") {
-    rows = G.nodes.filter(n => n.kind === "module").map(n => ({ id: n.id, text: short(n.id), count: (procsOf.get(n.id) || []).length }));
-  } else if (tab === "entries") {
-    rows = G.nodes.filter(n => isProc(n) && isMain(n)).map(n => ({ id: n.id, text: n.name, sub: short(moduleOf.get(n.id) || ""), count: (callees.get(n.id) || []).length }));
-  } else {
-    rows = [...unresolved].map(([name, mods]) => ({ text: name, count: mods.length, mods }));
-  }
-  rows = rows.filter(r => !query || r.text.toUpperCase().includes(query)).sort((a, b) => a.text.localeCompare(b.text));
+let listAsked = 0;
+async function renderList() {
+  const mine = ++listAsked;
   const list = document.getElementById("list");
-  const LIMIT = 500;
-  list.replaceChildren(...rows.slice(0, LIMIT).map(r => el("vscode-tree-item", {
-      title: r.mods ? `referenced in ${r.mods.map(short).join(", ")}` : r.id,
-      onclick: () => open(r.id || r.mods[0]),
-    }, r.text, r.sub ? el("span", { slot: "description" }, r.sub) : null, el("span", { slot: "decoration", class: "n" }, String(r.count)))));
+  let found;
+  try {
+    found = await ask("list", tab, document.getElementById("filter").value);
+  } catch (error) {
+    if (mine === listAsked) showError("VIZ-104", `could not list the ${tab}: ${error.message}`, error);
+    return;
+  }
+  if (mine !== listAsked) return;
+  // Modules and unresolved names open a module, the entry points a procedure.
+  const view = tab === "entries" ? "proc" : "module";
+  list.replaceChildren(...found.rows.map(r => el("vscode-tree-item", { title: r.title || r.id, onclick: () => go({ view, id: r.id }) },
+    r.text, r.sub ? el("span", { slot: "description" }, r.sub) : null, el("span", { slot: "decoration", class: "n" }, String(r.count)))));
   document.querySelectorAll("#list ~ .empty").forEach(note => note.remove());
-  if (rows.length > LIMIT) list.after(el("div", { class: "empty" }, `${rows.length - LIMIT} more, refine the filter`));
-  if (!rows.length) list.after(el("div", { class: "empty" }, "nothing here"));
+  if (found.total > found.rows.length) list.after(el("div", { class: "empty" }, `${found.total - found.rows.length} more, refine the filter`));
+  if (!found.total) list.after(el("div", { class: "empty" }, "nothing here"));
 }
 // The tabs share one filter and list, which move into the selected panel.
 document.getElementById("tabs").addEventListener("vsc-tabs-select", event => {
@@ -640,22 +625,27 @@ document.getElementById("tabs").addEventListener("vsc-tabs-select", event => {
   renderList();
 });
 document.getElementById("filter").addEventListener("input", renderList);
+document.getElementById("list").addEventListener("vsc-tree-select", pickSelected);
 
 // ---- search ---------------------------------------------------------------
-const searchable = G.nodes.filter(n => isProc(n) || n.kind === "module")
-  .map(n => ({ id: n.id, key: `${n.name} ${n.id}`.toUpperCase(), name: label(n.id).toUpperCase() }));
 const search = document.getElementById("search"), results = document.getElementById("results");
-let hits = [], active = 0;
-function renderResults() {
-  const query = search.value.trim().toUpperCase();
-  // Plain comparisons: localeCompare over a 100,000-name match list made typing lag.
-  const rank = s => (s.name === query ? "0" : "1") + s.name;
-  hits = query ? searchable.filter(s => s.key.includes(query))
-    .map(s => [rank(s), s]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0).slice(0, 50).map(([, s]) => s) : [];
+let hits = [], active = 0, searchAsked = 0;
+async function renderResults() {
+  const mine = ++searchAsked;
+  const query = search.value.trim();
+  let found = [];
+  try {
+    found = query ? await ask("search", query) : [];
+  } catch (error) {
+    if (mine === searchAsked) showError("VIZ-105", `could not search for ${query}: ${error.message}`, error);
+    return;
+  }
+  if (mine !== searchAsked) return;
+  hits = remember(found);
   active = 0;
   results.hidden = !query;
   results.replaceChildren(...[...hits.map((hit, i) => el("div", { "data-i": i, class: i === active ? "active" : "", onclick: () => pick(i) },
-    label(hit.id), el("div", { class: "sub" }, `${byId.get(hit.id).kind} · ${short(isModule(byId.get(hit.id)) ? hit.id : moduleOf.get(hit.id) || "")}`))),
+    label(hit.id), el("div", { class: "sub" }, `${hit.kind} · ${hit.path || ""}`))),
     hits.length ? null : el("div", { class: "empty", style: "padding: 6px 10px" }, "no match")].filter(Boolean));
 }
 function pick(i) { if (!hits[i]) return; open(hits[i].id); search.value = ""; results.hidden = true; search.blur(); }
@@ -685,31 +675,46 @@ document.getElementById("depth").addEventListener("click", event => {
   if (depth) go({ depth });
 });
 document.getElementById("isolated").addEventListener("click", () => go({ isolated: !route().isolated }));
-document.getElementById("reload").addEventListener("click", () => host.postMessage({ type: "reload" }));
-window.addEventListener("message", event => {
-  if (event.data?.type === "changed") document.getElementById("reload-tool").hidden = false;
-  if (event.data?.type === "go") location.hash = event.data.hash;
+document.getElementById("reload").addEventListener("click", () => {
+  document.getElementById("reload-tool").hidden = true;
+  render();
+  renderList();
 });
 
 // ---- render ---------------------------------------------------------------
-function render() {
+const views = {
+  overview: { draw: overview, read: state => ask("overview", state.id || "", state.isolated) },
+  module: { draw: moduleView, read: state => ask("module", state.id) },
+  proc: { draw: procView, read: state => ask("procedure", state.id, state.depth) },
+};
+let drawn = 0;
+async function render() {
+  const mine = ++drawn;
   const state = route();
+  if (!views[state.view]) state.view = "overview";
   document.getElementById("error").hidden = true;
-  if (state.view !== "overview" && !byId.has(state.id)) {
-    showError("VIZ-101", `"${state.id}" is not in this graph; showing all modules`);
-    state.view = "overview";
-    state.id = null;
-  }
-  const build = { overview, module: moduleView, proc: procView }[state.view] || overview;
+  document.getElementById("status").textContent = "reading the graph…";
   const started = performance.now();
   try {
-    const view = build(state);
+    let data = await views[state.view].read(state);
+    if (mine !== drawn) return;
+    if (data === null) {
+      showError("VIZ-101", `"${state.id}" is not in this graph; showing all modules`);
+      state.view = "overview";
+      state.id = null;
+      data = await views.overview.read(state);
+      if (mine !== drawn) return;
+    }
+    const read = performance.now();
+    const view = views[state.view].draw(state, data);
     cy.batch(() => { cy.elements().remove(); cy.add(view.elements); });
     cy.layout(view.layout).run();
     fit();
     document.getElementById("status").textContent = view.status;
-    console.info(`[graph] ${state.view} ${state.id || ""}: ${view.elements.length} elements in ${Math.round(performance.now() - started)} ms`);
+    console.info(`[graph] ${state.view} ${state.id || ""}: ${view.elements.length} elements, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
   } catch (error) {
+    if (mine !== drawn) return;
+    document.getElementById("status").textContent = "";
     showError("VIZ-102", `could not draw the ${state.view} view: ${error.message}`, error);
   }
   document.getElementById("depth").hidden = state.view !== "proc";
@@ -719,7 +724,7 @@ function render() {
   renderCrumbs(state);
   showDetails(state.id);
   if (state.id && cy.getElementById(state.id).nonempty()) cy.getElementById(state.id).select();
-  host?.postMessage({ type: "route", hash: location.hash.slice(1), drawMs: Math.round(performance.now() - started), sinceLoadMs: Math.round(performance.now()) });
+  host.postMessage({ type: "route", hash: location.hash.slice(1), drawMs: Math.round(performance.now() - started), sinceLoadMs: Math.round(performance.now()) });
 }
 
 // The split layouts measure the panel only once it is drawn.

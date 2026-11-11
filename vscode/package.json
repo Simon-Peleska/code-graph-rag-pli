@@ -145,6 +145,12 @@
         "icon": "$(window)"
       },
       {
+        "command": "pliGraph.coverage",
+        "title": "Coverage Report",
+        "category": "PL/I Graph",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "pliGraph.menu",
         "title": "Menu",
         "category": "PL/I Graph"

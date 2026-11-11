@@ -87,21 +87,107 @@ test("the graph version is readable", () => {
   assert.ok(Graph.version(db));
 });
 
-test("the whole graph holds modules, procedures and their links for Show Graph", () => {
-  const whole = graph.whole();
-  /** @param {number} i */
-  const at = (i) => whole.nodes[i];
-  const edges = whole.edges.map(([source, type, target]) => `${at(source).name} ${type} ${at(target).name}`);
-  assert.deepEqual(
-    whole.nodes.filter((n) => n.kind === "module").map((n) => n.path).sort(),
-    ["ABREPT01", "copy/shopdcl.pli", "shop/helper.pli", "shop/main.pli"],
-  );
-  assert.ok(edges.includes("MAIN CALLS HELPER"), edges.join("\n"));
-  assert.ok(edges.includes("main.pli IMPORTS shopdcl.pli"), edges.join("\n"));
-  assert.ok(edges.includes("main.pli IMPORTS MISSING"), edges.join("\n"));
-  assert.ok(edges.includes("main.pli DEFINES MAIN"), edges.join("\n"));
-  const main = /** @type {import("../src/graph.js").GraphNode} */ (whole.nodes.find((n) => n.name === "MAIN"));
-  assert.deepEqual([main.kind, main.path, main.line], ["function", "shop/main.pli", 1]);
+test("the graph page's overview sums up the calls and includes between folders", () => {
+  const top = graph.pageOverview("", false);
+  assert.deepEqual(top.folders, [
+    { id: "dir:copy", modules: 1 },
+    { id: "dir:shop", modules: 2 },
+  ]);
+  assert.deepEqual(top.modules.map((n) => n.id).sort(), ["ABREPT01", "external:MISSING"]);
+  assert.deepEqual(top.edges.sort(), [
+    ["ABREPT01", "dir:shop", "calls", 1],
+    ["dir:shop", "dir:copy", "imports", 1],
+    ["dir:shop", "external:MISSING", "imports", 1],
+  ]);
+  const shop = graph.pageOverview("shop", false);
+  assert.deepEqual(shop.modules.map((n) => n.id).sort(), ["shop/helper.pli", "shop/main.pli"]);
+  assert.deepEqual(shop.edges.sort(), [
+    ["shop/helper.pli", "shop/main.pli", "calls", 1],
+    ["shop/main.pli", "shop/helper.pli", "calls", 1],
+  ]);
+  assert.equal(graph.pageOverview("", false, 3).modules.length, 1, "past the limit only the most connected");
+});
+
+/** @param {import("../src/graph.js").PageGraph | null} page */
+const named = (page) => {
+  const name = new Map(page?.nodes.map((n) => [n.id, n.name]));
+  return page?.edges.map(([source, type, target]) => `${name.get(source)} ${type} ${name.get(target)}`).sort();
+};
+
+test("the graph page's module view holds its procedures and the calls in and out", () => {
+  assert.deepEqual(named(graph.pageModule("shop/main.pli")), ["HELPER CALLS MAIN", "MAIN CALLS HELPER", "main.pli DEFINES MAIN"]);
+  assert.deepEqual(named(graph.pageModule("shop/helper.pli")), [
+    "HELPER CALLS INNER",
+    "HELPER CALLS MAIN",
+    "HELPER DEFINES INNER",
+    "MAIN CALLS HELPER",
+    "REPORT CALLS HELPER",
+    "helper.pli DEFINES HELPER",
+  ]);
+  assert.equal(graph.pageModule("nowhere.pli"), null);
+});
+
+test("the graph page's procedure view walks calls both ways as deep as asked", () => {
+  assert.deepEqual(named(graph.pageProcedure("ABREPT01:REPORT:1", 1)), ["REPORT CALLS HELPER"]);
+  assert.deepEqual(named(graph.pageProcedure("ABREPT01:REPORT:1", 2)), ["HELPER CALLS INNER", "HELPER CALLS MAIN", "MAIN CALLS HELPER", "REPORT CALLS HELPER"]);
+  assert.deepEqual(named(graph.pageProcedure("shop/helper.pli:INNER:2", 1)), ["HELPER CALLS INNER"]);
+  const main = graph.pageProcedure("shop/main.pli:MAIN:1", 1)?.nodes.find((n) => n.name === "MAIN");
+  assert.deepEqual([main?.kind, main?.path, main?.line, main?.mods], ["function", "shop/main.pli", 1, ["MAIN"]]);
+  assert.equal(graph.pageProcedure("shop/main.pli:MAIN:2", 1), null);
+});
+
+test("the graph page's details list a module's and a procedure's neighbours", () => {
+  /** @param {import("../src/graph.js").GraphNode[]} nodes */
+  const ids = (nodes) => nodes.map((n) => n.id).sort();
+  const module = /** @type {any} */ (graph.pageDetails("shop/main.pli"));
+  assert.deepEqual(ids(module.procedures), ["shop/main.pli:MAIN:1"]);
+  assert.deepEqual(ids(module.includes), ["copy/shopdcl.pli", "external:MISSING"]);
+  assert.deepEqual(ids(module.includedBy), []);
+  assert.deepEqual(ids(module.callsInto), ["shop/helper.pli"]);
+  assert.deepEqual(ids(module.calledFrom), ["shop/helper.pli"]);
+  assert.deepEqual(module.unresolved, ["NOWHERE"]);
+  const helper = /** @type {any} */ (graph.pageDetails("shop/helper.pli:HELPER:1"));
+  assert.deepEqual(ids(helper.definedIn), ["shop/helper.pli"]);
+  assert.deepEqual(ids(helper.calledBy), ["ABREPT01:REPORT:1", "shop/main.pli:MAIN:1"]);
+  assert.deepEqual(ids(helper.calls), ["shop/helper.pli:INNER:2", "shop/main.pli:MAIN:1"]);
+  assert.deepEqual(ids(helper.defines), ["shop/helper.pli:INNER:2"]);
+  assert.equal(graph.pageDetails("external:MISSING"), null);
+});
+
+test("the graph page finds procedures and modules, exact names first, and lists the sidebar's tabs", () => {
+  assert.deepEqual(graph.pageSearch("help").map((n) => n.id), ["shop/helper.pli:HELPER:1", "shop/helper.pli"]);
+  assert.deepEqual(graph.pageSearch("main").map((n) => n.id), ["shop/main.pli:MAIN:1", "shop/main.pli"]);
+  assert.deepEqual(graph.pageSearch("50%"), []);
+  assert.deepEqual(graph.pageList("modules", "").rows.map((r) => [r.id, r.count]), [
+    ["ABREPT01", 1],
+    ["copy/shopdcl.pli", 0],
+    ["shop/helper.pli", 2],
+    ["shop/main.pli", 1],
+  ]);
+  assert.deepEqual(graph.pageList("modules", "shop/", 1), { rows: [{ id: "shop/helper.pli", text: "shop/helper.pli", count: 2 }], total: 2 });
+  assert.deepEqual(graph.pageList("entries", "").rows, [{ id: "shop/main.pli:MAIN:1", text: "MAIN", sub: "shop/main.pli", count: 1 }]);
+  assert.deepEqual(graph.pageList("unresolved", "").rows, [{ id: "shop/main.pli", text: "NOWHERE", count: 1, title: "referenced in shop/main.pli" }]);
+  assert.deepEqual(graph.pageSummary(), { project: "fixture", modules: 4, procedures: 4, calls: 4, unresolved: 1 });
+});
+
+test("the graph page's worker answers questions and reports failures", async () => {
+  const { Worker } = await import("node:worker_threads");
+  const worker = new Worker(join(import.meta.dirname, "..", "src", "graphpage.js"), { workerData: { graph: db.location(), root: fixture } });
+  /** @param {number} id @param {string} what @param {unknown[]} args */
+  const ask = (id, what, args) =>
+    new Promise((resolve) => {
+      worker.on("message", (answer) => answer.id === id && resolve(answer));
+      worker.postMessage({ id, what, args });
+    });
+  try {
+    const answer = /** @type {any} */ (await ask(1, "module", ["shop/main.pli"]));
+    assert.deepEqual(answer.result.edges.length, 3);
+    assert.equal(typeof answer.ms, "number");
+    const failed = /** @type {any} */ (await ask(2, "nonsense", []));
+    assert.match(failed.error, /no question nonsense/);
+  } finally {
+    await worker.terminate();
+  }
 });
 
 test("SQL uses plain ? parameters, which the Node of VS Code 1.105 binds; it skips ?1", async () => {

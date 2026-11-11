@@ -62,13 +62,21 @@ import { MAIN_OPTIONS } from "./source.js";
  */
 
 /**
- * The shape viz/graph.template.html reads. Edge ends are positions in
- * `nodes`: names repeated in every edge made the page for 20,000 files 43 MB
- * instead of 24.
- * @typedef {object} WholeGraph
- * @property {string} project
+ * What the Show Graph page draws for one view: nodes, and edges by node id.
+ * @typedef {object} PageGraph
  * @property {GraphNode[]} nodes
- * @property {[number, string, number][]} edges
+ * @property {[string, string, string][]} edges
+ */
+
+/**
+ * @typedef {object} PageTotals
+ * @property {number} version
+ * @property {Map<number, string>} paths by file id
+ * @property {Map<number, number>} procedures by file id
+ * @property {[number, number, number][]} calls source file, target file, how many
+ * @property {[number, number | null, string][]} includes file, included file or null, name
+ * @property {Map<string, number[]>} unresolved name and the files referencing it
+ * @property {number} linked
  */
 
 /**
@@ -101,6 +109,34 @@ const MISSING = `('call', 'fetch', 'program', 'procedure')`;
 const byLabel = (a, b) => a.label.localeCompare(b.label);
 /** @param {string} path */
 const fileName = (path) => basename(path);
+/** @param {string} path @returns {GraphNode} */
+const moduleNode = (path) => ({ id: path, kind: "module", name: fileName(path), path });
+/** @param {SymbolRow & { kind: string, detail: string | null }} row @returns {GraphNode} */
+const symbolNode = (row) => ({
+  id: `${row.path}:${row.name}:${row.line}`,
+  kind: row.kind === "package" ? "class" : "function",
+  name: row.name,
+  path: row.path,
+  line: row.line,
+  end: row.end,
+  ...(MAIN_OPTIONS.test(row.detail ?? "") && { mods: ["MAIN"] }),
+});
+
+/** Edges between `s<symbol id>` and `f<file id>` keys, each once. */
+class Edges {
+  constructor() {
+    /** @type {[string, string, string][]} */
+    this.list = [];
+    this.seen = new Set();
+  }
+  /** @param {string} source @param {string} type @param {string} target */
+  add(source, type, target) {
+    const key = `${source} ${type} ${target}`;
+    if (source === target || this.seen.has(key)) return;
+    this.seen.add(key);
+    this.list.push([source, type, target]);
+  }
+}
 
 export class Graph {
   /**
@@ -121,6 +157,8 @@ export class Graph {
     };
     /** @type {Map<string, StatementSync>} */
     this.statements = new Map();
+    /** @type {PageTotals | undefined} */
+    this.totals = undefined;
   }
 
   /**
@@ -936,101 +974,407 @@ export class Graph {
     );
   }
 
-  /**
-   * The whole project for the Show Graph page. A module's id is its path, a
-   * definition's its path, name and line, so a page reloaded after a sync
-   * still finds what it showed.
-   * @returns {WholeGraph}
-   */
-  whole() {
-    /** @type {GraphNode[]} */
-    const nodes = [];
-    /** @type {[number, string, number][]} */
-    const edges = [];
-    /** @type {Map<number, number>} */
-    const filePosition = new Map();
-    /** @type {Map<number, number>} */
-    const symbolPosition = new Map();
+  // ---- Show Graph page ----------------------------------------------------
+  // The page asks for what one view draws. A module's id is its path, a
+  // definition's `path:name:line`, so a page reloaded after a sync still finds
+  // what it showed; `external:NAME` is an include the repository lacks.
 
-    /** @type {Map<number, string[]>} */
+  /**
+   * Per-file totals for the overview, the summary and the lists, read once
+   * per graph version: they go over every link, a second on 6M lines.
+   * @returns {PageTotals}
+   */
+  pageTotals() {
+    const version = Graph.version(this.db) ?? 0;
+    if (this.totals?.version === version) return this.totals;
+    /** @type {Map<number, string>} */
+    const paths = new Map();
+    for (const file of /** @type {{ id: number, path: string }[]} */ (this.all(`SELECT id, path FROM files ORDER BY path`))) {
+      paths.set(file.id, file.path);
+    }
+    /** @type {Map<number, number>} */
+    const procedures = new Map();
+    for (const row of /** @type {{ file: number, n: number }[]} */ (
+      this.all(`SELECT file, count(*) AS n FROM symbols WHERE kind != 'package' GROUP BY file`)
+    )) {
+      procedures.set(row.file, row.n);
+    }
+    const calls = /** @type {{ a: number, b: number, n: number }[]} */ (
+      this.all(
+        `SELECT r.file AS a, l.target_file AS b, count(*) AS n FROM refs r JOIN links l ON l.ref = r.id
+         WHERE l.target_symbol IS NOT NULL AND r.kind != 'include' AND l.target_file != r.file GROUP BY r.file, l.target_file`,
+      )
+    ).map((row) => /** @type {[number, number, number]} */ ([row.a, row.b, row.n]));
+    const includes = /** @type {{ a: number, b: number | null, name: string }[]} */ (
+      this.all(`SELECT r.file AS a, l.target_file AS b, r.name FROM refs r LEFT JOIN links l ON l.ref = r.id WHERE r.kind = 'include'`)
+    ).map((row) => /** @type {[number, number | null, string]} */ ([row.a, row.b, row.name]));
+    /** @type {Map<string, number[]>} */
     const unresolved = new Map();
-    const missing = /** @type {{ file: number, name: string }[]} */ (
+    for (const { file, name } of /** @type {{ file: number, name: string }[]} */ (
       this.all(
         `SELECT DISTINCT r.file, r.name FROM refs r WHERE r.kind IN ${MISSING}
-         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.ref = r.id) ORDER BY r.name`,
+         AND NOT EXISTS (SELECT 1 FROM links l WHERE l.ref = r.id)`,
       )
-    );
-    for (const { file, name } of missing) {
-      const names = unresolved.get(file);
-      if (names) names.push(name);
-      else unresolved.set(file, [name]);
+    )) {
+      const files = unresolved.get(name);
+      if (files) files.push(file);
+      else unresolved.set(name, [file]);
     }
+    const linked = /** @type {{ n: number }[]} */ (this.all(`SELECT count(*) AS n FROM links WHERE target_symbol IS NOT NULL`))[0].n;
+    this.totals = { version, paths, procedures, calls, includes, unresolved, linked };
+    return this.totals;
+  }
 
-    for (const file of /** @type {{ id: number, path: string }[]} */ (this.all(`SELECT id, path FROM files`))) {
-      /** @type {GraphNode} */
-      const node = { id: file.path, kind: "module", name: fileName(file.path), path: file.path };
-      const names = unresolved.get(file.id);
-      if (names) node.unresolved = names;
-      filePosition.set(file.id, nodes.length);
-      nodes.push(node);
-    }
-    const symbols = /** @type {(SymbolRow & { parent: number | null, kind: string, detail: string | null })[]} */ (
-      this.all(`SELECT ${SYMBOL}, s.parent, s.kind, s.detail FROM symbols s JOIN files f ON f.id = s.file ORDER BY s.id`)
-    );
-    for (const symbol of symbols) {
-      symbolPosition.set(symbol.id, nodes.length);
-      nodes.push({
-        id: `${symbol.path}:${symbol.name}:${symbol.line}`,
-        kind: symbol.kind === "package" ? "class" : "function",
-        name: symbol.name,
-        path: symbol.path,
-        line: symbol.line,
-        end: symbol.end,
-        ...(MAIN_OPTIONS.test(symbol.detail ?? "") && { mods: ["MAIN"] }),
-      });
-    }
-    // Parents are inserted before their children, so their positions are known.
-    for (const symbol of symbols) {
-      const parent = symbol.parent === null ? filePosition.get(symbol.file) : symbolPosition.get(symbol.parent);
-      edges.push([/** @type {number} */ (parent), "DEFINES", /** @type {number} */ (symbolPosition.get(symbol.id))]);
-    }
+  pageSummary() {
+    const totals = this.pageTotals();
+    let procedures = 0;
+    for (const n of totals.procedures.values()) procedures += n;
+    return { project: this.project, modules: totals.paths.size, procedures, calls: totals.linked, unresolved: totals.unresolved.size };
+  }
 
-    /** @type {Map<string, number>} */
-    const externals = new Map();
-    const seen = new Set();
-    const links = /** @type {{ kind: string, name: string, file: number, caller: number | null, targetFile: number | null, targetSymbol: number | null }[]} */ (
-      this.all(
-        `SELECT r.kind, r.name, r.file, r.caller, l.target_file AS targetFile, l.target_symbol AS targetSymbol
-         FROM refs r LEFT JOIN links l ON l.ref = r.id WHERE r.kind = 'include' OR l.target_symbol IS NOT NULL`,
-      )
-    );
-    for (const link of links) {
-      const source = /** @type {number} */ (
-        link.kind !== "include" && link.caller !== null ? symbolPosition.get(link.caller) : filePosition.get(link.file)
-      );
-      let type = "CALLS";
-      let target;
-      if (link.kind === "include") {
-        type = "IMPORTS";
-        target = link.targetFile === null ? undefined : filePosition.get(link.targetFile);
-        if (target === undefined) {
-          // An include of a member the repository does not have.
-          target = externals.get(link.name);
-          if (target === undefined) {
-            target = nodes.length;
-            externals.set(link.name, target);
-            nodes.push({ id: `external:${link.name}`, kind: "external", name: link.name });
-          }
-        }
+  /**
+   * One folder: its subfolders and its own modules, with the calls and
+   * includes between them summed up. Past `limit` items only the most
+   * connected are kept: a force layout of 20,000 modules never finishes.
+   * @param {string} folder "" for the top
+   * @param {boolean} isolated keep the modules without links too
+   * @param {number} [limit]
+   */
+  pageOverview(folder, isolated, limit = 300) {
+    const totals = this.pageTotals();
+    const inside = folder ? `${folder}/` : "";
+    // What a module is drawn as here: itself, the subfolder holding it, or nothing.
+    /** @type {Map<number, string | null>} */
+    const item = new Map();
+    /** @type {Map<string, number>} modules in each subfolder, all levels down */
+    const below = new Map();
+    for (const [id, path] of totals.paths) {
+      const at = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+      if (at === folder) {
+        item.set(id, path);
+      } else if (at.startsWith(inside)) {
+        const sub = `dir:${inside}${at.slice(inside.length).split("/")[0]}`;
+        item.set(id, sub);
+        below.set(sub, (below.get(sub) ?? 0) + 1);
       } else {
-        target = symbolPosition.get(/** @type {number} */ (link.targetSymbol));
+        item.set(id, null);
       }
-      const key = `${source} ${type} ${target}`;
-      if (target === undefined || source === target || seen.has(key)) continue;
-      seen.add(key);
-      edges.push([source, type, target]);
     }
-    return { project: this.project, nodes, edges };
+    /** @type {Map<string, number>} */
+    const pairs = new Map();
+    /** @type {Map<string, number>} */
+    const degree = new Map();
+    /** @param {string | null | undefined} a @param {string | null | undefined} b @param {string} kind @param {number} weight */
+    const bump = (a, b, kind, weight) => {
+      if (!a || !b || a === b) return;
+      const key = `${kind}\t${a}\t${b}`;
+      pairs.set(key, (pairs.get(key) ?? 0) + weight);
+      degree.set(a, (degree.get(a) ?? 0) + weight);
+      degree.set(b, (degree.get(b) ?? 0) + weight);
+    };
+    for (const [source, target, weight] of totals.calls) bump(item.get(source), item.get(target), "calls", weight);
+    for (const [source, target, name] of totals.includes) {
+      // An include the repository lacks is drawn in the top folder.
+      const included = target !== null ? item.get(target) : folder ? null : `external:${name}`;
+      bump(item.get(source), included, "imports", 1);
+    }
+
+    const folders = [...below].map(([id, modules]) => ({ id, modules })).sort((a, b) => (a.id < b.id ? -1 : 1));
+    /** @type {GraphNode[]} */
+    const modules = [];
+    for (const [id, path] of totals.paths) {
+      if (item.get(id) === path) modules.push(moduleNode(path));
+    }
+    for (const key of degree.keys()) {
+      if (key.startsWith("external:")) modules.push({ id: key, kind: "external", name: key.slice("external:".length) });
+    }
+    const connected = modules.filter((n) => isolated || degree.has(n.id));
+    const room = Math.max(0, limit - folders.length);
+    const shown = connected.length <= room ? connected : [...connected].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0)).slice(0, room);
+    const drawn = new Set([...folders.map((f) => f.id), ...shown.map((n) => n.id)]);
+    /** @type {[string, string, string, number][]} */
+    const edges = [];
+    for (const [key, weight] of pairs) {
+      const [kind, a, b] = key.split("\t");
+      if (drawn.has(a) && drawn.has(b)) edges.push([a, b, kind, weight]);
+    }
+    return { folders, modules: shown, edges, connected: connected.length, unlinked: modules.length - connected.length };
+  }
+
+  /**
+   * A module's procedures, the procedures outside calling them or called by
+   * them, and those calls; null when the graph has no such module.
+   * @param {string} path
+   * @returns {PageGraph | null}
+   */
+  pageModule(path) {
+    const file = this.module(path);
+    if (!file) return null;
+    const edges = new Edges();
+    for (const symbol of /** @type {{ id: number, parent: number | null }[]} */ (this.all(`SELECT id, parent FROM symbols WHERE file = ?`, file.id))) {
+      edges.add(symbol.parent === null ? `f${file.id}` : `s${symbol.parent}`, "DEFINES", `s${symbol.id}`);
+    }
+    for (const call of /** @type {{ caller: number | null, target: number }[]} */ (
+      this.all(
+        `SELECT r.caller, l.target_symbol AS target FROM refs r JOIN links l ON l.ref = r.id
+         WHERE r.file = ? AND l.target_symbol IS NOT NULL AND r.kind != 'include'`,
+        file.id,
+      )
+    )) {
+      edges.add(call.caller === null ? `f${file.id}` : `s${call.caller}`, "CALLS", `s${call.target}`);
+    }
+    for (const call of /** @type {{ caller: number | null, file: number, target: number }[]} */ (
+      this.all(
+        `SELECT r.caller, r.file, l.target_symbol AS target FROM links l JOIN refs r ON r.id = l.ref
+         WHERE l.target_file = ? AND l.target_symbol IS NOT NULL AND r.kind != 'include'`,
+        file.id,
+      )
+    )) {
+      edges.add(call.caller === null ? `f${call.file}` : `s${call.caller}`, "CALLS", `s${call.target}`);
+    }
+    return this.pageGraph(edges, [`f${file.id}`]);
+  }
+
+  /**
+   * A procedure with its callees `depth` levels down and its callers `depth`
+   * levels up, and the calls between them; null when there is no such
+   * procedure. A file calling from its top level is a caller that ends the walk.
+   * @param {string} id
+   * @param {number} depth
+   * @returns {PageGraph | null}
+   */
+  pageProcedure(id, depth) {
+    const focus = this.symbolOf(id);
+    if (focus === undefined) return null;
+    const edges = new Edges();
+    const seen = new Set([`s${focus}`]);
+    /** @param {number[]} symbols */
+    const calleesOf = (symbols) =>
+      /** @type {{ caller: number, target: number }[]} */ (
+        this.all(
+          `SELECT r.caller, l.target_symbol AS target FROM refs r JOIN links l ON l.ref = r.id
+           WHERE r.caller IN (SELECT value FROM json_each(?)) AND l.target_symbol IS NOT NULL AND r.kind != 'include'`,
+          JSON.stringify(symbols),
+        )
+      );
+    // Callees first, then callers, breadth first: the page draws a procedure on the level it is reached at first.
+    let frontier = [focus];
+    for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      /** @type {number[]} */
+      const next = [];
+      for (const call of calleesOf(frontier)) {
+        if (seen.has(`s${call.target}`)) continue;
+        seen.add(`s${call.target}`);
+        next.push(call.target);
+      }
+      frontier = next;
+    }
+    frontier = [focus];
+    for (let level = 1; level <= depth && frontier.length > 0; level++) {
+      /** @type {number[]} */
+      const next = [];
+      for (const call of /** @type {{ caller: number | null, file: number, target: number }[]} */ (
+        this.all(
+          `SELECT r.caller, r.file, l.target_symbol AS target FROM links l JOIN refs r ON r.id = l.ref
+           WHERE l.target_symbol IN (SELECT value FROM json_each(?)) AND r.kind != 'include'`,
+          JSON.stringify(frontier),
+        )
+      )) {
+        const caller = call.caller === null ? `f${call.file}` : `s${call.caller}`;
+        edges.add(caller, "CALLS", `s${call.target}`);
+        if (seen.has(caller)) continue;
+        seen.add(caller);
+        if (call.caller !== null) next.push(call.caller);
+      }
+      frontier = next;
+    }
+    const symbols = [...seen].filter((key) => key.startsWith("s")).map((key) => Number(key.slice(1)));
+    for (const call of calleesOf(symbols)) {
+      if (seen.has(`s${call.target}`)) edges.add(`s${call.caller}`, "CALLS", `s${call.target}`);
+    }
+    return this.pageGraph(edges, [`s${focus}`]);
+  }
+
+  /**
+   * What the details panel lists for a module or a procedure; null for neither.
+   * @param {string} id
+   */
+  pageDetails(id) {
+    const file = this.module(id);
+    if (file) {
+      const modules = (/** @type {string} */ sql) =>
+        /** @type {{ path: string }[]} */ (this.all(sql, file.id)).map((row) => moduleNode(row.path));
+      return {
+        node: moduleNode(file.path),
+        procedures: this.symbolNodes(`s.file = ? AND s.kind != 'package'`, file.id),
+        includes: /** @type {{ name: string, path: string | null }[]} */ (
+          this.all(
+            `SELECT DISTINCT r.name, tf.path FROM refs r LEFT JOIN links l ON l.ref = r.id LEFT JOIN files tf ON tf.id = l.target_file
+             WHERE r.file = ? AND r.kind = 'include'`,
+            file.id,
+          )
+        ).map((row) => (row.path === null ? { id: `external:${row.name}`, kind: "external", name: row.name } : moduleNode(row.path))),
+        includedBy: modules(
+          `SELECT DISTINCT f.path FROM links l JOIN refs r ON r.id = l.ref JOIN files f ON f.id = r.file
+           WHERE l.target_file = ? AND r.kind = 'include' AND r.file != l.target_file`,
+        ),
+        callsInto: modules(
+          `SELECT DISTINCT tf.path FROM refs r JOIN links l ON l.ref = r.id JOIN files tf ON tf.id = l.target_file
+           WHERE r.file = ? AND l.target_symbol IS NOT NULL AND r.kind != 'include' AND l.target_file != r.file`,
+        ),
+        calledFrom: modules(
+          `SELECT DISTINCT f.path FROM links l JOIN refs r ON r.id = l.ref JOIN files f ON f.id = r.file
+           WHERE l.target_file = ? AND l.target_symbol IS NOT NULL AND r.kind != 'include' AND r.file != l.target_file`,
+        ),
+        unresolved: /** @type {{ name: string }[]} */ (
+          this.all(
+            `SELECT DISTINCT r.name FROM refs r WHERE r.file = ? AND r.kind IN ${MISSING}
+             AND NOT EXISTS (SELECT 1 FROM links l WHERE l.ref = r.id) ORDER BY r.name`,
+            file.id,
+          )
+        ).map((row) => row.name),
+      };
+    }
+    const symbol = this.symbolOf(id);
+    if (symbol === undefined) return null;
+    const [node] = this.symbolNodes(`s.id = ?`, symbol);
+    const { parent } = /** @type {{ parent: number | null }} */ (this.all(`SELECT parent FROM symbols WHERE id = ?`, symbol)[0]);
+    const callers = /** @type {{ caller: number | null, path: string }[]} */ (
+      this.all(
+        `SELECT DISTINCT r.caller, f.path FROM links l JOIN refs r ON r.id = l.ref JOIN files f ON f.id = r.file
+         WHERE l.target_symbol = ? AND r.kind != 'include'`,
+        symbol,
+      )
+    );
+    return {
+      node,
+      definedIn: parent === null ? [moduleNode(/** @type {string} */ (node.path))] : this.symbolNodes(`s.id = ?`, parent),
+      calledBy: [
+        ...callers.filter((row) => row.caller === null).map((row) => moduleNode(row.path)),
+        ...this.symbolNodes(
+          `s.id IN (SELECT value FROM json_each(?))`,
+          JSON.stringify(callers.filter((row) => row.caller !== null).map((row) => row.caller)),
+        ),
+      ],
+      calls: this.symbolNodes(
+        `s.id IN (SELECT l.target_symbol FROM refs r JOIN links l ON l.ref = r.id WHERE r.caller = ? AND r.kind != 'include')`,
+        symbol,
+      ),
+      defines: this.symbolNodes(`s.parent = ?`, symbol),
+    };
+  }
+
+  /**
+   * Up to 50 procedures and modules whose name has `query` in it, exact names first.
+   * @param {string} query
+   * @returns {GraphNode[]}
+   */
+  pageSearch(query) {
+    const name = query.trim().toUpperCase();
+    if (!name) return [];
+    const like = `%${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const found = [
+      ...this.symbolNodes(`s.kind != 'package' AND s.name LIKE ? ESCAPE '\\' ORDER BY s.name = ? DESC, s.name LIMIT 50`, like, name),
+      .../** @type {{ path: string }[]} */ (this.all(`SELECT path FROM files WHERE path LIKE ? ESCAPE '\\' ORDER BY path LIMIT 50`, like)).map((row) =>
+        moduleNode(row.path),
+      ),
+    ];
+    const label = (/** @type {GraphNode} */ n) => (n.kind === "module" ? n.id : n.name).toUpperCase();
+    const rank = (/** @type {GraphNode} */ n) => (label(n) === name || n.name.toUpperCase() === name ? "0" : "1") + label(n);
+    return found.sort((a, b) => (rank(a) < rank(b) ? -1 : rank(a) > rank(b) ? 1 : 0)).slice(0, 50);
+  }
+
+  /**
+   * A sidebar tab: modules, OPTIONS(MAIN) entry points or the names nothing
+   * defines, those containing `filter`, sorted, at most `limit`.
+   * @param {"modules" | "entries" | "unresolved"} tab
+   * @param {string} filter
+   * @param {number} [limit]
+   */
+  pageList(tab, filter, limit = 500) {
+    const totals = this.pageTotals();
+    const wanted = filter.trim().toUpperCase();
+    /** @type {{ id: string, text: string, sub?: string, count: number, title?: string }[]} */
+    let rows = [];
+    if (tab === "modules") {
+      for (const [id, path] of totals.paths) rows.push({ id: path, text: path, count: totals.procedures.get(id) ?? 0 });
+    } else if (tab === "entries") {
+      const entries = /** @type {(SymbolRow & { detail: string | null, calls: number })[]} */ (
+        this.all(
+          `SELECT ${SYMBOL}, s.detail, (SELECT count(DISTINCT l.target_symbol) FROM refs r JOIN links l ON l.ref = r.id WHERE r.caller = s.id) AS calls
+           FROM symbols s JOIN files f ON f.id = s.file WHERE s.detail LIKE '%MAIN%'`,
+        )
+      );
+      rows = entries
+        .filter((entry) => MAIN_OPTIONS.test(entry.detail ?? ""))
+        .map((entry) => ({ id: `${entry.path}:${entry.name}:${entry.line}`, text: entry.name, sub: entry.path, count: entry.calls }));
+    } else {
+      for (const [name, files] of totals.unresolved) {
+        const paths = files.map((file) => totals.paths.get(file) ?? "?");
+        rows.push({ id: paths[0], text: name, count: files.length, title: `referenced in ${paths.slice(0, 20).join(", ")}${paths.length > 20 ? ", ..." : ""}` });
+      }
+    }
+    rows = rows.filter((row) => row.text.toUpperCase().includes(wanted)).sort((a, b) => (a.text < b.text ? -1 : a.text > b.text ? 1 : 0));
+    return { rows: rows.slice(0, limit), total: rows.length };
+  }
+
+  /**
+   * The nodes of edges between `s<symbol id>` and `f<file id>` keys, and the
+   * edges by node id.
+   * @param {Edges} edges
+   * @param {string[]} keys nodes to include even without edges
+   * @returns {PageGraph}
+   */
+  pageGraph(edges, keys) {
+    const all = new Set(keys);
+    for (const [a, , b] of edges.list) {
+      all.add(a);
+      all.add(b);
+    }
+    const ids = (/** @type {string} */ prefix) => JSON.stringify([...all].filter((key) => key.startsWith(prefix)).map((key) => Number(key.slice(1))));
+    /** @type {Map<string, GraphNode>} */
+    const nodes = new Map();
+    for (const row of /** @type {{ id: number, path: string }[]} */ (this.all(`SELECT id, path FROM files WHERE id IN (SELECT value FROM json_each(?))`, ids("f")))) {
+      nodes.set(`f${row.id}`, moduleNode(row.path));
+    }
+    const symbols = /** @type {(SymbolRow & { kind: string, detail: string | null })[]} */ (
+      this.all(`SELECT ${SYMBOL}, s.kind, s.detail FROM symbols s JOIN files f ON f.id = s.file WHERE s.id IN (SELECT value FROM json_each(?))`, ids("s"))
+    );
+    for (const row of symbols) nodes.set(`s${row.id}`, symbolNode(row));
+    /** @type {[string, string, string][]} */
+    const edgeIds = [];
+    for (const [a, type, b] of edges.list) {
+      const source = nodes.get(a);
+      const target = nodes.get(b);
+      if (source && target) edgeIds.push([source.id, type, target.id]);
+    }
+    return { nodes: [...nodes.values()], edges: edgeIds };
+  }
+
+  /**
+   * @param {string} where on symbols `s` and files `f`
+   * @param {...(string | number | null)} params
+   * @returns {GraphNode[]}
+   */
+  symbolNodes(where, ...params) {
+    const rows = /** @type {(SymbolRow & { kind: string, detail: string | null })[]} */ (
+      this.all(`SELECT ${SYMBOL}, s.kind, s.detail FROM symbols s JOIN files f ON f.id = s.file WHERE ${where}`, ...params)
+    );
+    return rows.map(symbolNode);
+  }
+
+  /**
+   * The symbol a page id `path:name:line` means.
+   * @param {string} id
+   * @returns {number | undefined}
+   */
+  symbolOf(id) {
+    const parts = /^(.*):([^:]*):(\d+)$/.exec(id);
+    if (!parts) return undefined;
+    const rows = /** @type {{ id: number }[]} */ (
+      this.all(`SELECT s.id FROM symbols s JOIN files f ON f.id = s.file WHERE f.path = ? AND s.name = ? AND s.line = ?`, parts[1], parts[2], Number(parts[3]))
+    );
+    return rows[0]?.id;
   }
 
   /**

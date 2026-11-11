@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG025E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG029E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -129,10 +129,13 @@ vscode/build-grammars.sh
 
 ## Graph page
 
-**PL/I Graph: Show Graph** opens the whole graph in VS Code. The page is
+**PL/I Graph: Show Graph** opens the graph in VS Code. The page is
 `viz/graph.template.html` with Cytoscape.js and its fcose layout
 (`viz/vendor/`) and the [vscode-elements](https://github.com/vscode-elements/elements)
-components it uses inlined, so it needs no server and no network. Its
+components it uses inlined, so it needs no server and no network. It asks the
+extension for what each view draws, and `vscode/src/graphpage.js` answers in a
+worker thread from the database (`Graph.page*` in `vscode/src/graph.js`): a
+graph of 20,000 files is far too big to hand to a page whole. Its
 controls, colors and font follow the VS Code theme. It has three views:
 
 - **Modules:** one folder at a time, its subfolders and modules with the
@@ -153,7 +156,8 @@ called names that don't resolve to anything in the repo. The URL hash holds
 the view, so the back button works. Click shows details; double-click opens.
 
 Error codes on the page: `VIZ-101` unknown id in the URL, `VIZ-102` a view
-failed to draw.
+failed to draw, `VIZ-103` details, `VIZ-104` the sidebar list, `VIZ-105`
+search could not be read.
 
 ## 3270 screens
 
@@ -180,7 +184,8 @@ The extension started out driving
 [code-graph-rag](https://github.com/vitali87/code-graph-rag) (cgr) in Python.
 `patches/0001-pli-support.patch` (against upstream `ed322ab`) still adds the
 same languages to cgr, and `viz/build_graph_site.py` turns an offline
-`cgr index` into a standalone `graph.html`. Neither is used by the extension
+`cgr index` into a standalone `graph.html`, with the page from before it asked
+the extension (`viz/site.template.html`). Neither is used by the extension
 any more. To try them:
 
 ```sh

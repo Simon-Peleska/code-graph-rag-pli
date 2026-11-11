@@ -21,7 +21,9 @@ import codec.schema_pb2 as pb
 log = logging.getLogger("graph-site")
 
 HERE = Path(__file__).resolve().parent
-TEMPLATE = HERE / "graph.template.html"
+# The extension's graph.template.html asks VS Code for each view; this is the
+# page from before that, which reads the whole graph from the file.
+TEMPLATE = HERE / "site.template.html"
 # Inlined in this order: each UMD build reads the globals of the ones before it.
 LIBRARIES = [
     HERE / "vendor" / name

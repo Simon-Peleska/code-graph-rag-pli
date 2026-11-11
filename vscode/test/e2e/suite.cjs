@@ -2,12 +2,18 @@
 // helper (ABHELP01) and fetches dynpgm (ABDYNP01), all extensionless members.
 // The extension's indexer builds the graph, then picks up a new file.
 const assert = require("node:assert/strict");
-const { writeFileSync } = require("node:fs");
+const { existsSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
 const vscode = require("vscode");
 
 exports.run = async () => {
   const folder = vscode.workspace.workspaceFolders[0].uri;
-  const api = await vscode.extensions.getExtension("local.pli-graph").activate();
+  const extension = vscode.extensions.getExtension("local.pli-graph");
+  // The threads the extension starts: a package without one fails only when it starts.
+  for (const thread of ["worker.cjs", "parser.cjs", "graphpage.cjs", "mcp.cjs"]) {
+    assert.ok(existsSync(join(extension.extensionPath, "out", thread)), `out/${thread} is packaged`);
+  }
+  const api = await extension.activate();
   // The first sync's progress, recorded from the start.
   const progress = [];
   api.onDidChangeIndexing((state) => progress.push(state));
@@ -89,6 +95,11 @@ exports.run = async () => {
   await vscode.commands.executeCommand("pliGraph.show");
   await webviewTab("PL/I Graph");
   console.log("Show Graph opens");
+
+  // Rejects if the packaged worker or the grammars' highlights queries are missing.
+  await vscode.commands.executeCommand("pliGraph.coverage");
+  assert.match(vscode.window.activeTextEditor?.document.getText() ?? "", /^# PL\/I Graph coverage/);
+  console.log("Coverage Report opens");
 
   // ABFCUST1 holds the format CUSTFMT.
   const screen = vscode.Uri.joinPath(folder, "ABFCUST1");
