@@ -340,6 +340,10 @@ test("statements form a tree of IFs, SELECTs and DOs, with their conditions", ()
      FROM statements s LEFT JOIN statements p ON p.id = s.parent JOIN files f ON f.id = s.file WHERE f.path = 'SRC/KDP00006' ORDER BY s.id`,
   ).map((s) => [s.line, s.kind, s.parent, s.branch, s.label, s.detail].map((v) => v ?? "-").join(" | "));
   assert.deepEqual(statements, [
+    "2 | declare | - | - | - | -",
+    "6 | declare | - | - | - | -",
+    "7 | declare | - | - | - | -",
+    "8 | declare | - | - | - | -",
     "9 | on | - | - | - | ENDFILE(KUNDIN)",
     "9 | assignment | 9 on | - | - | -",
     "10 | if | - | - | - | KD.TYP = 'G'",

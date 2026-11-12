@@ -74,7 +74,7 @@ tables, PSBs and DBDs keep every definition at the nearest distance.
 | Source | Facts | Tables |
 |---|---|---|
 | PL/I declarations | every variable and structure field: level, parent, qualified name, type, size, dimensions, storage (`STATIC`, `BASED(p)`, `DEFINED`, `CONTROLLED`, `VALUE`, ...), `INIT`, `LIKE`, `EXTERNAL`, the procedure it is in, a parameter's position, and the comments on it | `variables` |
-| PL/I statements | every executable statement as a tree: what it is in, which branch of an `IF`, its `WHEN`s and `OTHERWISE`; the head (condition, `CALL` entry, `RETURN` value, ...); the comments above procedures | `statements`, `symbols.comment` |
+| PL/I statements | every executable statement, and the `DECLARE`, `DEFAULT`, `DEFINE` and `FORMAT` statements, as a tree: what it is in, which branch of an `IF`, its `WHEN`s and `OTHERWISE`; the head (condition, `CALL` entry, `RETURN` value, ...); the comments above procedures | `statements`, `symbols.comment` |
 | PL/I data flow | the fields each statement reads, writes (with the literal written) or passes to a `CALL` (by position), each resolved to its declaration by PL/I's scope rules, includes and `LIKE` copies counted | `accesses` |
 | PL/I conditions | every comparison in a condition, and a `SELECT` subject against each `WHEN` value | `comparisons` |
 | PL/I text | every string literal of a statement: messages, report text, codes | `literals` |

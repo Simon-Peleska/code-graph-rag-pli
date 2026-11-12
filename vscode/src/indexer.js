@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 19;
+const INDEXER_VERSION = 20;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -562,7 +562,7 @@ CREATE TABLE IF NOT EXISTS mfs_fields (
 );
 CREATE INDEX IF NOT EXISTS mfs_fields_screen ON mfs_fields(screen);
 CREATE INDEX IF NOT EXISTS mfs_fields_name ON mfs_fields(name);
--- PL/I's executable statements as a tree: parent is the statement one is in,
+-- PL/I's executable statements and declarations as a tree: parent is the statement one is in,
 -- branch says whether in the THEN or ELSE of an IF.
 CREATE TABLE IF NOT EXISTS statements (
   id INTEGER PRIMARY KEY,
@@ -1667,11 +1667,12 @@ const DLI_ENTRIES = new Set(["PLITDLI", "CEETDLI", "AIBTDLI"]);
 
 const COMPARISONS = new Set(["=", "^=", "<>", "<", ">", "<=", ">=", "^<", "^>"]);
 
-// Declarations, procedures and the preprocessor's statements do nothing at run time.
+// Procedures and the preprocessor's statements do nothing at run time;
+// declarations are kept so a flow shows them, but nothing in them is an access.
 /** @type {Map<string, string>} */
 const STATEMENT_KINDS = new Map([
-  ...["allocate", "assert", "assignment", "begin", "call", "close", "delete", "display", "do", "exec", "fetch", "free", "get", "goto",
-    "if", "iterate", "leave", "null", "on", "open", "put", "read", "release", "resignal", "return", "revert", "rewrite", "select",
+  ...["allocate", "assert", "assignment", "begin", "call", "close", "declare", "default", "define", "delete", "display", "do", "exec", "fetch", "free", "get", "goto",
+    "format", "if", "iterate", "leave", "null", "on", "open", "put", "read", "release", "resignal", "return", "revert", "rewrite", "select",
     "signal", "stop", "write", "locate", "delay", "attach", "wait", "detach", "flush", "unlock"].map((kind) => /** @type {[string, string]} */ ([`${kind}_statement`, kind])),
   ["when_clause", "when"],
   ["otherwise_clause", "otherwise"],
