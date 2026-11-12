@@ -77,7 +77,13 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
 .details .head vscode-badge { margin-right: 4px; }
 .details h2 { font-size: 1.1em; margin: 6px 0 2px; overflow-wrap: anywhere; }
 .details .qn { color: var(--muted); font-size: .92em; overflow-wrap: anywhere; }
-.details .head vscode-button { margin-top: 10px; }
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 5px; background: none; color: var(--text); cursor: pointer; }
+.icon:hover { background: var(--vscode-toolbar-hoverBackground, rgb(90 93 94 / .31)); }
+.icon[aria-pressed=true] { background: var(--vscode-inputOption-activeBackground, rgb(0 127 212 / .4)); border-color: var(--vscode-inputOption-activeBorder, #007acc); }
+.icon svg { width: 16px; height: 16px; }
+.details .title { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; }
+.details .title h2 { flex: 1 1 8em; min-width: 0; }
+.details .actions { display: flex; gap: 2px; margin: 3px 0 0 auto; }
 .details .text { padding: 2px 14px 6px 22px; overflow-wrap: anywhere; }
 .details p { margin: 0 0 8px; }
 .empty { color: var(--muted); padding: 2px 14px 6px 22px; }
@@ -127,19 +133,19 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
     <vscode-button secondary data-depth="1">1</vscode-button><vscode-button secondary data-depth="2">2</vscode-button><vscode-button secondary data-depth="3">3</vscode-button><vscode-button secondary data-depth="all">all</vscode-button>
   </div>
   <div class="tools" id="direction" hidden>
-    <vscode-button secondary data-direction="down" title="What it uses">uses ↓</vscode-button><vscode-button secondary data-direction="up" title="What uses it">used by ↑</vscode-button><vscode-button secondary data-direction="both">both</vscode-button>
+    <button class="icon" data-icon="arrow-down" data-direction="down" title="Uses"></button><button class="icon" data-icon="arrow-up" data-direction="up" title="Used by"></button><button class="icon" data-icon="arrow-both" data-direction="both" title="Both"></button>
   </div>
   <div class="tools" id="save-tool" hidden>
-    <vscode-button secondary id="save-list" title="Every module or procedure it uses, or is used by, all the way, as a file">Save list…</vscode-button>
+    <button class="icon" data-icon="save" id="save-list" title="Save list"></button>
   </div>
   <div class="tools" id="deps-tool" hidden>
-    <vscode-button secondary id="deps"></vscode-button>
+    <button class="icon" id="deps"></button>
   </div>
   <div class="tools" id="isolated-tool" hidden>
-    <vscode-button secondary id="isolated">Show unconnected</vscode-button>
+    <button class="icon" data-icon="eye" id="isolated" title="Unconnected"></button>
   </div>
-  <div class="tools" id="reload-tool" hidden><vscode-button id="reload">Graph changed · reload</vscode-button></div>
-  <div class="tools"><vscode-button secondary id="fit">Fit</vscode-button></div>
+  <div class="tools" id="reload-tool" hidden><button class="icon" data-icon="refresh" id="reload" title="Reload"></button></div>
+  <div class="tools"><button class="icon" data-icon="screen-full" id="fit" title="Fit"></button></div>
   <div class="search">
     <vscode-textfield id="search" type="search" placeholder="Find procedure or module  ( / )" autocomplete="off"></vscode-textfield>
     <div class="results" id="results" hidden></div>
@@ -233,6 +239,10 @@ const byLabel = (a, b) => label(a.id).localeCompare(label(b.id));
 // ---- small DOM helper -----------------------------------------------------
 // A tree item stops its clicks; its tree reports them as a (non-bubbling) select.
 const pickSelected = event => event.detail[0]?.pick?.();
+const ICONS = /*__ICONS__*/{};
+function setIcon(node, icon) { node.innerHTML = ICONS[icon] || ""; return node; }
+for (const node of document.querySelectorAll("[data-icon]")) setIcon(node, node.dataset.icon);
+const iconButton = (icon, title, onclick) => setIcon(el("button", { class: "icon", title, onclick }), icon);
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
   if (tag === "vscode-tree") node.addEventListener("vsc-tree-select", pickSelected);
@@ -413,17 +423,15 @@ function overview(state, data) {
     ...data.edges.map(([a, b, kind, weight]) => edgeData(a, b, kind, weight)),
   ];
   const notes = [];
-  if (data.folders.length) notes.push(`${data.folders.length} folders`);
-  notes.push(`${data.modules.length} modules`);
-  if (data.modules.length < data.connected) notes.push(`the ${data.modules.length} most connected of ${data.connected}; search finds the rest`);
-  if (data.unlinked) notes.push(`${data.unlinked} without links hidden`);
+  if (data.modules.length < data.connected) notes.push(`${data.connected - data.modules.length} not drawn`);
+  if (data.unlinked) notes.push(`${data.unlinked} unlinked hidden`);
   return {
     elements,
     // fcose: force-directed, edges act as springs, so linked modules end up close together.
     layout: { name: "fcose", animate: false, randomize: true, quality: elements.length > 1500 ? "draft" : "default",
               nodeRepulsion: () => 400000, idealEdgeLength: () => 220, edgeElasticity: () => 0.3, nodeDimensionsIncludeLabels: true,
               nodeSeparation: 140, gravity: 0.15, numIter: 3000, packComponents: true },
-    status: `${notes.join(", ")} · double-click to open`,
+    status: notes.join(" · "),
   };
 }
 
@@ -512,7 +520,7 @@ function moduleView(state, graph) {
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${own.length} procedures in ${moduleId} · callers above, callees below${hiddenCount ? ` · ${hiddenCount} less connected not drawn, the details list them` : ""} · double-click to follow`,
+    status: hiddenCount ? `${hiddenCount} not drawn` : "",
   };
 }
 
@@ -591,13 +599,10 @@ function procView(state, graph) {
   for (const id of shownIds) for (const target of callees.get(id) || []) {
     if (shownIds.has(target)) elements.push(edgeData(id, target, includes.has(`${id}>${target}`) ? "imports" : "calls"));
   }
-  const up = [...level.values()].filter(v => v < 0).length, down = [...level.values()].filter(v => v > 0).length;
-  const counts = state.view === "deps" ? `${up} modules using ${focus} above, ${down} it uses below`
-    : `${up} callers above ${byId.get(focus).name}, ${down} callees below, depth ${state.depth === Infinity ? "all" : state.depth}`;
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${counts} · double-click to refocus`,
+    status: "",
   };
 }
 
@@ -607,15 +612,14 @@ function section(title, count, ...content) {
   return el("vscode-collapsible", { heading: title, open: "" },
     el("vscode-badge", { slot: "decorations", variant: "counter" }, String(count)), ...content);
 }
-function linkList(title, nodes, empty, home) {
+function linkList(title, nodes, home) {
   const unique = [...new Map(remember(nodes).map(n => [n.id, n])).values()].sort(byLabel);
+  if (!unique.length) return [];
   return [section(title, unique.length,
-    unique.length ? el("vscode-tree", null, unique.slice(0, LIST_LIMIT).map(n => el("vscode-tree-item", { onclick: () => open(n.id), title: n.id }, label(n.id),
-      isProc(n) && n.path !== home ? el("span", { slot: "description" }, n.path || "") : null)))
-                  : el("div", { class: "empty" }, empty),
+    el("vscode-tree", null, unique.slice(0, LIST_LIMIT).map(n => el("vscode-tree-item", { onclick: () => open(n.id), title: n.id }, label(n.id),
+      isProc(n) && n.path !== home ? el("span", { slot: "description" }, n.path || "") : null))),
     unique.length > LIST_LIMIT ? el("div", { class: "empty" }, `… ${unique.length - LIST_LIMIT} more`) : null)];
 }
-const button = (text, onclick) => el("vscode-button", { onclick }, text);
 
 let detailsAsked = 0;
 async function showDetails(id) {
@@ -630,9 +634,7 @@ async function showDetails(id) {
       const sum = await ask("summary");
       if (mine !== detailsAsked) return;
       panel.replaceChildren(el("div", { class: "head" }, el("h2", null, sum.project),
-        el("p", { class: "sub" }, `${sum.modules} modules · ${sum.procedures} procedures · ${sum.calls} calls · ${sum.unresolved} unresolved names`),
-        el("p", null, "Click a node for details, double-click to open it. Hover to highlight its neighbours."),
-        el("p", { class: "sub" }, "Arrows point from caller to callee and from including to included module.")));
+        el("p", { class: "sub" }, `${sum.modules} modules · ${sum.procedures} procedures · ${sum.unresolved} unresolved`)));
       return;
     }
   } catch (error) {
@@ -642,32 +644,32 @@ async function showDetails(id) {
   panel.replaceChildren();
   const where = n.path ? `${n.path}${n.line ? `:${n.line}–${n.end}` : ""}` : "";
   panel.append(el("div", { class: "head" },
-    el("div", null, el("vscode-badge", null, n.kind), ...(n.mods || []).map(m => el("vscode-badge", { variant: m.toUpperCase() === "MAIN" ? "activity-bar-counter" : "default" }, m))),
-    el("h2", null, label(id)), isModule(n) ? null : el("div", { class: "qn" }, id), where && where !== label(id) ? el("div", { class: "sub" }, where) : null,
-    n.path ? button("Go to source", () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 })) : null));
-  const head = panel.firstChild;
+    n.mods?.length ? el("div", null, ...n.mods.map(m => el("vscode-badge", { variant: m.toUpperCase() === "MAIN" ? "activity-bar-counter" : "default" }, m))) : null,
+    el("div", { class: "title" }, el("h2", null, label(id)),
+      el("div", { class: "actions" }, n.path ? iconButton("go-to-file", "Source", () => host.postMessage({ type: "open", path: n.path, line: n.line || 1 })) : null)),
+    where && where !== label(id) ? el("div", { class: "sub" }, where) : null));
+  const head = panel.querySelector(".actions");
   // An include the repository lacks has nothing more to show.
   if (!details) return;
   if (isModule(n)) {
-    panel.append(...linkList("Procedures", details.procedures, "none", id),
-      ...linkList("Includes", details.includes, "none"),
-      ...linkList("Included by", details.includedBy, "none"),
-      ...linkList("Calls into", details.callsInto, "none"),
-      ...linkList("Called from", details.calledFrom, "none"),
-      section("Unresolved names", details.unresolved.length,
-        details.unresolved.length ? el("div", { class: "sub text" }, details.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
-    if (route().id !== id || route().view !== "module") head.append(" ", button("Open module", () => open(id)));
-    if (route().id !== id || route().view !== "deps") head.append(" ", button("Dependencies", () => go({ view: "deps", id })));
+    panel.append(...linkList("Procedures", details.procedures, id),
+      ...linkList("Includes", details.includes),
+      ...linkList("Included by", details.includedBy),
+      ...linkList("Calls into", details.callsInto),
+      ...linkList("Called from", details.calledFrom),
+      details.unresolved.length ? section("Unresolved", details.unresolved.length, el("div", { class: "sub text" }, details.unresolved.join(", "))) : []);
+    if (route().id !== id || route().view !== "module") head.append(iconButton("type-hierarchy", "Graph", () => open(id)));
+    if (route().id !== id || route().view !== "deps") head.append(iconButton("references", "Dependencies", () => go({ view: "deps", id })));
     // The flow of the module's main procedure, else of its first.
     const main = details.procedures.find(isMain) || [...details.procedures].sort((a, b) => a.line - b.line)[0];
-    if (main) head.append(" ", button("Flow diagram", () => host.postMessage({ type: "flow", procedure: main.id })));
+    if (main) head.append(iconButton("git-merge", "Flow", () => host.postMessage({ type: "flow", procedure: main.id })));
   } else {
-    panel.append(...linkList("Defined in", details.definedIn, ""),
-      ...linkList("Called by", details.calledBy, "no callers found"),
-      ...linkList("Calls", details.calls, "calls nothing known"));
-    if (details.defines.length) panel.append(...linkList("Defines", details.defines, "", n.path));
-    if (route().id !== id || route().view !== "proc") head.append(" ", button("Show call graph", () => open(id)));
-    head.append(" ", button("Flow diagram", () => host.postMessage({ type: "flow", procedure: id })));
+    panel.append(...linkList("Defined in", details.definedIn),
+      ...linkList("Called by", details.calledBy),
+      ...linkList("Calls", details.calls));
+    panel.append(...linkList("Defines", details.defines, n.path));
+    if (route().id !== id || route().view !== "proc") head.append(iconButton("type-hierarchy", "Graph", () => open(id)));
+    head.append(iconButton("git-merge", "Flow", () => host.postMessage({ type: "flow", procedure: id })));
   }
 }
 
@@ -1066,7 +1068,7 @@ async function renderFlow() {
     status.textContent = "";
   };
   error.hidden = true;
-  status.textContent = "reading the graph…";
+  status.textContent = "reading…";
   const started = performance.now();
   let flow;
   try {
@@ -1104,7 +1106,7 @@ async function render() {
   const state = route();
   if (!views[state.view]) state.view = "overview";
   document.getElementById("error").hidden = true;
-  document.getElementById("status").textContent = "reading the graph…";
+  document.getElementById("status").textContent = "reading…";
   const started = performance.now();
   try {
     let data = await views[state.view].read(state);
@@ -1131,12 +1133,12 @@ async function render() {
   document.getElementById("depth").hidden = state.view !== "proc";
   for (const b of document.querySelectorAll("#depth vscode-button")) b.secondary = (b.dataset.depth === "all" ? Infinity : Number(b.dataset.depth)) !== state.depth;
   document.getElementById("direction").hidden = state.view !== "proc" && state.view !== "deps";
-  for (const b of document.querySelectorAll("#direction vscode-button")) b.secondary = b.dataset.direction !== state.direction;
+  for (const b of document.querySelectorAll("#direction button")) b.setAttribute("aria-pressed", String(b.dataset.direction === state.direction));
   document.getElementById("save-tool").hidden = state.view !== "proc" && state.view !== "deps";
   document.getElementById("deps-tool").hidden = state.view !== "module" && state.view !== "deps";
-  document.getElementById("deps").textContent = state.view === "deps" ? "Procedures" : "Dependencies";
+  setIcon(document.getElementById("deps"), state.view === "deps" ? "type-hierarchy" : "references").title = state.view === "deps" ? "Procedures" : "Dependencies";
   document.getElementById("isolated-tool").hidden = state.view !== "overview";
-  document.getElementById("isolated").secondary = !state.isolated;
+  document.getElementById("isolated").setAttribute("aria-pressed", String(!!state.isolated));
   renderCrumbs(state);
   showDetails(state.id);
   if (state.id && cy.getElementById(state.id).nonempty()) cy.getElementById(state.id).select();
