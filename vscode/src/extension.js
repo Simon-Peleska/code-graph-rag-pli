@@ -863,9 +863,10 @@ async function open(folder, target) {
 
 /**
  * What the graph page posts: the view it switched to, a file to open, a
- * question for the graph, or a list to save as a file.
+ * question for the graph, a list to save as a file, or going back past its
+ * first view.
  * @typedef {object} PageMessage
- * @property {"route" | "open" | "ask" | "save" | "flow"} type
+ * @property {"route" | "open" | "ask" | "save" | "flow" | "back"} type
  * @property {string} [procedure] the page id of the procedure whose flow to show
  * @property {string} [title] a new title for the page's tab
  * @property {string} [hash]
@@ -1059,6 +1060,9 @@ function openPage(context, workspace, kind, hash, title, go) {
       log.info(`${kind} page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
     } else if (message.type === "flow" && message.procedure) {
       showFlow(context, workspace, message.procedure);
+    } else if (message.type === "back") {
+      log.info(`${kind} page: back from its first view, to the editor before it`);
+      void vscode.commands.executeCommand("workbench.action.navigateBack");
     } else if (message.type === "save" && message.name && message.text !== undefined) {
       void saveList(workspace.folder.uri, message.name, message.text);
     } else if (message.type === "open" && message.path) {

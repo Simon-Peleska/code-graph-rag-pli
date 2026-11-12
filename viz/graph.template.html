@@ -275,6 +275,27 @@ function go(changes) {
   location.hash = params.toString();
 }
 const open = id => go({ view: isModule(byId.get(id)) ? "module" : "proc", id });
+// The page's views are numbered steps in its history. The mouse's back
+// button on the first one goes back to the editor before the page. Pressed in
+// an editor, it makes VS Code show this page, and its release here went back
+// in the page too: only a press that started on the page counts.
+let step = 0;
+history.replaceState({ step }, "");
+window.addEventListener("hashchange", () => {
+  if (history.state === null) history.replaceState({ step: step + 1 }, "");
+  step = history.state.step;
+});
+let pressedHere = false;
+window.addEventListener("mousedown", e => { if (e.button === 3 || e.button === 4) pressedHere = true; }, true);
+window.addEventListener("mouseup", e => {
+  if (e.button !== 3 && e.button !== 4) return;
+  if (!pressedHere) e.preventDefault();
+  else if (e.button === 3 && step === 0) {
+    e.preventDefault();
+    host.postMessage({ type: "back" });
+  }
+  pressedHere = false;
+}, true);
 
 // ---- cytoscape ------------------------------------------------------------
 // Read from body, where the palette is taken from VS Code's theme.
