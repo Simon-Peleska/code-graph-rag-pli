@@ -40,7 +40,15 @@
     ],
     "configurationDefaults": {
       "[pli]": {
-        "editor.semanticHighlighting.enabled": true
+        "editor.semanticHighlighting.enabled": true,
+        "editor.rulers": [
+          1,
+          72,
+          80
+        ],
+        "editor.tabSize": 3,
+        "editor.insertSpaces": true,
+        "editor.detectIndentation": false
       },
       "[jcl]": {
         "editor.semanticHighlighting.enabled": true
@@ -172,6 +180,11 @@
         "title": "Rebuild Graph",
         "category": "PL/I Graph",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "pliGraph.tab",
+        "title": "Indent to the Next PL/I Tab Stop",
+        "category": "PL/I Graph"
       }
     ],
     "views": {
@@ -236,7 +249,14 @@
           "markdownDescription": "Index files named like z/OS members (`ABMAIN01`, no extension). The member name's third character picks the language: `J` is JCL, `F` is MFS, `T` is Db2, anything else is PL/I."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "pliGraph.tab",
+        "key": "tab",
+        "when": "editorTextFocus && editorLangId == pli && !editorReadonly && !editorHasSelection && !editorHasMultipleSelections && !suggestWidgetVisible && !inSnippetMode && !inlineSuggestionVisible && !editorTabMovesFocus"
+      }
+    ]
   },
   "scripts": {
     "build": "node build.mjs",

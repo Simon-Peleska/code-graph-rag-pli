@@ -12,7 +12,7 @@ import { Graph } from "./graph.js";
 import { createHighlighter, highlight, TOKEN_MODIFIERS, TOKEN_TYPES } from "./highlight.js";
 import { mfsFormats } from "./mfs.js";
 import { describe } from "./progress.js";
-import { PLI_BUILTINS } from "./source.js";
+import { PLI_BUILTINS, insertBlanks } from "./source.js";
 import { Symbols } from "./symbols.js";
 
 /** @typedef {import("./graph.js").Target} Target */
@@ -133,6 +133,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.flowOf", (/** @type {string | undefined} */ name) => showFlowOf(context, name)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
+    vscode.commands.registerCommand("pliGraph.tab", pliTab),
     registerMcpServer(context),
     vscode.languages.registerDefinitionProvider(
       LANGUAGES.map((language) => ({ language })),
@@ -173,8 +174,12 @@ export function activate(context) {
       if (document === vscode.window.activeTextEditor?.document) {
         followEditor();
       }
+      vscode.window.visibleTextEditors.filter((editor) => editor.document === document).forEach(fitIndentation);
     }),
-    vscode.window.onDidChangeVisibleTextEditors((editors) => editors.forEach((editor) => claimMember(editor.document))),
+    vscode.window.onDidChangeVisibleTextEditors((editors) => {
+      editors.forEach((editor) => claimMember(editor.document));
+      editors.forEach(fitIndentation);
+    }),
     changed.event(() => vscode.window.visibleTextEditors.forEach((editor) => claimMember(editor.document))),
     vscode.workspace.onDidChangeConfiguration((event) => {
       for (const workspace of workspaces.values()) {
@@ -182,6 +187,8 @@ export function activate(context) {
       }
     }),
   );
+
+  vscode.window.visibleTextEditors.forEach(fitIndentation);
 
   if (loadSqlite()) {
     startWorker(context);
@@ -466,6 +473,19 @@ function claimMember(document) {
   }
   log.info(`${where.path} is a ${module.language} module in the graph, switching its language`);
   void vscode.languages.setTextDocumentLanguage(document, module.language);
+}
+
+// An editor keeps the indentation VS Code guessed while its document was plain
+// text, or restored from before the extension ran, so a PL/I editor is set to
+// the [pli] settings (3 columns, spaces) whenever it shows up.
+/** @param {vscode.TextEditor} editor */
+function fitIndentation(editor) {
+  if (editor.document.languageId !== "pli") return;
+  const settings = vscode.workspace.getConfiguration("editor", editor.document);
+  const wanted = { tabSize: settings.get("tabSize", 3), indentSize: settings.get("tabSize", 3), insertSpaces: settings.get("insertSpaces", true) };
+  if (editor.options.tabSize === wanted.tabSize && editor.options.indentSize === wanted.indentSize && editor.options.insertSpaces === wanted.insertSpaces) return;
+  log.info(`${vscode.workspace.asRelativePath(editor.document.uri)} indents by ${editor.options.tabSize}, setting it to ${wanted.tabSize}`);
+  editor.options = wanted;
 }
 
 // Files in one of the graph's languages, and any other file in the graph,
@@ -870,6 +890,26 @@ function workspaceShown() {
   log.error(message);
   void vscode.window.showErrorMessage(message);
   return undefined;
+}
+
+// PL/I's code starts in column 2, after the carriage control in column 1,
+// so Tab stops there and then every 3 columns, which VS Code's even tab
+// stops can't do. What ends in column 72 and the sequence number stay put.
+async function pliTab() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  const { line, character: column } = editor.selection.active;
+  const next = column < 1 ? 1 : column + 3 - ((column - 1) % 3);
+  const text = editor.document.lineAt(line).text;
+  const indented = insertBlanks(text, column, next - column);
+  if (indented === undefined) {
+    const message = `[PLG036W] No room left before column 72 on line ${line + 1} to indent to column ${next + 1}.`;
+    log.warn(message);
+    vscode.window.setStatusBarMessage(`$(warning) ${message}`, 5000);
+    return;
+  }
+  await editor.edit((edit) => edit.replace(new vscode.Range(line, 0, line, text.length), indented));
+  editor.selection = new vscode.Selection(line, next, line, next);
 }
 
 /** @param {vscode.ExtensionContext} context */

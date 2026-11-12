@@ -14,6 +14,15 @@ extension keeps of each workspace folder:
   assembler when its first statement is an IMS gen macro (`PCB`, `DBD`,
   `APPLCTN`, ...), so PSB gens, DBD gens and the IMS system definition are
   found whatever their names.
+- **PL/I margins**: rulers after columns 1, 72 and 80 mark the carriage
+  control column, the code in 2-72 and the sequence numbers in 73-80. Tab
+  stops at column 2 and then every 3 columns (*PL/I Graph: Indent to the
+  Next PL/I Tab Stop*, bound to Tab). Tab takes its blanks from the padding
+  after the cursor, so the sequence number and a comment's `*/` in column 72
+  stay put: trailing blanks first, then the filler in front of the `*/`
+  (`*****/`, `----*/`, `====*/`, blanks), then each run of blanks from the
+  right, keeping one blank between words and every blank in a string.
+  Indenting selected lines moves them by 3.
 - **Go to Definition** (F12, Ctrl+click) on a called procedure or an
   `%INCLUDE` member, a job's programs and procedures, a screen's formats and
   messages and the tables a program or view uses. It uses the calls the
@@ -315,6 +324,8 @@ can read it while VS Code runs:
   file is open.
 - `PLG035E` Show Flow Diagram of Procedure: no procedure has the name passed
   to the command.
+- `PLG036W` Tab in a PL/I file: the line has not enough blanks or comment
+  filler after the cursor to give up before column 72, so nothing is inserted.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

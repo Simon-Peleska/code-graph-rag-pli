@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   blankMargins,
   ddlTables,
+  insertBlanks,
   hlasmStatements,
   languageOf,
   pliCode,
@@ -102,4 +103,47 @@ test("the SQL operation done on a table", () => {
   assert.equal(sqlOperation("exec sql insert into t values (1)", "T"), "INSERT");
   assert.equal(sqlOperation("EXEC SQL DELETE FROM T", "T"), "DELETE");
   assert.equal(sqlOperation("EXEC SQL DECLARE C1 CURSOR FOR SELECT * FROM T", "T"), "SELECT");
+});
+
+test("blanks typed into a line keep what ends at column 72 and the sequence number in place", () => {
+  /** @param {string} code @param {string} [sequence] */
+  const line = (code, sequence = "AAP00020") => code.padEnd(72) + sequence;
+  /** @param {string} text @param {number} column */
+  const blanks = (text, column, count = 3) => insertBlanks(text, column, count);
+  // The trailing blanks of the code make room.
+  assert.equal(blanks(line(" %INCLUDE AAC00021;"), 1), line("    %INCLUDE AAC00021;"));
+  // So does the filler in front of a comment's closing */.
+  const stars = " /* KUNDE LESEN " + "*".repeat(55) + "/";
+  assert.equal(blanks(line(stars), 1), line("    /* KUNDE LESEN " + "*".repeat(52) + "/"));
+  const dashes = " /* KUNDE LESEN " + "-".repeat(54) + "*/";
+  assert.equal(blanks(line(dashes), 1), line("    /* KUNDE LESEN " + "-".repeat(51) + "*/"));
+  const equals = " /* KUNDE LESEN " + "=".repeat(54) + "*/";
+  assert.equal(blanks(line(equals), 1), line("    /* KUNDE LESEN " + "=".repeat(51) + "*/"));
+  const spaced = " /* KUNDE LESEN" + " ".repeat(55) + "*/";
+  assert.equal(blanks(line(spaced), 1), line("    /* KUNDE LESEN" + " ".repeat(52) + "*/"));
+  // And the blanks in front of a comment's last word.
+  const marked = " /* KUNDE LESEN" + " ".repeat(54) + "i*/";
+  assert.equal(blanks(line(marked), 1), line("    /* KUNDE LESEN" + " ".repeat(51) + "i*/"));
+  // Not enough in front of the last word: the blanks further left give the rest, one staying in each gap.
+  const gap = "       %INCLUDE AAC00021;" + " ".repeat(33) + "/* asdfd   i*/AAP00020";
+  assert.equal(blanks(gap, 7), "          %INCLUDE AAC00021;" + " ".repeat(32) + "/* asdfd i*/AAP00020");
+  // Blanks in a string are its value: they stay.
+  const quoted = " X = 'A" + " ".repeat(40) + "B';" + " ".repeat(15) + "/* Y */";
+  assert.equal(blanks(quoted, 1, 15), undefined);
+  assert.equal(blanks(quoted, 1, 14), " ".repeat(15) + "X = 'A" + " ".repeat(40) + "B'; /* Y */");
+  // A string going on to the next line keeps its trailing blanks.
+  assert.equal(blanks(line(" X = 'CONTINUED"), 1), undefined);
+  // Without a sequence number the comment still ends in column 72.
+  assert.equal(blanks(dashes, 1), "    /* KUNDE LESEN " + "-".repeat(51) + "*/");
+  // A short line just gets the blanks.
+  assert.equal(blanks(" IF A = B", 4), " IF    A = B");
+  // The opening /* and the words of a comment are never taken.
+  const full = " /* " + "X".repeat(60) + "      */";
+  assert.equal(blanks(full, 1), "    /* " + "X".repeat(60) + "   */");
+  assert.equal(blanks(full, 1, 7), undefined);
+  assert.equal(blanks(" /*" + "*".repeat(67) + "*/", 3, 69), undefined);
+  // Nothing before the cursor moves: no room after it, no blanks.
+  assert.equal(blanks(line(" X = 1;" + " ".repeat(40) + "/* " + "Y".repeat(19) + "*/"), 60), undefined);
+  // In the sequence number columns, the line just gets the blanks.
+  assert.equal(blanks(line(" X = 1;"), 73, 1), line(" X = 1;", "A AP00020"));
 });

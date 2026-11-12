@@ -91,6 +91,42 @@ exports.run = async () => {
   assert.deepEqual([labelLength, legend.tokenTypes[label], keywordLength, legend.tokenTypes[keyword]], [4, "label", 4, "keyword"]);
   console.log("Highlighting works");
 
+  // PL/I's margins: column 1 is carriage control, 2-72 code, 73-80 sequence numbers.
+  // A member opens as plain text, where VS Code guesses its indentation; as PL/I it indents by 3,
+  // even when its editor was left at another size, like one restored from before the extension ran.
+  const indented = await vscode.window.showTextDocument(document);
+  assert.deepEqual([indented.options.tabSize, indented.options.insertSpaces], [3, true]);
+  indented.options = { tabSize: 2, indentSize: 2 };
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+  const reshown = await vscode.window.showTextDocument(document);
+  while (reshown.options.tabSize !== 3) {
+    await new Promise((resolve) => {
+      const listener = vscode.window.onDidChangeTextEditorOptions(() => {
+        listener.dispose();
+        resolve();
+      });
+    });
+  }
+  assert.deepEqual([reshown.options.tabSize, reshown.options.indentSize, reshown.options.insertSpaces], [3, 3, true]);
+  assert.deepEqual(vscode.workspace.getConfiguration("editor", { languageId: "pli" }).get("rulers"), [1, 72, 80]);
+  // Tab stops at column 2, then every 3 columns.
+  const typed = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: "pli", content: "" }));
+  await vscode.commands.executeCommand("pliGraph.tab");
+  assert.equal(typed.document.getText(), " ");
+  await vscode.commands.executeCommand("pliGraph.tab");
+  await typed.edit((edit) => edit.insert(typed.selection.active, "IF"));
+  await vscode.commands.executeCommand("pliGraph.tab");
+  assert.equal(typed.document.getText(), "    IF ");
+  // A comment ending in column 72 and the sequence number stay where they are.
+  await typed.edit((edit) => edit.replace(new vscode.Range(0, 0, 0, 7), ` /* READ ${"*".repeat(62)}/AAP00020`));
+  typed.selection = new vscode.Selection(0, 1, 0, 1);
+  await vscode.commands.executeCommand("pliGraph.tab");
+  assert.equal(typed.document.getText(), `    /* READ ${"*".repeat(59)}/AAP00020`);
+  assert.equal(typed.selection.active.character, 4);
+  await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  await vscode.window.showTextDocument(document);
+  console.log("PL/I rulers and tab stops work");
+
   // `select id ... from prod.customer`: id is a column of ABTCUST1's table.
   const show = vscode.Uri.joinPath(folder, "ABSHOW01");
   await shownAs(show, "pli");

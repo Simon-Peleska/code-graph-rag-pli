@@ -68,6 +68,77 @@ export const isNameChar = (c) => c !== undefined && /[A-Za-z0-9@#$_]/.test(c);
 /** @param {string} text */
 const spaces = (text) => text.replace(/[^\n\r]/g, " ");
 
+// Code ends in column 72, often with a comment whose closing */ sits right
+// there, and columns 73-80 hold the sequence number. Blanks typed into a line
+// take their room from the padding after the cursor, so neither moves: the
+// trailing blanks, the filler in front of the */ (`*****/`, `----*/`,
+// `    */`), then each run of blanks from the right (`    i*/`), except in
+// strings. One blank stays between words. No room left gives undefined.
+/**
+ * @param {string} line
+ * @param {number} column
+ * @param {number} count
+ * @returns {string | undefined}
+ */
+export function insertBlanks(line, column, count) {
+  const blanks = " ".repeat(count);
+  const sequence = line.slice(72);
+  let code = line.slice(0, 72);
+  if (column >= 72 || code.length + count <= 72) {
+    return line.slice(0, column) + blanks + line.slice(column);
+  }
+  let needed = code.length + count - 72;
+  /** @param {number} start @param {number} end */
+  const take = (start, end) => {
+    const taken = Math.max(0, Math.min(needed, end - Math.max(start, column)));
+    code = code.slice(0, end - taken) + code.slice(end);
+    needed -= taken;
+  };
+  /** @param {number} end @param {string} filler */
+  const runStart = (end, filler) => {
+    let start = end;
+    while (start > 0 && filler.includes(code[start - 1]) && !code.slice(0, start).endsWith("/*")) start--;
+    const keepBlank = start > 0 && code[start - 1] !== " " && code[start] === " ";
+    return keepBlank ? start + 1 : start;
+  };
+
+  if (!stringColumns(code).has(code.length - 1)) take(code.trimEnd().length, code.length);
+  if (needed > 0 && code.endsWith("*/")) {
+    const end = code.length - 2;
+    take(runStart(end, " *-=_.~+#"), end);
+  }
+  const quoted = stringColumns(code);
+  for (let end = code.length; needed > 0; ) {
+    end = code.lastIndexOf(" ", end - 1) + 1;
+    if (end <= column) break;
+    const start = runStart(end, " ");
+    if (!quoted.has(end - 1)) take(start, end);
+    end = Math.min(start, end - 1);
+  }
+  if (needed > 0) return undefined;
+  return code.slice(0, column) + blanks + code.slice(column) + sequence;
+}
+
+// The columns of a line inside string literals, outside comments.
+/** @param {string} line */
+function stringColumns(line) {
+  const quoted = new Set();
+  let inComment = false;
+  let inString = false;
+  for (let i = 0; i < line.length; i++) {
+    if (inComment) {
+      if (line.startsWith("*/", i)) inComment = false;
+    } else if (line[i] === "'") {
+      inString = !inString;
+    } else if (inString) {
+      quoted.add(i);
+    } else if (line.startsWith("/*", i)) {
+      inComment = true;
+    }
+  }
+  return quoted;
+}
+
 // Mainframe sources are often fixed-format: a sequence number in columns
 // 73-80 and, in PL/I, a carriage-control character in column 1. Both are
 // blanked before parsing.
