@@ -9,7 +9,7 @@ import { Graph } from "./graph.js";
 /**
  * @typedef {object} PageQuestion
  * @property {number} id
- * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "details" | "search" | "list" | "coverage"} what
+ * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "dataFlow" | "dataModel" | "details" | "search" | "list" | "coverage"} what
  * @property {any[]} args
  */
 /** @typedef {{ id: number, result: unknown, ms: number } | { id: number, error: string }} PageAnswer */
@@ -28,6 +28,8 @@ const answers = {
   dependencies: (path, direction) => graph.pageDependencies(path, direction),
   dependencyList: (id, direction) => graph.pageDependencyList(id, direction),
   flow: (id, depth) => graph.pageFlow(id, depth),
+  dataFlow: (id) => graph.pageDataFlow(id),
+  dataModel: (path, depth) => graph.pageDataModel(path, depth),
   details: (id) => graph.pageDetails(id),
   search: (query) => graph.pageSearch(query),
   list: (tab, filter) => graph.pageList(tab, filter),

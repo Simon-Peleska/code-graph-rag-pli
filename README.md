@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG035E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG038E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -46,7 +46,7 @@ The other languages are linked to PL/I and to each other:
 | JCL (`.jcl`, `.cntl`) | `JOB`, named `PROC` | `PGM=X`, `MBR=X` (IMS procedures), the program and PSB in `PGM=DFSRRC00,PARM='BMP,X,PSB'`, `RUN PROGRAM(X)` in SYSTSIN data, `EXEC X` / `EXEC PROC=X` (in-stream or cataloged procedure) |
 | MFS (`.mfs`, `.asm`, `.hlasm`, `.mlc`) | `FMT`, `MSG` | `SOR=` format and `NXT=` message of a MSG |
 | PSB and DBD gens, IMS system definition | `PSBGEN`, `DBD`, `SEGM`, `TRANSACT` | a PSB's DBDs and, by `SENSEG`, their segments; a transaction's PSB and the program named like it (on its `APPLCTN`) |
-| Db2 DDL (`.ddl`, `.db2`) | `CREATE TABLE` / `VIEW` / `ALIAS` | tables a view selects from, `REFERENCES` tables, the alias target |
+| Db2 DDL (`.ddl`, `.db2`) | `CREATE TABLE` / `VIEW` / `ALIAS` | tables a view selects from, `REFERENCES` tables (the foreign key's columns in `detail`, as `REFERENCES (A, B)`), the alias target |
 | PL/I | (above) | tables in `EXEC SQL` (with `SELECT`, `INSERT`, `UPDATE`, `DELETE`), MFS formats and messages named in string literals (`'CUSTO   '`), a cursor's `DECLARE` from its `OPEN`, `FETCH` and `CLOSE` (in the same file) |
 
 A JCL dataset's definition is the DD creating it (`DISP=NEW` or `MOD`), and
@@ -75,7 +75,7 @@ tables, PSBs and DBDs keep every definition at the nearest distance.
 |---|---|---|
 | PL/I declarations | every variable and structure field: level, parent, qualified name, type, size, dimensions, storage (`STATIC`, `BASED(p)`, `DEFINED`, `CONTROLLED`, `VALUE`, ...), `INIT`, `LIKE`, `EXTERNAL`, the procedure it is in, a parameter's position, and the comments on it | `variables` |
 | PL/I statements | every executable statement, and the `DECLARE`, `DEFAULT`, `DEFINE` and `FORMAT` statements, as a tree: what it is in, which branch of an `IF`, its `WHEN`s and `OTHERWISE`; the head (condition, `CALL` entry, `RETURN` value, ...); the comments above procedures | `statements`, `symbols.comment` |
-| PL/I data flow | the fields each statement reads, writes (with the literal written) or passes to a `CALL` (by position), each resolved to its declaration by PL/I's scope rules, includes and `LIKE` copies counted | `accesses` |
+| PL/I data flow | the fields each statement reads, writes (with the literal written) or passes to a `CALL` or function (by position), and the host variables an `EXEC SQL` sets (`INTO`) or reads, each resolved to its declaration by PL/I's scope rules, includes and `LIKE` copies counted | `accesses` |
 | PL/I conditions | every comparison in a condition, and a `SELECT` subject against each `WHEN` value | `comparisons` |
 | PL/I text | every string literal of a statement: messages, report text, codes | `literals` |
 | PL/I record I/O | `OPEN`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `LOCATE`, `GET`, `PUT`, `CLOSE` with the file, record, key and title | `file_io` |
@@ -166,7 +166,7 @@ statements in source order, top to bottom, with IF, SELECT and DO shown in
 full above their decision, an IF's and a loop's branches as true and false
 in the theme's green and red (a loop's body comes back to its decision and
 false leaves it), a WHEN's values on its branch, and a lane for
-every procedure and include the flow passes through. A call flows into the callee's lane and back; the *Calls deep* slider (0-10) sets
+every procedure and include the flow passes through. A call flows into the callee's lane and back; the *Calls deep* slider (0-10, or full) sets
 how many calls deep that goes, and a call past it is cut off and drawn as an
 action with ⋔ (↻ for a call back into a procedure already on the way). A
 flow stops expanding calls at 3000 steps. Statements, conditions and loop
@@ -186,7 +186,16 @@ Error codes on the page: `VIZ-101` unknown id in the URL, `VIZ-102` a view
 failed to draw, `VIZ-103` details, `VIZ-104` the sidebar list, `VIZ-105`
 search could not be read, `VIZ-106` the list to save could not be read,
 `VIZ-107` the flow could not be read, `VIZ-108` the flow's procedure is not in
-the graph, `VIZ-109` the flow could not be drawn.
+the graph, `VIZ-109` the flow could not be drawn, `VIZ-110` the data model
+could not be read, `VIZ-111` its file creates no tables, `VIZ-112` the data
+model could not be drawn, `VIZ-113` a variable's data flow could not be read, `VIZ-114` the variable is
+not in the graph, `VIZ-115` the data flow could not be drawn as a diagram,
+`VIZ-116` as the table of tests, `VIZ-118` as the table of sets.
+
+The same tab draws a DDL file's data model (*PL/I Graph: Show Data Model*,
+the table icon on a DDL editor): a UML class diagram of its tables, views and
+aliases with their columns, keys and the foreign keys, FROMs and FORs between
+them, with the *Relations deep* slider adding other files' tables.
 
 ## 3270 screens
 

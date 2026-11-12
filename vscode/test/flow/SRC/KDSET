@@ -1,0 +1,31 @@
+ KDSET: PROC OPTIONS(MAIN);
+   DCL 1 KD,
+         2 TYP CHAR(1),
+         2 RC  FIXED BIN(31);
+   DCL X CHAR(1);
+   KD.RC = 0;
+   IF KD.TYP = 'G' THEN
+     DO;
+       X = 'A';
+       RC = 4;
+     END;
+   ELSE X = 'B';
+   SELECT (KD.TYP);
+     WHEN ('A') KD.RC = 8;
+     WHEN ('B') X = 'C';
+     OTHERWISE CALL FEHLER(KD);
+   END;
+   DO WHILE (X = 'A');
+     X = 'B';
+   END;
+   ON ERROR KD.RC = 16;
+   CALL CHECK;
+ CHECK: PROC;
+   IF X = 'C' THEN KD = '';
+ END CHECK;
+ FEHLER: PROC(K);
+   DCL 1 K, 2 T CHAR(1), 2 R FIXED BIN(31);
+   IF K.T = 'X' THEN K.R = 12;
+   K.T = 'F';
+ END FEHLER;
+ END KDSET;

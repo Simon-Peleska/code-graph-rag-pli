@@ -171,6 +171,33 @@ exports.run = async () => {
   assert.ok(declared.some((a) => a.title === "Show Flow Diagram of HELPER"), JSON.stringify(declared.map((a) => a.title)));
   console.log("The flow code action is offered on a declaration");
 
+  // ABTCUST1 creates the table PROD.CUSTOMER.
+  const ddl = vscode.Uri.joinPath(folder, "ABTCUST1");
+  await shownAs(ddl, "db2");
+  await vscode.commands.executeCommand("pliGraph.dataModel");
+  await webviewTab("Data Model: ABTCUST1");
+  console.log("Show Data Model opens");
+  // On `prod.customer` in ABSHOW01's SQL the lightbulb offers its data model, not on the column `id`.
+  const titles = async (uri, line, character) =>
+    (await vscode.commands.executeCommand("vscode.executeCodeActionProvider", uri, new vscode.Range(line, character, line, character))).map((a) => a.title);
+  const onTable = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", show, new vscode.Range(2, 40, 2, 40));
+  const modelAction = onTable.find((a) => a.title === "Show Data Model of CUSTOMER");
+  assert.ok(modelAction, JSON.stringify(onTable.map((a) => a.title)));
+  assert.ok(!(await titles(show, 2, 18)).some((t) => t.startsWith("Show Data Model")));
+  assert.ok((await titles(ddl, 0, 1)).includes("Show Data Model of ABTCUST1"));
+  await vscode.window.tabGroups.close(vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.label.startsWith("Data Model: ")));
+  await vscode.commands.executeCommand(modelAction.command.command, ...modelAction.command.arguments);
+  await webviewTab("Data Model: ABTCUST1");
+  console.log("The data model code action opens");
+
+  // On a variable's name (`dcl m char(8)`), the lightbulb offers its data flow.
+  const onVariable = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", show, new vscode.Range(1, 6, 1, 6));
+  const dataAction = onVariable.find((a) => a.title === "Show Data Flow of M");
+  assert.ok(dataAction, JSON.stringify(onVariable.map((a) => a.title)));
+  await vscode.commands.executeCommand(dataAction.command.command, ...dataAction.command.arguments);
+  await webviewTab("PL/I Data Flow: M");
+  console.log("The data flow code action opens");
+
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");
   assert.match(vscode.window.activeTextEditor?.document.getText() ?? "", /^# PL\/I Graph coverage/);

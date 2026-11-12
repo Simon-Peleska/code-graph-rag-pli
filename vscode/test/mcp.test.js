@@ -184,6 +184,8 @@ test("field shows where a field is set, passed and compared, and under which con
   assert.equal(
     saldo.result.content[0].text,
     [
+      "sets KD.SALDO by EXEC in KDP00004: SRC/KDP00004:6",
+      "sets KD.SALDO by EXEC in KDP00004: SRC/KDP00004:17",
       "compares SALDO > LIMIT in KDP00006: SRC/KDP00006:13 when NOT (KD.TYP = 'G')",
       "sets SALDO by an assignment in KDP00006: SRC/KDP00006:25 when DO I = 1 TO 10 WHILE (RC = 0)",
     ].join("\n"),

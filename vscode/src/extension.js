@@ -131,6 +131,8 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.show", () => showGraph(context)),
     vscode.commands.registerCommand("pliGraph.flow", () => showFlowAtCursor(context)),
     vscode.commands.registerCommand("pliGraph.flowOf", (/** @type {string | undefined} */ name) => showFlowOf(context, name)),
+    vscode.commands.registerCommand("pliGraph.dataFlow", (/** @type {string | undefined} */ id) => showDataFlow(context, id)),
+    vscode.commands.registerCommand("pliGraph.dataModel", (/** @type {vscode.Uri | undefined} */ uri) => showDataModel(context, uri)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     vscode.commands.registerCommand("pliGraph.tab", pliTab),
@@ -143,7 +145,7 @@ export function activate(context) {
       LANGUAGES.map((language) => ({ language })),
       { provideReferences },
     ),
-    vscode.languages.registerCodeActionsProvider({ language: "pli" }, { provideCodeActions }),
+    vscode.languages.registerCodeActionsProvider([{ language: "pli" }, { language: "db2" }], { provideCodeActions }),
     vscode.languages.registerCompletionItemProvider(
       ["pli", "hlasm", "jcl"].map((language) => ({ language })),
       { provideCompletionItems },
@@ -602,8 +604,10 @@ function provideDefinition(document, position) {
   );
 }
 
-// On a procedure's name, where it is declared or called: draw its flow.
-// Runs on every cursor move, so it logs nothing; the command does.
+// On a procedure's name, where it is declared or called: draw its flow. On a
+// table's, view's or alias's name, in SQL or DDL: draw the data model of the
+// file that creates it; elsewhere in a DDL file, that file's.
+// Runs on every cursor move, so it logs nothing; the commands do.
 /**
  * @param {vscode.TextDocument} document
  * @param {vscode.Range} range
@@ -612,16 +616,32 @@ function provideDefinition(document, position) {
 function provideCodeActions(document, range) {
   const where = locate(document.uri);
   const graph = where?.workspace.graph;
-  const found = graph && definitionsAt(document, range.start);
-  if (!where || !graph || !found) return [];
-  const word = found.word.toUpperCase();
+  if (!where || !graph) return [];
+  const found = definitionsAt(document, range.start);
+  const word = found?.word.toUpperCase() ?? "";
+  const table = found?.places.find((p) => graph.module(p.path)?.language === "db2" && graph.blocks(p.path).some((b) => b.name === word));
+  const ddl = document.languageId === "db2";
+  if (table || ddl) {
+    const path = table?.path ?? where.path;
+    const action = new vscode.CodeAction(`Show Data Model of ${table ? word : path.split("/").pop()}`);
+    action.command = { title: action.title, command: "pliGraph.dataModel", arguments: [vscode.Uri.joinPath(where.workspace.folder.uri, path)] };
+    return [action];
+  }
+  if (!found) return [];
   const declared = [{ path: where.path, line: range.start.line }, ...found.places];
   const procedure = declared
     .map((p) => graph.flowProcedure(p.path, p.line + 1))
     .find((id, i) => id?.endsWith(`:${word}:${declared[i].line + 1}`));
-  if (!procedure) return [];
-  const action = new vscode.CodeAction(`Show Flow Diagram of ${word}`);
-  action.command = { title: action.title, command: "pliGraph.flowOf", arguments: [procedure] };
+  if (procedure) {
+    const action = new vscode.CodeAction(`Show Flow Diagram of ${word}`);
+    action.command = { title: action.title, command: "pliGraph.flowOf", arguments: [procedure] };
+    return [action];
+  }
+  const variable = graph.variableAt(where.path, range.start.line + 1, word);
+  if (!variable) return [];
+  const name = variable.replace(/^.*:(.*):\d+$/, "$1");
+  const action = new vscode.CodeAction(`Show Data Flow of ${name}`);
+  action.command = { title: action.title, command: "pliGraph.dataFlow", arguments: [variable] };
   return [action];
 }
 
@@ -975,6 +995,45 @@ function showFlow(context, workspace, procedure) {
   log.info(`flow diagram of ${procedure}`);
   const name = procedure.replace(/^.*:(.*):\d+$/, "$1");
   openPage(context, workspace, "flow", `v=flow&id=${encodeURIComponent(procedure)}`, `PL/I Flow: ${name}`, true);
+}
+
+// Where a variable is set, read, passed and tested, and from which columns:
+// `id` when the code action passes the variable's page id, else the variable
+// at the cursor.
+/** @param {vscode.ExtensionContext} context @param {string} [id] */
+function showDataFlow(context, id) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const word = shown.editor && shown.where && shown.editor.document.getWordRangeAtPosition(shown.editor.selection.active, /[A-Za-z0-9_@#$]+/);
+  const variable = id ?? (word && shown.where ? shown.graph.variableAt(shown.where.path, word.start.line + 1, shown.editor?.document.getText(word) ?? "") : undefined);
+  if (!variable) {
+    const message = `[PLG038E] There is no variable at the cursor to show the data flow of${shown.where ? ` in ${shown.where.path}` : ": no PL/I file is open"}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  log.info(`data flow of ${variable}`);
+  const name = variable.replace(/^.*:(.*):\d+$/, "$1");
+  openPage(context, shown.workspace, "flow", `v=data&id=${encodeURIComponent(variable)}`, `PL/I Data Flow: ${name}`, true);
+}
+
+// The data model of a DDL file: the one clicked in the explorer, else the active editor's.
+/**
+ * @param {vscode.ExtensionContext} context
+ * @param {vscode.Uri} [uri]
+ */
+function showDataModel(context, uri) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const where = uri ? locate(uri) : shown.where;
+  if (!where || where.workspace.graph?.module(where.path)?.language !== "db2") {
+    const message = `[PLG037E] There is no data model to draw${where ? `: ${where.path} is not a Db2 DDL file of the graph` : ": no DDL file is open"}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  log.info(`data model of ${where.path}`);
+  openPage(context, where.workspace, "flow", `v=model&id=${encodeURIComponent(where.path)}`, `Data Model: ${where.path.split("/").pop()}`, true);
 }
 
 // Both pages ask for what they draw. A worker of its own with its own

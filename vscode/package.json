@@ -159,6 +159,17 @@
         "icon": "$(search)"
       },
       {
+        "command": "pliGraph.dataFlow",
+        "title": "Show Data Flow of the Variable",
+        "category": "PL/I Graph"
+      },
+      {
+        "command": "pliGraph.dataModel",
+        "title": "Show Data Model",
+        "category": "PL/I Graph",
+        "icon": "$(table)"
+      },
+      {
         "command": "pliGraph.showScreen",
         "title": "Show 3270 Screen",
         "category": "PL/I Graph",
@@ -213,12 +224,21 @@
           "command": "pliGraph.showScreen",
           "when": "editorLangId == hlasm",
           "group": "navigation"
+        },
+        {
+          "command": "pliGraph.dataModel",
+          "when": "editorLangId == db2",
+          "group": "navigation"
         }
       ],
       "explorer/context": [
         {
           "command": "pliGraph.showScreen",
           "when": "resourceLangId == hlasm"
+        },
+        {
+          "command": "pliGraph.dataModel",
+          "when": "resourceLangId == db2"
         }
       ],
       "view/title": [

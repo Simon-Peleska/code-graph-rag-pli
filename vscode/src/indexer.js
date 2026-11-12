@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 20;
+const INDEXER_VERSION = 23;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -1546,6 +1546,18 @@ function readPli(root, file, db2) {
               addRef(file, caller, "table", table.name, node, sqlOperation(node.text, table.name) ?? null, table.qualifier);
             }
             readSql(tree.rootNode, file, caller, cursors, language.startPosition.row + 1);
+            // A host variable after INTO, and its indicator, is set by the statement, any other one is read.
+            for (const host of statement < 0 ? [] : tree.rootNode.descendantsOfType("host_variable")) {
+              let into = host?.parent;
+              while (into && into.type !== "into_clause") into = into.parent;
+              const mode = into ? "write" : "read";
+              for (const [, written] of host?.text.matchAll(/:\s*([\w.$#@]+)/g) ?? []) {
+                const name = written.toUpperCase();
+                if (accessed.has(`${statement} ${name} ${mode}`)) continue;
+                accessed.add(`${statement} ${name} ${mode}`);
+                file.accesses.push({ statement, name, mode, value: null, position: null });
+              }
+            }
             const first = tree.rootNode.namedChildren[0];
             const verb = first && CURSOR_STATEMENTS[first.type];
             const cursor = verb && (first.childForFieldName("cursor") ?? first.childForFieldName("name"))?.text.toUpperCase();
@@ -1706,8 +1718,10 @@ function readAccess(text, node, up, kind) {
       return { mode: up.childForFieldName("control")?.id === node.id ? "write" : "read", value: null, position: null };
     case "argument": {
       const list = up.parent;
-      if (list?.parent?.type !== "call_statement") return { mode: "read", value: null, position: null };
-      return { mode: "arg", value: null, position: list.namedChildren.findIndex((c) => c?.id === up.id) + 1 };
+      if (list?.parent?.type === "call_statement") return { mode: "arg", value: null, position: list.namedChildren.findIndex((c) => c?.id === up.id) + 1 };
+      // F(X) or A(I): the grammar can't tell a function's argument from a subscript, only the link of F to a procedure can.
+      const position = list?.type === "reference" ? list.namedChildren.filter((c) => c?.type === "argument").findIndex((c) => c?.id === up.id) + 1 : 0;
+      return { mode: "read", value: null, position: position || null };
     }
   }
   if (up.childForFieldName("file")?.id === node.id) return undefined;
@@ -2252,11 +2266,26 @@ function readDb2(root, file) {
     const caller = name ? addSymbol(file, -1, kind, name, statement, qualifier) : -1;
     if (kind === "table" && caller >= 0) readColumns(statement, file, caller);
     for (const table of db2TableNames(statement)) {
-      addRef(file, caller, "table", table.name, table.site, null, table.qualifier);
+      addRef(file, caller, "table", table.name, table.site, foreignKey(table.site), table.qualifier);
     }
   }
 }
 
+/**
+ * `REFERENCES (A, B)` with the columns of a foreign key whose table is at
+ * `site`: the column it is written on, or the constraint's `FOREIGN KEY (A, B)`.
+ * Null for a table named anywhere else, like a view's FROM.
+ * @param {Node} site
+ * @returns {string | null}
+ */
+function foreignKey(site) {
+  const clause = site.parent;
+  if (clause?.type !== "references_clause") return null;
+  const owner = clause.parent;
+  const named = owner?.type === "column_definition" ? owner.childForFieldName("name")?.text : owner?.namedChildren.find((c) => c?.type === "group")?.text.replace(/^\(|\)$/g, "");
+  const columns = (named ?? "").split(",").map((n) => n.trim().replaceAll('"', "").toUpperCase()).filter(Boolean);
+  return `REFERENCES (${columns.join(", ")})`;
+}
 
 /**
  * @param {Node} statement a create_table_statement

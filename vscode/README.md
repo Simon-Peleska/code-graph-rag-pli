@@ -70,6 +70,48 @@ extension keeps of each workspace folder:
   the name: `executeCommand("pliGraph.flowOf", "KDP00006")`.
 - **Show Flow Diagram of NAME** is a code action (lightbulb, Ctrl+.) on a
   procedure's name, where it is declared or called.
+- **PL/I Graph: Show Data Model** (the table icon in a DDL file's editor
+  title, or the explorer's context menu on one) draws the file's tables,
+  views and aliases as a UML class diagram in the same tab as the flow: a box
+  per table with its columns, `PK` and `FK` marks, types and `[0..1]` for a
+  column that may be NULL. A foreign key is a solid arrow to the table it
+  references, labeled with its columns (column-level `REFERENCES` and
+  `FOREIGN KEY (..) REFERENCES`); a view's FROM and an alias's FOR are dashed.
+  Referenced tables sit above the tables that reference them. The *Relations
+  deep* slider adds the tables of other files that many relations away, in
+  either direction, up to 150. Click one of the file's own boxes to open its
+  `CREATE`, another file's box to draw that file's data model.
+- **Show Data Flow of NAME** is a code action on a variable's or field's
+  name, where it is declared or used (also the command *PL/I Graph: Show
+  Data Flow of the Variable* at the cursor). It follows the variable end to
+  end: under a `CALL` into the callee with the parameter in that place, or
+  with the parameter's field in the same position when a structure around
+  the variable is passed; into a function's parameter when it is an argument
+  of `F(X)`; into `Y` when an assignment `Y = ...X...` reads it, and into the
+  `INTO` host variables of an `EXEC SQL` whose `WHERE` or values read it; and
+  from a `RETURN(X)` into what the function's result is assigned to. A
+  parameter holds the value everywhere, a copy only from the copy on, until a
+  statement that reads nothing followed overwrites it: in the procedure of the
+  copy that is by line, a loop around both counting both ways, and the
+  overwrite ends it for what follows in its own block (an `IF` branch or a
+  `DO` group, say). Other procedures that use a copied global count
+  everywhere. A field of a `LIKE` copy means the copy. The tab
+  draws every statement that sets, reads, passes or tests it, its structure
+  or one of its fields, inside the IFs, SELECTs, loops and ON-units it
+  happens in, one branch per procedure, each framed by what it does, and
+  the statements a test of it leads to. A test is a comparison in an `IF`,
+  `WHEN` or loop condition, also inside `SUBSTR` or with a subscript, or the
+  `WHERE` of an `EXEC SQL`. The names holding the value are in bold yellow.
+  *Tests* shows the tests instead: when each is
+  reached at all (the conditions around it and, where the value got there
+  under another name, the conditions and the `CALL`s, copies and function
+  calls on the way), and what happens when it holds and when not, with the
+  conditions in between. *Sets* shows every statement that sets it, or what
+  it goes on to, with the same conditions: where a message text or return
+  code comes from. A click opens the statement.
+- **Show Data Model of NAME** is a code action on a table, view or alias name,
+  in a PL/I program's SQL or in DDL; anywhere else in a DDL file it is **Show
+  Data Model of FILE**.
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
   graph in the editor, starting at the active file's module. It is the page
   from `viz/`; it asks for what each view draws, and a worker thread of its
@@ -245,8 +287,11 @@ can read it while VS Code runs:
   label, `SIGNAL` condition or `CALL` entry. Declarations are no statements.
 - `accesses(id, statement, name, mode, value, position, variable, through)`:
   the fields each statement reads, writes (`value` the literal written) or
-  passes to a `CALL` (`arg`, `position` from 1), by name as written.
-  `variable` is the declaration the name resolves to by PL/I's scope rules,
+  passes to a `CALL` (`arg`, `position` from 1), by name as written; a read
+  in `F(X)` or `A(I)` has its `position` too, the parameter it binds to when
+  `F` is a procedure; an
+  `EXEC SQL` writes its `INTO` host variables and their indicators and reads
+  the others. `variable` is the declaration the name resolves to by PL/I's scope rules,
   includes counted; for a field of a `LIKE` copy it is the template's field
   and `through` the copy.
 - `comparisons(id, statement, left, operator, right)`: every comparison in a
@@ -326,12 +371,20 @@ can read it while VS Code runs:
   to the command.
 - `PLG036W` Tab in a PL/I file: the line has not enough blanks or comment
   filler after the cursor to give up before column 72, so nothing is inserted.
+- `PLG037E` Show Data Model: the file is not a Db2 DDL file of the graph, or
+  no file is open.
+- `PLG038E` Show Data Flow of the Variable: the cursor is on no variable the
+  graph knows, or no PL/I file is open.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
 sidebar list, `VIZ-105` search could not be read, `VIZ-106` the list to save,
 `VIZ-107` the flow diagram could not be read, `VIZ-108` its procedure is not
-in the graph, `VIZ-109` it could not be drawn.
+in the graph, `VIZ-109` it could not be drawn, `VIZ-110` the data model could
+not be read, `VIZ-111` its file creates no tables, views or aliases,
+`VIZ-112` it could not be drawn, `VIZ-113` a variable's data flow could not be read, `VIZ-114` the variable is
+not in the graph, `VIZ-115` the data flow could not be drawn as a diagram,
+`VIZ-116` as the table of tests, `VIZ-118` as the table of sets.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

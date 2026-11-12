@@ -24,7 +24,7 @@ body {
   background: var(--bg); color: var(--text); padding: 0;
   font-family: var(--vscode-font-family, system-ui, sans-serif); --code-font: var(--vscode-editor-font-family, ui-monospace, monospace);
   --flow-true: var(--vscode-terminal-ansiGreen, var(--vscode-charts-green, #23d18b)); --flow-false: var(--vscode-terminal-ansiRed, var(--vscode-charts-red, #f14c4c)); font-size: var(--vscode-font-size, 13px); line-height: 1.4;
-  display: grid; grid-template-rows: auto 1fr; height: 100vh;
+  display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); height: 100vh;
 }
 header {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
@@ -103,6 +103,22 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 .flow-lanes .include b { color: var(--imports); }
 .flow-lanes .sub { display: block; overflow: hidden; text-overflow: ellipsis; }
 #flow svg { display: block; font-size: 12px; }
+.data-as { display: flex; gap: 2px; }
+.legend { display: inline-flex; gap: 10px; margin-left: 10px; }
+.legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 4px; border: 2px solid var(--mark); vertical-align: -1px; }
+.access-write { --mark: var(--main); } .access-arg { --mark: var(--accent); } .access-compare { --mark: var(--imports); }
+.access-read { --mark: var(--muted); } .access-outcome { --mark: var(--flow-true); }
+.rules { padding: 10px 12px; }
+.rules table { border-collapse: collapse; width: 100%; }
+.rules th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.rules td { vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.rules pre { margin: 0; font-family: var(--code-font); white-space: pre-wrap; cursor: pointer; }
+.rules pre:hover, .rules .in:hover { color: var(--accent); }
+.rules .guard { color: var(--muted); font-family: var(--code-font); font-size: .92em; }
+.rules .in { cursor: pointer; white-space: nowrap; }
+.rules .outcome + .outcome, .rules .when + .when { margin-top: 6px; }
+.rules .when { white-space: pre-wrap; }
+.rules td:first-child { width: 30%; }
 #flow .lane-odd { fill: var(--panel); }
 #flow .lane-line { stroke: var(--line); }
 #flow .edge { fill: none; stroke: var(--edge); stroke-width: 1.3; shape-rendering: crispEdges; }
@@ -117,10 +133,26 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 #flow .missing rect { stroke: var(--error); stroke-dasharray: 3 3; }
 #flow .ends rect { stroke: var(--main); }
 #flow .cond rect { stroke: var(--muted); }
+#flow-title:empty { display: none; }
+#flow .tracked { font-weight: bold; fill: var(--vscode-charts-yellow, #e2c541); }
+#flow [class*=access-] rect, #flow .diamond[class*=access-] { stroke: var(--mark); stroke-width: 2.5; }
 #flow .edge.true { stroke: var(--flow-true); } #flow .arrow.true, #flow .guard.true { fill: var(--flow-true); }
 #flow .edge.false { stroke: var(--flow-false); } #flow .arrow.false, #flow .guard.false { fill: var(--flow-false); }
 #flow .dot { fill: var(--text); }
 #flow .ring { fill: none; stroke: var(--text); stroke-width: 1.5; }
+#flow .edge.view, #flow .edge.alias { stroke-dasharray: 6 4; }
+#flow .open-arrow { fill: none; stroke: var(--edge); stroke-width: 1.3; }
+#flow .entity { cursor: pointer; }
+#flow .entity rect { fill: var(--node); stroke: var(--node-border); stroke-width: 1.3; }
+#flow .entity.own rect { stroke: var(--accent); }
+#flow .entity.view rect, #flow .entity.alias rect { stroke-dasharray: 5 3; }
+#flow .entity:hover rect { stroke: var(--accent); stroke-width: 2; }
+#flow .entity .divider { stroke: var(--node-border); }
+#flow .entity .stereo { fill: var(--muted); font-size: 11px; }
+#flow .entity .name { fill: var(--text); font-weight: 600; }
+#flow .entity .column { fill: var(--text); font-family: var(--code-font); }
+#flow .entity .type { fill: var(--muted); font-family: var(--code-font); }
+#flow .entity .mark { fill: var(--main); font-family: var(--code-font); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -175,8 +207,9 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 <main id="flow" hidden>
   <div class="flow-head">
     <h2 id="flow-title"></h2>
-    <label title="How many calls deep the flow follows into the procedures it calls; deeper calls are cut off">Calls deep
-      <input type="range" id="flow-depth" min="0" max="10" value="1"><output id="flow-depth-value">1</output></label>
+    <label id="flow-depth-label">Calls deep 
+      <input type="range" id="flow-depth" min="0" max="11" value="1"><output id="flow-depth-value">1</output></label>
+    <span class="data-as" id="data-as" hidden><button class="icon" data-icon="git-merge" data-as="diagram" aria-pressed="true" title="Diagram"></button><button class="icon" data-icon="table" data-as="table" aria-pressed="false" title="Tests"></button><button class="icon" data-icon="list-flat" data-as="sets" aria-pressed="false" title="Sets"></button></span>
     <span class="sub" id="flow-status"></span>
   </div>
   <div id="flow-error" hidden></div>
@@ -190,7 +223,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
-const flowPage = new URLSearchParams(location.hash.slice(1)).get("v") === "flow";
+const flowPage = ["flow", "data", "model"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -210,7 +243,7 @@ window.addEventListener("message", event => {
     if (message.error) asking?.reject(new Error(message.error));
     else asking?.resolve(message.result);
   }
-  if (message?.type === "changed" && flowPage) renderFlow();
+  if (message?.type === "changed" && flowPage) { dataFlow = null; renderDiagram(); }
   else if (message?.type === "changed") document.getElementById("reload-tool").hidden = false;
   if (message?.type === "go") location.hash = message.hash;
 });
@@ -965,9 +998,21 @@ function svg(tag, props, ...children) {
   return node;
 }
 const titled = text => svg("title", null, text);
-// Lines of text, the first baseline at y.
-const lines = (texts, x, y, step, props, title) =>
-  svg("text", props, ...texts.map((text, i) => svg("tspan", { x, y: y + i * step }, text)), title ? titled(title) : null);
+// Lines of text, the first baseline at y, with the names in bold.
+const lines = (texts, x, y, step, props, title, names) =>
+  svg("text", props, ...texts.map((text, i) => svg("tspan", { x, y: y + i * step }, ...bolded(text, names))), title ? titled(title) : null);
+function bolded(text, names) {
+  if (!names?.length) return [text];
+  const name = new RegExp(`(?<![\\w#@$.])(?:${names.map(n => n.replace(/[.$]/g, "\\$&")).join("|")})(?![\\w#@$])`, "gi");
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(name)) {
+    parts.push(text.slice(at, m.index), svg("tspan", { class: "tracked" }, m[0]));
+    at = m.index + m[0].length;
+  }
+  parts.push(text.slice(at));
+  return parts;
+}
 
 function drawFlow(flow, layout) {
   const { nodes, edges, laneX, width, height } = layout;
@@ -1019,22 +1064,22 @@ function drawFlow(flow, layout) {
     else if (n.type === "decision") {
       const where = `${n.step.text} · ${n.step.path}:${n.step.line}`;
       if (n.boxed) {
-        const box = svg("g", { class: "act cond" },
+        const box = svg("g", { class: `act cond ${n.step.access ? `access-${n.step.access}` : ""}` },
           svg("rect", { x: n.x - FLOW.box / 2, y: n.top, width: FLOW.box, height: n.boxH, rx: 2 }),
-          n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }),
+          n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}, null, n.step.names) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }, null, n.step.names),
           titled(where));
         box.addEventListener("click", goTo(n.step));
         root.append(box, svg("line", { x1: n.x, y1: n.top + n.boxH, x2: n.x, y2: n.y - 12, class: "edge" }));
       }
-      const diamond = svg("polygon", { points: `${n.x},${n.y - 12} ${n.x + 12},${n.y} ${n.x},${n.y + 12} ${n.x - 12},${n.y}`, class: "diamond" }, titled(where));
+      const diamond = svg("polygon", { points: `${n.x},${n.y - 12} ${n.x + 12},${n.y} ${n.x},${n.y + 12} ${n.x - 12},${n.y}`, class: `diamond ${n.step.access ? `access-${n.step.access}` : ""}` }, titled(where));
       diamond.addEventListener("click", goTo(n.step));
       root.append(diamond);
     } else if (n.type === "action") {
       const step = n.step;
       const kind = step.call === "missing" ? "missing" : step.kind === "include" ? "include" : step.call ? "call" : n.end ? "ends" : "";
-      const box = svg("g", { class: `act ${kind}` },
+      const box = svg("g", { class: `act ${kind} ${step.access ? `access-${step.access}` : ""}` },
         svg("rect", { x: n.x - FLOW.box / 2, y: n.top, width: FLOW.box, height: n.h, rx: 8 }),
-        n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }),
+        n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}, null, step.names) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }, null, step.names),
         titled(`${step.text}${step.call && step.call !== "expanded" ? ` (${step.call === "cut" ? "deeper than the slider" : step.call})` : ""} · ${step.path}:${step.line}`));
       box.addEventListener("click", goTo(step));
       root.append(box);
@@ -1046,20 +1091,29 @@ function drawFlow(flow, layout) {
         svg("path", { d: `M${n.x - 4},${y - 4} L${n.x + 4},${y + 4} M${n.x - 4},${y + 4} L${n.x + 4},${y - 4}`, class: "ring" }));
     }
   }
-  document.getElementById("flow-body").replaceChildren(lanes, root);
+  return [lanes, root];
 }
 
 let flowId = null, flowAsked = 0;
 function showFlow(id) {
   flowId = id;
-  document.getElementById("flow-title").textContent = `Flow of ${id.replace(/^.*:(.*):\d+$/, "$1")}`;
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").firstChild.textContent = "Calls deep ";
+  document.getElementById("flow-depth-label").hidden = false;
+  document.getElementById("data-as").hidden = true;
   document.getElementById("flow-body").replaceChildren();
   renderFlow();
 }
+// The slider's last stop is "full": as deep as it goes, until the step limit cuts it off.
+function chosenDepth() {
+  const value = Number(document.getElementById("flow-depth").value);
+  const full = value === Number(document.getElementById("flow-depth").max);
+  document.getElementById("flow-depth-value").textContent = full ? "full" : String(value);
+  return full ? 1000 : value;
+}
 async function renderFlow() {
   const mine = ++flowAsked;
-  const depth = Number(document.getElementById("flow-depth").value);
-  document.getElementById("flow-depth-value").textContent = String(depth);
+  const depth = chosenDepth();
   const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
   const fail = (code, message, cause) => {
     console.error(`[${code}] ${message}`, cause || "");
@@ -1082,16 +1136,286 @@ async function renderFlow() {
   try {
     const read = performance.now();
     const layout = layoutFlow(flow);
-    drawFlow(flow, layout);
-    const actions = layout.nodes.filter(n => n.type === "action").length;
-    status.textContent = `${flow.lanes.length} lanes · ${actions} steps${flow.truncated ? " · deeper calls cut off at 3000 steps" : ""}`;
+    document.getElementById("flow-body").replaceChildren(...drawFlow(flow, layout));
+    status.textContent = flow.truncated ? "cut off" : "";
     host.postMessage({ type: "route", hash: location.hash.slice(1), title: `PL/I Flow: ${flowId.replace(/^.*:(.*):\d+$/, "$1")}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
     console.info(`[graph] flow ${flowId} depth ${depth}: ${flow.lanes.length} lanes, ${layout.nodes.length} nodes, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
   } catch (cause) {
     fail("VIZ-109", `could not draw the flow of ${flowId}: ${cause.message}`, cause);
   }
 }
-document.getElementById("flow-depth").addEventListener("input", renderFlow);
+// ---- data model -----------------------------------------------------------
+// A DDL file's tables, views and aliases as a UML class diagram: a box per
+// table with its columns, a foreign key a solid arrow to the table it
+// references, a view's FROM and an alias's FOR a dashed one. Referenced
+// tables sit in the rows above the ones that reference them.
+const MODEL = { gapX: 56, gapY: 80, line: 17, pad: 10, head: 38, columns: 40, size: 12 };
+function textWidth(text, code) {
+  flowCanvas ??= document.createElement("canvas").getContext("2d");
+  flowCanvas.font = `${code ? 400 : 600} ${MODEL.size}px ${getComputedStyle(document.body).getPropertyValue(code ? "--code-font" : "font-family")}`;
+  return flowCanvas.measureText(text).width;
+}
+function layoutModel(model) {
+  const boxes = new Map();
+  for (const e of model.entities) {
+    const rows = e.columns.slice(0, MODEL.columns).map(c => ({
+      mark: [c.key ? "PK" : "", c.foreign ? "FK" : ""].filter(Boolean).join(","), name: c.name, type: `${c.type}${c.notNull ? "" : " [0..1]"}`,
+    }));
+    if (e.columns.length > MODEL.columns) rows.push({ mark: "", name: `… ${e.columns.length - MODEL.columns} more`, type: "" });
+    const markW = Math.max(0, ...rows.map(r => textWidth(r.mark, true))) + (rows.some(r => r.mark) ? 8 : 0);
+    const nameW = Math.max(0, ...rows.map(r => textWidth(r.name, true)));
+    const typeW = Math.max(0, ...rows.map(r => textWidth(r.type, true)));
+    const title = e.qualifier ? `${e.qualifier}.${e.name}` : e.name;
+    const w = Math.ceil(Math.max(140, textWidth(title) + 2 * MODEL.pad, markW + nameW + 12 + typeW + 2 * MODEL.pad));
+    const h = MODEL.head + (rows.length ? rows.length * MODEL.line + MODEL.pad : 0);
+    boxes.set(e.id, { e, title, rows, markW, nameW, w, h, layer: null, x: 0, y: 0 });
+  }
+  const targets = new Map();
+  for (const r of model.relations) if (r.from !== r.to) push(targets, r.from, r.to);
+  // A cycle of foreign keys stops where it started.
+  const layerOf = (id, seen) => {
+    const box = boxes.get(id);
+    if (box.layer !== null) return box.layer;
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const layer = Math.max(-1, ...(targets.get(id) ?? []).map(t => layerOf(t, seen))) + 1;
+    seen.delete(id);
+    return box.layer = layer;
+  };
+  for (const id of boxes.keys()) layerOf(id, new Set());
+
+  // Each layer in order of the boxes above it that it points to, wrapped into rows.
+  const wide = Math.max(900, document.getElementById("flow-body").clientWidth - 40);
+  const layers = [];
+  for (const box of boxes.values()) (layers[box.layer] ??= []).push(box);
+  const span = Math.max(...layers.filter(Boolean).map(layer => Math.min(wide, layer.reduce((sum, box) => sum + box.w + MODEL.gapX, 40 - MODEL.gapX))));
+  const rows = [];
+  let y = 20;
+  for (const layer of layers.filter(Boolean)) {
+    const above = box => { const xs = (targets.get(box.e.id) ?? []).map(t => boxes.get(t)).filter(t => t.layer < box.layer).map(t => t.x + t.w / 2); return xs.length ? xs.reduce((a, b) => a + b) / xs.length : Infinity; };
+    layer.sort((a, b) => above(a) - above(b) || a.e.distance - b.e.distance || a.title.localeCompare(b.title));
+    let row = [];
+    // A row moves under the boxes it points to, as far as the left edge allows; one pointing nowhere is centered.
+    const place = () => {
+      if (!row.length) return;
+      let x = 20;
+      for (const box of row) { box.x = x; box.y = y; x += box.w + MODEL.gapX; }
+      const pulled = row.filter(box => above(box) !== Infinity);
+      const shift = pulled.length ? pulled.reduce((sum, box) => sum + above(box) - box.x - box.w / 2, 0) / pulled.length : (span - x + MODEL.gapX - 20) / 2;
+      for (const box of row) box.x += Math.max(0, shift);
+      rows.push(row);
+      y += Math.max(...row.map(b => b.h)) + MODEL.gapY;
+      row = [];
+    };
+    for (const box of layer) {
+      if (row.length && row.reduce((sum, b) => sum + b.w + MODEL.gapX, box.w + 20) > wide) place();
+      row.push(box);
+    }
+    place();
+  }
+  const width = Math.max(...rows.flat().map(box => box.x + box.w)) + 20;
+
+  // Where an edge meets a box: spread along the side it leaves or enters by, in the order of the other ends.
+  const edges = model.relations.map(r => ({ r, a: boxes.get(r.from), b: boxes.get(r.to) })).filter(e => e.a && e.b);
+  const ends = new Map();
+  for (const e of edges) {
+    if (e.a === e.b) continue;
+    const down = e.b.y > e.a.y + e.a.h, up = e.b.y + e.b.h < e.a.y;
+    e.sides = up ? ["top", "bottom"] : down ? ["bottom", "top"] : e.b.x > e.a.x ? ["right", "left"] : ["left", "right"];
+    push(ends, `${e.r.from} ${e.sides[0]}`, { e, at: 0, other: e.b });
+    push(ends, `${e.r.to} ${e.sides[1]}`, { e, at: 1, other: e.a });
+  }
+  for (const [key, list] of ends) {
+    const side = key.slice(key.lastIndexOf(" ") + 1), box = list[0].at ? list[0].e.b : list[0].e.a;
+    const across = side === "top" || side === "bottom";
+    list.sort((p, q) => across ? p.other.x - q.other.x : p.other.y - q.other.y);
+    list.forEach((p, i) => {
+      const t = (i + 1) / (list.length + 1);
+      p.e[p.at ? "end" : "start"] = across
+        ? { x: box.x + box.w * t, y: side === "top" ? box.y : box.y + box.h, side }
+        : { x: side === "left" ? box.x : box.x + box.w, y: box.y + Math.min(box.h, MODEL.head + 60) * t, side };
+    });
+  }
+  return { boxes: [...boxes.values()], edges, width, height: y - MODEL.gapY + 20 };
+}
+
+function drawModel(model, layout, path) {
+  const { boxes, edges, width, height } = layout;
+  const root = svg("svg", { width, height, viewBox: `0 0 ${width} ${height}` },
+    svg("defs", null,
+      svg("marker", { id: "model-arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 8, markerHeight: 8, orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", class: "arrow" })),
+      svg("marker", { id: "model-open", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 8, markerHeight: 8, orient: "auto-start-reverse" }, svg("path", { d: "M0,0 L10,5 L0,10", class: "open-arrow" }))));
+  const bend = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+  for (const { r, a, start, end } of edges) {
+    let d, label;
+    if (r.from === r.to) {
+      const x = a.x + a.w, y = a.y + 14;
+      d = `M${x},${y} C${x + 50},${y - 10} ${x + 50},${y + 40} ${x},${y + 30}`;
+      label = { x: x + 44, y: y + 14 };
+    } else {
+      const reach = Math.max(30, Math.min(120, Math.hypot(end.x - start.x, end.y - start.y) / 2.5));
+      const [sx, sy] = bend[start.side], [ex, ey] = bend[end.side];
+      d = `M${start.x},${start.y} C${start.x + sx * reach},${start.y + sy * reach} ${end.x + ex * reach},${end.y + ey * reach} ${end.x},${end.y}`;
+      label = { x: (start.x + end.x) / 2 + (sx + ex) * reach * 0.375, y: (start.y + end.y) / 2 + (sy + ey) * reach * 0.375 };
+    }
+    const what = r.kind === "references" ? `foreign key (${r.columns.join(", ")})` : r.kind === "view" ? "the view reads it" : "an alias of it";
+    root.append(svg("path", { d, class: `edge ${r.kind}`, "marker-end": r.kind === "references" ? "url(#model-arrow)" : "url(#model-open)" },
+      titled(`${r.from.replace(/^.*:(.*):\d+$/, "$1")} → ${r.to.replace(/^.*:(.*):\d+$/, "$1")}: ${what}`)));
+    const text = r.kind === "references" ? r.columns.join(", ") : `«${r.kind === "view" ? "from" : "for"}»`;
+    if (text) root.append(svg("text", { x: label.x, y: label.y + 4, class: `guard ${r.kind}`, "text-anchor": "middle" }, text));
+  }
+  for (const box of boxes) {
+    const { e } = box;
+    const g = svg("g", { class: `entity ${e.kind}${e.path === path ? " own" : ""}` },
+      svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, rx: 2 }),
+      svg("text", { x: box.x + box.w / 2, y: box.y + 14, "text-anchor": "middle", class: "stereo" }, `«${e.kind}»`),
+      svg("text", { x: box.x + box.w / 2, y: box.y + 30, "text-anchor": "middle", class: "name" }, box.title),
+      titled(`${e.kind} ${box.title} · ${e.path}:${e.line}`));
+    if (box.rows.length) g.append(svg("line", { x1: box.x, y1: box.y + MODEL.head, x2: box.x + box.w, y2: box.y + MODEL.head, class: "divider" }));
+    box.rows.forEach((row, i) => {
+      const y = box.y + MODEL.head + MODEL.pad / 2 + (i + 1) * MODEL.line - 4, x = box.x + MODEL.pad;
+      g.append(svg("text", { x, y, class: "mark" }, row.mark),
+        svg("text", { x: x + box.markW, y, class: "column" }, row.name),
+        svg("text", { x: x + box.markW + box.nameW + 12, y, class: "type" }, row.type));
+    });
+    g.addEventListener("click", () => e.path === path ? host.postMessage({ type: "open", path: e.path, line: e.line }) : go({ view: "model", id: e.path }));
+    root.append(g);
+  }
+  document.getElementById("flow-body").replaceChildren(root);
+}
+
+let modelPath = null;
+function showModel(path) {
+  modelPath = path;
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").firstChild.textContent = "Relations deep ";
+  document.getElementById("flow-depth-label").hidden = false;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderModel();
+}
+async function renderModel() {
+  const mine = ++flowAsked;
+  const depth = chosenDepth();
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  let model;
+  try {
+    model = await ask("dataModel", modelPath, depth);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-110", `could not read the data model of ${modelPath}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!model) return fail("VIZ-111", `${modelPath} creates no tables, views or aliases in this graph`);
+  try {
+    const read = performance.now();
+    const layout = layoutModel(model);
+    drawModel(model, layout, modelPath);
+    status.textContent = model.truncated ? "cut off" : "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Data Model: ${modelPath.split("/").pop()}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] data model ${modelPath} depth ${depth}: ${model.entities.length} entities, ${model.relations.length} relations, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-112", `could not draw the data model of ${modelPath}: ${cause.message}`, cause);
+  }
+}
+
+// ---- data flow ------------------------------------------------------------
+// A variable's data flow: the statements that set, read, pass or compare it,
+// or the parameter it is passed as, cut out of their procedures' flows, and
+// what its comparisons lead to. As a diagram, as a table of its rules: every
+// condition and SQL WHERE that tests it, or as a table of every statement that
+// sets it, each with the conditions it is under.
+let dataId = null, dataFlow = null, dataAs = "diagram";
+function showData(id) {
+  dataId = id;
+  dataFlow = null;
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = false;
+  document.getElementById("flow-body").replaceChildren();
+  renderData();
+}
+for (const button of document.querySelectorAll("#data-as button")) button.addEventListener("click", () => {
+  dataAs = button.dataset.as;
+  for (const other of document.querySelectorAll("#data-as button")) other.setAttribute("aria-pressed", String(other === button));
+  console.info(`[graph] data flow of ${dataId} as ${dataAs}`);
+  renderData();
+});
+async function renderData() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  const started = performance.now();
+  if (!dataFlow) {
+    status.textContent = "reading…";
+    try {
+      dataFlow = await ask("dataFlow", dataId);
+    } catch (cause) {
+      if (mine === flowAsked) fail("VIZ-113", `could not read the data flow of ${dataId}: ${cause.message}`, cause);
+      return;
+    }
+    if (mine !== flowAsked) return;
+    if (!dataFlow) return fail("VIZ-114", `the variable "${dataId}" is not in this graph`);
+  }
+  const data = dataFlow;
+  try {
+    const read = performance.now();
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const when = (paths) => paths.length ? paths.map(path => el("div", { class: "guard when" }, path.join(" → "))) : null;
+    if (dataAs === "sets") {
+      const rows = data.sets.map(s => el("tr", {},
+        el("td", {}, when(s.when)),
+        el("td", {}, el("pre", { title: `${s.path}:${s.line}`, onclick: open(s) }, s.text)),
+        el("td", { class: "in", title: `${s.path}:${s.line}`, onclick: open(s) }, `${s.procedure}:${s.line}`)));
+      document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
+        rows.length ? el("table", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, "Sets"), el("th", {}, "In")), rows) : null));
+    } else if (dataAs === "table") {
+      const outcomes = (list) => list.map(o => el("div", { class: "outcome" },
+        o.guards.length ? el("div", { class: "guard" }, o.guards.join(" → ")) : null,
+        el("pre", { title: `${o.path}:${o.line}`, onclick: open(o) }, o.text)));
+      const rows = data.rules.map(r => el("tr", {},
+        el("td", {}, when(r.when)),
+        el("td", {}, el("pre", { title: `${r.path}:${r.line}`, onclick: open(r) }, r.condition)),
+        el("td", {}, outcomes(r.then)),
+        el("td", {}, outcomes(r.else)),
+        el("td", { class: "in", title: `${r.path}:${r.line}`, onclick: open(r) }, `${r.procedure}:${r.line}`)));
+      document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
+        rows.length ? el("table", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, "Condition"), el("th", {}, "Then"), el("th", {}, "Else"), el("th", {}, "In")), rows) : null));
+    } else if (!data.steps.length) {
+      document.getElementById("flow-body").replaceChildren();
+    } else {
+      const layout = layoutFlow(data);
+      document.getElementById("flow-body").replaceChildren(...drawFlow(data, layout));
+    }
+    status.replaceChildren(data.truncated ? "cut off" : "", dataAs !== "diagram" ? "" : el("span", { class: "legend" },
+      ...["write", "arg", "compare", "read", "outcome"].map(a => el("span", { class: `access-${a}` }, { write: "sets", arg: "passes", compare: "tests", read: "reads", outcome: "follows a test" }[a]))));
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `PL/I Data Flow: ${data.variable}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] data flow of ${dataId} as ${dataAs}: ${data.lanes.length} lanes, ${data.rules.length} rules, ${data.sets.length} sets, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail({ table: "VIZ-116", sets: "VIZ-118" }[dataAs] ?? "VIZ-115", `could not draw the data flow of ${dataId} as a ${dataAs}: ${cause.message}`, cause);
+  }
+}
+
+// The diagram tab shows a procedure's flow, a variable's data flow, or a DDL file's data model.
+const isModel = () => route().view === "model";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : renderFlow();
+document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------
 const views = {
@@ -1158,8 +1482,8 @@ if (flowPage) {
   document.getElementById("flow").hidden = false;
   document.querySelector(".flow-head").append(el("span", { class: "spacer" }), document.querySelector(".search"));
   search.placeholder = "Show the flow of procedure…  ( / )";
-  window.addEventListener("hashchange", () => showFlow(route().id));
-  showFlow(route().id);
+  window.addEventListener("hashchange", showDiagram);
+  showDiagram();
 } else {
   window.addEventListener("hashchange", render);
   renderList();

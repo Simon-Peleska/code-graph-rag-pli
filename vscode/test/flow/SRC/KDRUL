@@ -1,0 +1,25 @@
+ KDRUL: PROC OPTIONS(MAIN);
+   DCL 1 KD,
+         2 TYP CHAR(1) INIT('P'),
+         2 RC  FIXED BIN(31);
+   DCL MSG CHAR(40);
+   IF KD.TYP = 'G' THEN
+     DO;
+       RC = 4;
+       IF RC > 0 THEN MSG = 'GESCHAEFTSKUNDE';
+     END;
+   ELSE RC = 0;
+   SELECT (KD.TYP);
+     WHEN ('A', 'B') CALL SPERRE;
+     OTHERWISE;
+   END;
+   IF 'X' ^= KD.TYP THEN RETURN;
+   IF SUBSTR(KD.TYP, 1, 1) = 'Q' THEN MSG = 'QUELLE';
+   KD.TYP = 'Z';
+   IF MSG = 'QUELLE' THEN
+     DO WHILE (RC < 3);
+       IF KD.TYP = 'Q' THEN RC = RC + 1;
+     END;
+ SPERRE: PROC;
+ END SPERRE;
+ END KDRUL;

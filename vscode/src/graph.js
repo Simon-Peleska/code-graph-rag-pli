@@ -81,10 +81,29 @@ import { MAIN_OPTIONS, blankMargins } from "./source.js";
  * @property {string} path
  * @property {number} line
  * @property {"expanded" | "cut" | "recursive" | "external" | "missing"} [call]
+ * @property {string} [access] in a data flow, what the statement does to the variable: write, arg, compare, read, or outcome of a comparison
+ * @property {string[]} [names] in a data flow, the names in the text that hold the variable's value
  * @property {FlowStep[]} [steps]
  * @property {{ guard: string, steps: FlowStep[] }[]} [branches]
  */
 /** @typedef {{ id: number, parent: number | null, kind: string, branch: string | null, detail: string | null, line: number, end_line: number, path: string }} FlowRow */
+/**
+ * A table, view or alias of the data model page. `distance` counts the
+ * relations from the file's own ones; `foreign` marks a column of a foreign key.
+ * @typedef {object} ModelEntity
+ * @property {string} id
+ * @property {"table" | "view" | "alias"} kind
+ * @property {string} name
+ * @property {string | null} qualifier
+ * @property {string} path
+ * @property {number} line
+ * @property {number} distance
+ * @property {{ name: string, type: string, notNull: boolean, key: number | null, foreign: boolean }[]} columns
+ */
+/**
+ * `from` uses `to`: a foreign key on `columns`, a view's FROM, an alias's FOR.
+ * @typedef {{ from: string, to: string, kind: "references" | "view" | "alias", columns: string[] }} ModelRelation
+ */
 
 /**
  * What the Show Graph page draws for one view: nodes, and edges by node id.
@@ -131,6 +150,17 @@ const SYMBOL = `s.id, s.file, s.name, f.path, s.line, s.end_line AS end`;
 const MISSING = `('call', 'fetch', 'program', 'procedure')`;
 // Steps a flow holds at most; calls past it are cut, whatever the depth.
 const FLOW_LIMIT = 3000;
+
+// Each variable in the JSON array `?` with the structures around it and the fields in it, as (root, id), and the accesses to them.
+// Join `touching CROSS JOIN accesses`: CROSS keeps SQLite from scanning every access first, 150 times slower.
+const FAMILIES = `roots(root) AS (SELECT value FROM json_each(?)),
+  up(root, id) AS (SELECT root, root FROM roots UNION SELECT up.root, v.parent FROM variables v JOIN up ON v.id = up.id WHERE v.parent IS NOT NULL),
+  down(root, id) AS (SELECT root, root FROM roots UNION SELECT down.root, v.id FROM variables v JOIN down ON v.parent = down.id),
+  family(root, id) AS (SELECT root, id FROM up UNION SELECT root, id FROM down),
+  touching(root, access) AS (SELECT family.root, a.id FROM family JOIN accesses a ON a.variable = family.id WHERE a.through IS NULL
+    UNION SELECT family.root, a.id FROM family JOIN accesses a ON a.through = family.id)`;
+// Tables, views and aliases the data model page draws at most.
+const MODEL_LIMIT = 150;
 
 /** @param {TreeRow} a @param {TreeRow} b */
 const byLabel = (a, b) => a.label.localeCompare(b.label);
@@ -1328,6 +1358,481 @@ export class Graph {
   pageFlow(id, depth) {
     const focus = this.symbolOf(id);
     if (focus === undefined) return null;
+    const { lanes, tops, truncated } = this.flowOf([{ caller: focus }], depth, null);
+    return { lanes, steps: tops[0], truncated };
+  }
+
+  /**
+   * A variable's data flow, end to end. Where it, the structures around it
+   * or the fields in it are set, read, passed to a CALL or compared, and
+   * inside a callee what happens to the parameter in that place: the flow of
+   * each procedure that does, keeping only those statements, what the
+   * comparisons lead to, and the IFs, SELECTs, loops and ON-units they are
+   * in. Each kept statement is marked with what it does to the variable.
+   * Besides the flow: its rules, every condition or SQL WHERE that tests it
+   * with what follows, and the statements that set it. Null when there is no
+   * such variable.
+   * @param {string} id `path:qualified:line` of the variable
+   */
+  pageDataFlow(id) {
+    const parts = /^(.*):([^:]*):(\d+)$/.exec(id);
+    const variable = parts && /** @type {{ id: number } | undefined} */ (
+      this.all(`SELECT v.id FROM variables v JOIN files f ON f.id = v.file WHERE f.path = ? AND v.qualified = ? AND v.line = ?`, parts[1], parts[2], Number(parts[3]))[0]
+    );
+    if (!parts || !variable) return null;
+    // Also where the variable goes under another name, as the parameter of a procedure it is passed to.
+    const passed = this.passedOn(variable.id);
+    const reached = JSON.stringify(passed.reached);
+    /** @type {Map<string, string[]>} */
+    const sources = new Map();
+
+    // Every statement that touches it; a field of a LIKE copy is the template's field, reached through the copy.
+    const touched = /** @type {{ statement: number, caller: number | null, file: number, mode: string, name: string, reached: number, top: number }[]} */ (
+      this.all(
+        `WITH RECURSIVE ${FAMILIES}
+         SELECT DISTINCT a.statement, s.caller, s.file, a.mode, a.name, touching.root AS reached, touching.root = ? AS top FROM touching CROSS JOIN accesses a ON a.id = touching.access
+         JOIN statements s ON s.id = a.statement
+         ORDER BY s.file, s.line`,
+        reached,
+        variable.id,
+      )
+    ).filter((row) => passed.live(row.reached, row.statement));
+
+    // The comparisons. A WHEN's comparison belongs to it, the read of the SELECT subject to the SELECT.
+    const found = /** @type {{ id: number, at: number, statement: number, parent: number | null, tested: number, left: string, operator: string, right: string, kind: string, detail: string | null, line: number, path: string, procedure: string | null, name: string }[]} */ (
+      this.all(
+        `WITH reached(id) AS (SELECT value FROM json_each(?))
+         SELECT DISTINCT c.id, a.statement AS at, c.statement, s.parent, coalesce(a.through, a.variable) AS tested, c.left, c.operator, c.right, s.kind, s.detail, s.line, f.path, p.name AS procedure, a.name
+         FROM accesses a JOIN statements s ON a.statement = s.id OR a.statement = s.parent JOIN comparisons c ON c.statement = s.id
+         JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
+         WHERE a.mode = 'read' AND ((a.through IS NULL AND a.variable IN reached) OR a.through IN reached)
+         ORDER BY f.path, s.line, c.id LIMIT 1001`,
+        reached,
+      )
+    ).filter((c, i, all) => passed.live(c.tested, c.at) && all.findIndex((o) => o.id === c.id && passed.live(o.tested, o.at)) === i);
+    let truncated = found.length > 1000 || passed.truncated;
+    // A side mentions the variable when it holds its name as written, also in SUBSTR(...) or with a subscript.
+    const mentions = (/** @type {string} */ side, /** @type {string} */ name) =>
+      new RegExp(`(?:^|[^\\w#@$.])${name.replace(/[.$]/g, "\\$&")}(?![\\w#@$])`, "i").test(side);
+    const flipped = /** @type {Record<string, string>} */ ({ "<": ">", ">": "<", "<=": ">=", ">=": "<=", "^<": "^>", "^>": "^<", "¬<": "¬>", "¬>": "¬<" });
+    /** @typedef {{ text: string, guards: string[], path: string, line: number, statement: number }} Outcome */
+    // Which statement of the flow tests it: a WHEN is drawn as a branch of its SELECT.
+    /** @type {number[]} */
+    const tests = [];
+    /** @type {Map<number | string, { statement: number, procedure: string, path: string, line: number, field: string, operator: string, values: string[], condition: string, when: string[][], then: Outcome[], else: Outcome[] }>} */
+    const rules = new Map();
+    // Which of the reached variables each rule tests, to find the calls that lead to it.
+    /** @type {Map<number | string, number>} */
+    const testing = new Map();
+    for (const c of found.slice(0, 1000)) {
+      if (!mentions(c.left, c.name) && !mentions(c.right, c.name)) continue;
+      const onLeft = mentions(c.left, c.name);
+      const other = onLeft ? c.right : c.left;
+      const rule = rules.get(c.statement);
+      if (rule) {
+        rule.values.push(other);
+        continue;
+      }
+      const condition = c.kind === "when" ? `WHEN (${c.detail})` : c.kind === "do" ? `DO ${c.detail}` : `${c.kind.toUpperCase()} ${c.detail}`;
+      const operator = onLeft ? c.operator : flipped[c.operator] ?? c.operator;
+      tests.push(c.kind === "when" && c.parent ? c.parent : c.statement);
+      rules.set(c.statement, { statement: c.statement, procedure: c.procedure ?? c.path, path: c.path, line: c.line, field: onLeft ? c.left : c.right, operator, values: [other], condition, when: [], then: [], else: [] });
+      testing.set(c.statement, c.tested);
+    }
+    // What each comparison leads to: the statements in it that do something,
+    // each with the IFs, WHENs, loops and ON-units between it and the rule.
+    const inside = /** @type {{ top: number, id: number, parent: number, kind: string, branch: string | null, detail: string | null, line: number, end_line: number | null, path: string }[]} */ (
+      this.all(
+        `WITH RECURSIVE inside(top, id) AS (SELECT value, value FROM json_each(?) UNION SELECT inside.top, s.id FROM statements s JOIN inside ON s.parent = inside.id)
+         SELECT inside.top, s.id, s.parent, s.kind, s.branch, s.detail, s.line, s.end_line, f.path
+         FROM inside JOIN statements s ON s.id = inside.id JOIN files f ON f.id = s.file WHERE s.id <> inside.top ORDER BY s.line, s.id`,
+        JSON.stringify([...rules.keys()]),
+      )
+    );
+    const byId = new Map(inside.map((s) => [s.id, s]));
+    const containers = new Set(["if", "select", "when", "otherwise", "do", "begin", "declare", "null", "on"]);
+    for (const s of inside) {
+      const rule = rules.get(s.top);
+      if (!rule || containers.has(s.kind)) continue;
+      /** @type {string[]} */
+      const guards = [];
+      let at = s;
+      while (at.parent !== s.top) {
+        const parent = byId.get(at.parent);
+        if (!parent) break;
+        if (parent.kind === "if") guards.unshift(`IF ${parent.detail} [${at.branch === "else" ? "false" : "true"}]`);
+        else if (parent.kind === "when") guards.unshift(`WHEN (${parent.detail})`);
+        else if (parent.kind === "otherwise") guards.unshift("OTHERWISE");
+        else if (parent.kind === "do" && parent.detail) guards.unshift(`DO ${parent.detail}`);
+        else if (parent.kind === "on") guards.unshift(`ON ${parent.detail}`);
+        at = parent;
+      }
+      const outcomes = at.branch === "else" ? rule.else : rule.then;
+      if (outcomes.length < 50) outcomes.push({ text: this.statementText(s, sources), guards, path: s.path, line: s.line, statement: s.id });
+      else truncated = true;
+    }
+
+    // The WHERE conditions of the database statements it is in, which are rules too.
+    const sql = /** @type {{ statement: number, tested: number, kind: string, at: number, end_line: number | null, path: string, procedure: string | null, operation: string, schema: string | null, table_name: string | null, expression: string | null, line: number, name: string }[]} */ (
+      this.all(
+        `WITH RECURSIVE ${FAMILIES}
+         SELECT DISTINCT s.id AS statement, touching.root AS tested, s.kind, s.line AS at, s.end_line, f.path, p.name AS procedure,
+           c.operation, c.schema, c.table_name, c.expression, c.line, a.name
+         FROM touching CROSS JOIN accesses a ON a.id = touching.access
+         JOIN statements s ON s.id = a.statement AND s.kind = 'exec'
+         JOIN sql_columns c ON c.file = s.file AND c.line BETWEEN s.line AND coalesce(s.end_line, s.line) AND c.host = a.name
+         JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
+         WHERE c.usage = 'where'
+         ORDER BY f.path, c.line LIMIT 1000`,
+        reached,
+      )
+    ).filter((c) => passed.live(c.tested, c.statement));
+    for (const c of sql) {
+      const key = `${c.statement} ${c.expression}`;
+      if (rules.has(key)) continue;
+      const table = [c.schema, c.table_name].filter(Boolean).join(".") || "?";
+      tests.push(c.statement);
+      const statement = { text: this.statementText({ ...c, line: c.at }, sources), guards: [], path: c.path, line: c.at, statement: c.statement };
+      rules.set(key, { statement: c.statement, procedure: c.procedure ?? c.path, path: c.path, line: c.line, field: c.name, operator: "", values: [], condition: `${c.operation} ${table} WHERE ${c.expression}`, when: [], then: [statement], else: [] });
+      testing.set(key, c.tested);
+    }
+
+    // When each rule is tested at all: the IFs, WHENs, loops and ON-units
+    // around it, and in a procedure the variable is passed to, the way to
+    // each CALL that passes it, back to where the variable is declared.
+    const viaSteps = [...passed.via.values()].flat().map((v) => v.step);
+    const writes = touched.filter((row) => row.mode === "write");
+    const around = /** @type {{ start: number, id: number, parent: number | null, kind: string, branch: string | null, detail: string | null, line: number, end_line: number | null, path: string, procedure: string | null }[]} */ (
+      this.all(
+        `WITH RECURSIVE up(start, id) AS (SELECT value, value FROM json_each(?) UNION SELECT up.start, s.parent FROM statements s JOIN up ON s.id = up.id WHERE s.parent IS NOT NULL)
+         SELECT up.start, s.id, s.parent, s.kind, s.branch, s.detail, s.line, s.end_line, f.path, p.name AS procedure
+         FROM up JOIN statements s ON s.id = up.id JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller`,
+        JSON.stringify([...new Set([...[...rules.values()].map((r) => r.statement), ...viaSteps, ...writes.map((row) => row.statement)])]),
+      )
+    );
+    const statement = new Map(around.map((s) => [s.id, s]));
+    const guardsOf = (/** @type {number} */ id) => {
+      /** @type {string[]} */
+      const guards = [];
+      let at = statement.get(id);
+      while (at?.parent) {
+        const parent = statement.get(at.parent);
+        if (!parent) break;
+        const select = parent.parent ? statement.get(parent.parent) : undefined;
+        const subject = select?.detail ? `SELECT (${select.detail}) ` : "SELECT ";
+        if (parent.kind === "if") guards.unshift(`IF ${parent.detail} [${at.branch === "else" ? "false" : "true"}]`);
+        else if (parent.kind === "when") guards.unshift(`${subject}WHEN (${parent.detail})`);
+        else if (parent.kind === "otherwise") guards.unshift(`${subject}OTHERWISE`);
+        else if (parent.kind === "do" && parent.detail) guards.unshift(`DO ${parent.detail}`);
+        else if (parent.kind === "on") guards.unshift(`ON ${parent.detail}`);
+        at = parent;
+      }
+      return guards;
+    };
+    /** @returns {string[][]} */
+    const pathsTo = (/** @type {number} */ tested, /** @type {number} */ id, /** @type {Set<number>} */ seen) => {
+      const own = guardsOf(id);
+      const via = tested === variable.id || seen.has(tested) ? [] : passed.via.get(tested) ?? [];
+      if (!via.length) return [own];
+      /** @type {string[][]} */
+      const paths = [];
+      for (const { step, from } of via) {
+        // The assignment that copies into it: what led to its source leads here.
+        if (step === id) {
+          paths.push(...pathsTo(from, id, new Set([...seen, tested])));
+          continue;
+        }
+        const row = statement.get(step);
+        if (!row) continue;
+        const text = `${row.procedure ?? row.path}: ${this.statementText(row, sources).replace(/\s+/g, " ")}`;
+        for (const path of pathsTo(from, step, new Set([...seen, tested]))) paths.push([...path, text, ...own]);
+        if (paths.length >= 5) break;
+      }
+      if (paths.length > 5) truncated = true;
+      return paths.slice(0, 5);
+    };
+    for (const [key, rule] of rules) {
+      const paths = pathsTo(testing.get(key) ?? variable.id, rule.statement, new Set());
+      rule.when = paths.length === 1 && !paths[0].length ? [] : paths;
+    }
+    // Where it is set, and when: what a message or return code says comes from here.
+    /** @type {Map<number, { statement: number, procedure: string, path: string, line: number, text: string, when: string[][] }>} */
+    const sets = new Map();
+    for (const row of writes) {
+      const at = statement.get(row.statement);
+      if (!at || sets.has(row.statement)) continue;
+      const paths = pathsTo(row.reached, row.statement, new Set());
+      sets.set(row.statement, { statement: row.statement, procedure: at.procedure ?? at.path, path: at.path, line: at.line, text: this.statementText(at, sources), when: paths.length === 1 && !paths[0].length ? [] : paths });
+    }
+
+    // The flow: what touches it, marked with how, and what its comparisons lead to.
+    const rank = /** @type {Record<string, number>} */ ({ compare: 5, write: 4, arg: 3, read: 2, outcome: 1 });
+    /** @type {Map<number, string>} */
+    const marks = new Map();
+    const mark = (/** @type {number} */ statement, /** @type {string} */ how) => {
+      if ((rank[marks.get(statement) ?? ""] ?? 0) < rank[how]) marks.set(statement, how);
+    };
+    for (const row of touched) mark(row.statement, row.mode);
+    for (const statement of tests) mark(statement, "compare");
+    for (const rule of rules.values()) for (const outcome of [...rule.then, ...rule.else]) mark(outcome.statement, "outcome");
+    /** @type {Map<string, { caller: number } | { file: number }>} */
+    const owners = new Map();
+    for (const row of touched) if (row.top || !passed.called.has(row.caller ?? 0)) owners.set(row.caller ? `s${row.caller}` : `f${row.file}`, row.caller ? { caller: row.caller } : { file: row.file });
+    const parents = /** @type {{ id: number }[]} */ (
+      this.all(
+        `WITH RECURSIVE kept(id) AS (SELECT value FROM json_each(?) UNION SELECT s.parent FROM statements s JOIN kept ON s.id = kept.id WHERE s.parent IS NOT NULL)
+         SELECT id FROM kept`,
+        JSON.stringify([...marks.keys()]),
+      )
+    );
+    for (const row of parents) if (!marks.has(row.id)) marks.set(row.id, "");
+    // The names in each statement that hold the value, as written there.
+    /** @type {Map<number, string[]>} */
+    const names = new Map();
+    for (const row of touched) {
+      const list = names.get(row.statement) ?? names.set(row.statement, []).get(row.statement) ?? [];
+      if (!list.includes(row.name)) list.push(row.name);
+    }
+    const flow = this.flowOf([...owners.values()], 100, marks, names);
+    const where = { lane: 0, path: parts[1], line: Number(parts[3]) };
+    const steps = flow.tops.length === 1 ? flow.tops[0]
+      : flow.tops.length ? [{ kind: "select", text: `Data flow of ${parts[2]}`, ...where, branches: flow.tops.map((steps, i) => ({ guard: flow.lanes[steps[0]?.lane ?? i].name, steps })) }]
+      : [];
+    return {
+      variable: parts[2],
+      lanes: flow.lanes,
+      steps,
+      truncated: truncated || flow.truncated,
+      rules: [...rules.values()].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line),
+      sets: [...sets.values()].sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line),
+    };
+  }
+
+  /**
+   * The variable, and the variables its value goes on to: for every CALL
+   * that passes it, its structure or a field of it, the callee's parameter in
+   * that place; for a function it is an argument of, the function's
+   * parameter; for an assignment or EXEC SQL that reads it, the variables
+   * it writes; for a RETURN of it, the variables assigned the function's
+   * result; and on from each of those. `via` holds for each variable reached
+   * the statements that lead to it, and from which; `called` the procedures
+   * entered by a CALL, which the flow draws inside the CALL.
+   *
+   * A parameter is the variable under another name, so it holds the value
+   * everywhere. A copy holds it only from the copy on, until a statement
+   * that reads nothing reached overwrites it: `live` tells whether a
+   * statement sees the value in a variable reached. That is by line within
+   * the procedure of the copy, a loop around both counting as both ways, and
+   * a write ending it for what follows in the write's own block. Elsewhere,
+   * such as in procedures that read a copied global, it is everywhere.
+   * @param {number} id
+   * @returns {{ reached: number[], via: Map<number, { step: number, from: number }[]>, called: Set<number>, truncated: boolean, live: (variable: number, statement: number) => boolean }}
+   */
+  passedOn(id) {
+    const reached = [id];
+    /** @type {Map<number, { step: number, from: number }[]>} */
+    const via = new Map();
+    /** @type {Set<number>} */
+    const called = new Set();
+    // The copies each copied variable starts at; a variable without is the root or a parameter.
+    /** @type {Map<number, number[]>} */
+    const starts = new Map();
+    /** @type {Set<number>} */
+    const aliases = new Set([id]);
+
+    /** @typedef {{ id: number, owner: string, line: number, parent: number | null, around: Set<number>, loops: number[] }} Place */
+    /** @type {Map<number, Place>} */
+    const places = new Map();
+    const place = (/** @type {number} */ statement) => {
+      const known = places.get(statement);
+      if (known) return known;
+      const chain = /** @type {{ id: number, parent: number | null, kind: string, detail: string | null, line: number, caller: number | null, file: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE up(id, depth) AS (SELECT ?, 0 UNION SELECT s.parent, up.depth + 1 FROM statements s JOIN up ON s.id = up.id WHERE s.parent IS NOT NULL)
+           SELECT s.id, s.parent, s.kind, s.detail, s.line, s.caller, s.file FROM up JOIN statements s ON s.id = up.id ORDER BY up.depth`,
+          statement,
+        )
+      );
+      const self = chain[0];
+      const found = {
+        id: statement,
+        owner: self ? (self.caller ? `s${self.caller}` : `f${self.file}`) : "",
+        line: self?.line ?? 0,
+        parent: self?.parent ?? null,
+        around: new Set(chain.slice(1).map((s) => s.id)),
+        loops: chain.slice(1).filter((s) => s.kind === "do" && s.detail).map((s) => s.id),
+      };
+      places.set(statement, found);
+      return found;
+    };
+    const before = (/** @type {Place} */ a, /** @type {Place} */ b) => a.line < b.line || (a.line === b.line && a.id < b.id);
+    // The statements that overwrite a copied variable with something else.
+    /** @type {Map<number, Place[]>} */
+    const kills = new Map();
+    const killsOf = (/** @type {number} */ variable) => {
+      const known = kills.get(variable);
+      if (known) return known;
+      const rows = /** @type {{ statement: number }[]} */ (
+        this.all(
+          `SELECT DISTINCT w.statement FROM accesses w
+           WHERE w.mode = 'write' AND ((w.variable = ? AND w.through IS NULL) OR w.through = ?)
+             AND NOT EXISTS (SELECT 1 FROM accesses r WHERE r.statement = w.statement AND r.mode = 'read' AND coalesce(r.through, r.variable) IN (SELECT value FROM json_each(?)))`,
+          variable,
+          variable,
+          JSON.stringify(reached),
+        )
+      );
+      const found = rows.map((row) => place(row.statement));
+      kills.set(variable, found);
+      return found;
+    };
+    const live = (/** @type {number} */ variable, /** @type {number} */ statement) => {
+      const from = starts.get(variable);
+      if (aliases.has(variable) || !from) return true;
+      const at = place(statement);
+      for (const start of from.map(place)) {
+        if (start.owner !== at.owner || start.id === at.id) return true;
+        if (start.loops.some((loop) => at.around.has(loop))) return true;
+        if (before(at, start)) continue;
+        const killed = killsOf(variable).some((k) => k.owner === at.owner && before(start, k) && before(k, at) && (k.parent === null || at.around.has(k.parent)));
+        if (!killed) return true;
+      }
+      return false;
+    };
+
+    for (let i = 0; i < reached.length && reached.length < 100; i++) {
+      const at = JSON.stringify([reached[i]]);
+      const calls = /** @type {{ passed: number, parameter: number, step: number, at: number, procedure: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE ${FAMILIES}
+           SELECT DISTINCT a.variable AS passed, pv.id AS parameter, s.id AS step, s.id AS at, l.target_symbol AS procedure
+           FROM touching CROSS JOIN accesses a ON a.id = touching.access
+           JOIN statements s ON s.id = a.statement
+           JOIN refs r ON r.file = s.file AND r.line = s.line AND r.kind = 'call' AND r.name = s.detail JOIN links l ON l.ref = r.id
+           CROSS JOIN variables pv ON pv.scope = l.target_symbol AND pv.parameter = a.position AND pv.level = 1
+           WHERE a.mode = 'arg'`,
+          at,
+        )
+      );
+      const functions = /** @type {{ passed: number, parameter: number, step: number, at: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE ${FAMILIES}
+           SELECT DISTINCT a.variable AS passed, pv.id AS parameter, s.id AS step, s.id AS at
+           FROM touching CROSS JOIN accesses a ON a.id = touching.access
+           JOIN statements s ON s.id = a.statement
+           JOIN refs r ON r.file = s.file AND r.line BETWEEN s.line AND s.end_line AND r.kind = 'invoke' JOIN links l ON l.ref = r.id
+           CROSS JOIN variables pv ON pv.scope = l.target_symbol AND pv.parameter = a.position AND pv.level = 1
+           WHERE a.mode = 'read' AND a.position IS NOT NULL`,
+          at,
+        )
+      );
+      const moves = /** @type {{ passed: number, parameter: number, step: number, at: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE ${FAMILIES}
+           SELECT DISTINCT a.variable AS passed, coalesce(w.through, w.variable) AS parameter, s.id AS step, s.id AS at
+           FROM touching CROSS JOIN accesses a ON a.id = touching.access
+           JOIN statements s ON s.id = a.statement AND s.kind IN ('assignment', 'exec')
+           JOIN accesses w INDEXED BY accesses_statement ON w.statement = s.id AND w.mode = 'write' AND w.variable IS NOT NULL
+           WHERE a.mode = 'read' AND w.variable IS NOT a.variable`,
+          at,
+        )
+      );
+      const returns = /** @type {{ passed: number, parameter: number, step: number, at: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE ${FAMILIES}
+           SELECT DISTINCT a.variable AS passed, coalesce(w.through, w.variable) AS parameter, t.id AS step, s.id AS at
+           FROM touching CROSS JOIN accesses a ON a.id = touching.access
+           JOIN statements s ON s.id = a.statement AND s.kind = 'return'
+           JOIN links l ON l.target_symbol = s.caller JOIN refs r ON r.id = l.ref AND r.kind = 'invoke'
+           JOIN statements t ON t.file = r.file AND r.line BETWEEN t.line AND t.end_line AND t.kind = 'assignment'
+           JOIN accesses w INDEXED BY accesses_statement ON w.statement = t.id AND w.mode = 'write' AND w.variable IS NOT NULL
+           WHERE a.mode = 'read'`,
+          at,
+        )
+      );
+      const bound = [...calls, ...functions];
+      for (const row of [...bound, ...moves, ...returns]) {
+        if (!live(reached[i], row.at)) continue;
+        const field = this.sameField(reached[i], row.passed, row.parameter);
+        if (field === reached[i] || field === id) continue;
+        if (!reached.includes(field)) {
+          reached.push(field);
+          // A copy from it no longer overwrites with something else.
+          kills.clear();
+        }
+        if (bound.includes(row)) aliases.add(field);
+        else (starts.get(field) ?? starts.set(field, []).get(field) ?? []).push(row.step);
+        (via.get(field) ?? via.set(field, []).get(field) ?? []).push({ step: row.step, from: reached[i] });
+      }
+      for (const row of calls) if (live(reached[i], row.at)) called.add(row.procedure);
+    }
+    return { reached, via, called, truncated: reached.length >= 100, live };
+  }
+
+  /**
+   * The variable in `parameter` that stands for `tracked` when `passed` is
+   * the argument: the field in the same place when a structure around
+   * `tracked` is passed, else the parameter itself.
+   * @param {number} tracked
+   * @param {number | null} passed
+   * @param {number} parameter
+   * @returns {number}
+   */
+  sameField(tracked, passed, parameter) {
+    /** @type {number[]} */
+    const places = [];
+    for (let at = tracked; at !== passed; ) {
+      const row = /** @type {{ parent: number | null, place: number } | undefined} */ (
+        this.all(`SELECT parent, (SELECT count(*) FROM variables o WHERE o.parent = v.parent AND o.id < v.id) AS place FROM variables v WHERE id = ?`, at)[0]
+      );
+      if (!row || row.parent === null) return parameter;
+      places.unshift(row.place);
+      at = row.parent;
+    }
+    let field = parameter;
+    for (const place of places) {
+      const child = /** @type {{ id: number } | undefined} */ (this.all(`SELECT id FROM variables WHERE parent = ? ORDER BY id LIMIT 1 OFFSET ?`, field, place)[0]);
+      if (!child) return parameter;
+      field = child.id;
+    }
+    return field;
+  }
+
+  /**
+   * The statement's source from its keyword to the semicolon, keeping its
+   * lines and their indentation, without comments.
+   * @param {{ path: string, kind: string, line: number, end_line: number | null }} row
+   * @param {Map<string, string[]>} sources the files read so far, by path
+   */
+  statementText(row, sources) {
+    const lines = sources.get(row.path) ?? sources.set(row.path, blankMargins(this.read(row.path) ?? "", "pli").split("\n")).get(row.path) ?? [];
+    const blank = (/** @type {string} */ s) => s.replace(/[^\n]/g, " ");
+    let text = lines.slice(row.line - 1, Math.min(row.end_line ?? row.line, row.line + 60)).join("\n").replace(/\t/g, " ").replace(/\/\*[\s\S]*?\*\//g, blank);
+    const at = text.search(new RegExp(row.kind === "declare" ? "\\b(?:DCL|DECLARE)\\b" : `\\b${row.kind}\\b`, "i"));
+    // What comes before the statement on its first line turns into blanks, so the columns stay.
+    text = at >= 0 ? blank(text.slice(0, at)).replace(/[^\n]*\n/g, "") + text.slice(at) : text.replace(/^.*\b(?:THEN|ELSE|OTHERWISE)\b|^\s*WHEN\s*\([^)]*\)|^\s*ON\s+[\w#@$]+(?:\s*\([^)]*\))?(?:\s*,\s*[\w#@$]+(?:\s*\([^)]*\))?)*(?:\s+SNAP\b)?/i, blank);
+    const end = text.indexOf(";");
+    const kept = (end >= 0 ? text.slice(0, end + 1) : text).split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
+    const indent = Math.min(...kept.map((l) => l.length - l.trimStart().length));
+    text = kept.map((l) => l.slice(indent)).join("\n");
+    return (text.length > 1000 ? `${text.slice(0, 999)}…` : text) || row.kind.toUpperCase();
+  }
+
+  /**
+   * The flows of procedures, or of an include's code outside any, each in a
+   * lane of its own: a list of steps per owner. With `keep`, only those
+   * statements, each step with its mark as `access`, and the includes
+   * holding some of them.
+   * @param {({ caller: number } | { file: number })[]} owners
+   * @param {number} depth
+   * @param {Map<number, string> | null} keep
+   * @param {Map<number, string[]>} [names] the names to mark in each statement's text
+   * @returns {{ lanes: FlowLane[], tops: FlowStep[][], truncated: boolean }}
+   */
+  flowOf(owners, depth, keep, names) {
+    const keptIn = new Set(
+      keep && /** @type {{ caller: number | null }[]} */ (this.all(`SELECT DISTINCT caller FROM statements WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify([...keep.keys()]))).map((r) => r.caller),
+    );
     /** @type {FlowLane[]} */
     const lanes = [];
     /** @type {Map<string, number>} */
@@ -1341,24 +1846,8 @@ export class Graph {
     };
     /** @type {Map<string, string[]>} */
     const sources = new Map();
-    /**
-     * The statement's source from its keyword to the semicolon, keeping its
-     * lines and their indentation, without comments.
-     * @param {FlowRow} row
-     */
-    const snippet = (row) => {
-      const lines = sources.get(row.path) ?? sources.set(row.path, blankMargins(this.read(row.path) ?? "", "pli").split("\n")).get(row.path) ?? [];
-      const blank = (/** @type {string} */ s) => s.replace(/[^\n]/g, " ");
-      let text = lines.slice(row.line - 1, Math.min(row.end_line ?? row.line, row.line + 60)).join("\n").replace(/\t/g, " ").replace(/\/\*[\s\S]*?\*\//g, blank);
-      const at = text.search(new RegExp(row.kind === "declare" ? "\\b(?:DCL|DECLARE)\\b" : `\\b${row.kind}\\b`, "i"));
-      // What comes before the statement on its first line turns into blanks, so the columns stay.
-      text = at >= 0 ? blank(text.slice(0, at)).replace(/[^\n]*\n/g, "") + text.slice(at) : text.replace(/^.*\b(?:THEN|ELSE|OTHERWISE)\b|^\s*WHEN\s*\([^)]*\)/i, blank);
-      const end = text.indexOf(";");
-      const kept = (end >= 0 ? text.slice(0, end + 1) : text).split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
-      const indent = Math.min(...kept.map((l) => l.length - l.trimStart().length));
-      text = kept.map((l) => l.slice(indent)).join("\n");
-      return (text.length > 1000 ? `${text.slice(0, 999)}…` : text) || row.kind.toUpperCase();
-    };
+    /** @param {FlowRow} row */
+    const snippet = (row) => this.statementText(row, sources);
     let budget = FLOW_LIMIT;
     let truncated = false;
 
@@ -1392,7 +1881,7 @@ export class Graph {
 
       /** @param {FlowRow} row @returns {FlowStep} */
       const call = (row) => {
-        const step = { kind: "call", text: snippet(row), lane: at, path: row.path, line: row.line };
+        const step = { kind: "call", text: snippet(row), lane: at, path: row.path, line: row.line, ...(keep?.get(row.id) && { access: keep.get(row.id) }), ...(names?.has(row.id) && { names: names.get(row.id) }) };
         const ref = callAt.get(`${row.line} ${row.detail?.toUpperCase()}`);
         if (!ref?.file) return { ...step, call: "missing" };
         if (!ref.symbol) return { ...step, call: "external" };
@@ -1402,6 +1891,8 @@ export class Graph {
           truncated = true;
           return { ...step, call: "cut" };
         }
+        // A data flow draws a callee only where it touches what was passed.
+        if (keep && !keptIn.has(ref.symbol)) return { ...step, call: "expanded" };
         const to = lane(`s${ref.symbol}`, () => procedureLane(/** @type {number} */ (ref.symbol)));
         return { ...step, call: "expanded", steps: stepsOf({ caller: ref.symbol }, to, level + 1, new Set([...stack, `s${ref.symbol}`])) };
       };
@@ -1416,9 +1907,10 @@ export class Graph {
       };
       /** @param {FlowRow} row @returns {FlowStep[]} */
       const convert = (row) => {
+        if (keep && !keep.has(row.id)) return [];
         budget--;
         const inner = children.get(row.id) ?? [];
-        const step = { kind: row.kind, text: snippet(row), lane: at, path: row.path, line: row.line };
+        const step = { kind: row.kind, text: snippet(row), lane: at, path: row.path, line: row.line, ...(keep?.get(row.id) && { access: keep.get(row.id) }), ...(names?.has(row.id) && { names: names.get(row.id) }) };
         switch (row.kind) {
           case "if":
             return [{ ...step, text: `IF ${row.detail ?? ""}`, branches: [
@@ -1426,7 +1918,7 @@ export class Graph {
               { guard: "false", steps: walk(inner.filter((r) => r.branch === "else")) },
             ] }];
           case "select":
-            return [{ ...step, branches: inner.map((r) => ({ guard: r.kind === "otherwise" ? "otherwise" : r.detail ?? "", steps: walk(children.get(r.id) ?? []) })) }];
+            return [{ ...step, branches: inner.filter((r) => !keep || keep.has(r.id)).map((r) => ({ guard: r.kind === "otherwise" ? "otherwise" : r.detail ?? "", steps: walk(children.get(r.id) ?? []) })) }];
           case "do":
           case "begin":
             return row.detail ? [{ ...step, kind: "loop", text: `DO ${row.detail}`, steps: walk(inner) }] : walk(inner);
@@ -1434,8 +1926,8 @@ export class Graph {
           case "fetch":
             return [call(row)];
         }
-        // An ON-unit runs when its condition is raised, not here.
-        return [step];
+        // An ON-unit runs when its condition is raised, not here; only a data flow shows what it does.
+        return keep && inner.length ? [{ ...step, text: `ON ${row.detail ?? ""}`, steps: walk(inner) }] : [step];
       };
       /** @param {FlowRow[]} list @returns {FlowStep[]} */
       const walk = (list) => list.flatMap(convert);
@@ -1443,12 +1935,100 @@ export class Graph {
       /** @type {(FlowRow | (typeof refs)[number])[]} */
       const top = [...(children.get(null) ?? []), ...refs.filter((r) => r.kind === "include")];
       top.sort((a, b) => a.line - b.line);
-      return top.flatMap((item) => ("id" in item ? convert(item) : [include(item)]));
+      return top.flatMap((item) => ("id" in item ? convert(item) : [include(item)]).filter((step) => !keep || step.kind !== "include" || step.steps));
     };
 
-    lane(`s${focus}`, () => procedureLane(focus));
-    const steps = stepsOf({ caller: focus }, 0, 0, new Set([`s${focus}`]));
-    return { lanes, steps, truncated };
+    /** @param {number} file @returns {FlowLane} */
+    const includeLane = (file) => {
+      const path = /** @type {{ path: string }} */ (this.all(`SELECT path FROM files WHERE id = ?`, file)[0]).path;
+      return { id: path, kind: "include", name: path.split("/").pop() ?? path, path, line: 1 };
+    };
+    const tops = owners.map((owner) => {
+      const key = "caller" in owner ? `s${owner.caller}` : `f${owner.file}`;
+      const at = lane(key, () => ("caller" in owner ? procedureLane(owner.caller) : includeLane(owner.file)));
+      return stepsOf(owner, at, 0, new Set([key]));
+    });
+    return { lanes, tops, truncated };
+  }
+
+  /**
+   * The tables, views and aliases a DDL file creates, the ones `depth`
+   * relations away in either direction, and the relations between them all.
+   * Null when the file creates none.
+   * @param {string} path
+   * @param {number} depth
+   * @returns {{ entities: ModelEntity[], relations: ModelRelation[], truncated: boolean } | null}
+   */
+  pageDataModel(path, depth) {
+    const ENTITY_KINDS = `('table', 'view', 'alias')`;
+    const own = /** @type {{ id: number }[]} */ (
+      this.all(`SELECT s.id FROM symbols s JOIN files f ON f.id = s.file WHERE f.path = ? AND s.kind IN ${ENTITY_KINDS} ORDER BY s.id`, path)
+    ).map((r) => r.id);
+    if (own.length === 0) return null;
+    const RELATIONS = `SELECT r.caller AS source, l.target_symbol AS target, r.detail, cs.kind FROM refs r
+      JOIN symbols cs ON cs.id = r.caller JOIN links l ON l.ref = r.id
+      WHERE r.kind = 'table' AND cs.kind IN ${ENTITY_KINDS} AND l.target_symbol IS NOT NULL`;
+    /** @type {Map<number, number>} */
+    const distance = new Map(own.map((id) => [id, 0]));
+    let truncated = false;
+    for (let level = 1, frontier = own; level <= depth && frontier.length > 0; level++) {
+      const near = /** @type {{ source: number, target: number }[]} */ (
+        this.all(
+          `SELECT * FROM (${RELATIONS} AND r.caller IN (SELECT value FROM json_each(?)))
+           UNION SELECT * FROM (${RELATIONS} AND l.target_symbol IN (SELECT value FROM json_each(?)))`,
+          JSON.stringify(frontier),
+          JSON.stringify(frontier),
+        )
+      );
+      frontier = [];
+      for (const id of near.flatMap((r) => [r.source, r.target])) {
+        if (distance.has(id)) continue;
+        if (distance.size >= MODEL_LIMIT) {
+          truncated = true;
+          break;
+        }
+        distance.set(id, level);
+        frontier.push(id);
+      }
+    }
+
+    const ids = JSON.stringify([...distance.keys()]);
+    const symbols = /** @type {{ id: number, kind: ModelEntity["kind"], name: string, qualifier: string | null, path: string, line: number }[]} */ (
+      this.all(`SELECT s.id, s.kind, s.name, s.qualifier, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.id IN (SELECT value FROM json_each(?))`, ids)
+    );
+    const pageId = new Map(symbols.map((s) => [s.id, `${s.path}:${s.name}:${s.line}`]));
+    const links = /** @type {{ source: number, target: number, detail: string | null, kind: string }[]} */ (
+      this.all(`${RELATIONS} AND r.caller IN (SELECT value FROM json_each(?)) AND l.target_symbol IN (SELECT value FROM json_each(?)) ORDER BY r.id`, ids, ids)
+    );
+    /** @type {Map<string, ModelRelation>} */
+    const relations = new Map();
+    /** @type {Map<number, Set<string>>} */
+    const foreign = new Map();
+    for (const link of links) {
+      const columns = link.detail?.match(/\((.*)\)/)?.[1].split(", ").filter(Boolean) ?? [];
+      const kind = link.kind === "table" ? "references" : link.kind === "view" ? "view" : "alias";
+      const relation = { from: pageId.get(link.source) ?? "", to: pageId.get(link.target) ?? "", kind, columns };
+      relations.set(JSON.stringify(relation), /** @type {ModelRelation} */ (relation));
+      for (const column of columns) (foreign.get(link.source) ?? foreign.set(link.source, new Set()).get(link.source))?.add(column);
+    }
+    const columns = /** @type {{ table: number, name: string, type: string, notNull: number, key: number | null }[]} */ (
+      this.all(`SELECT table_symbol AS "table", name, type, not_null AS "notNull", key FROM columns WHERE table_symbol IN (SELECT value FROM json_each(?)) ORDER BY table_symbol, position`, ids)
+    );
+    /** @type {ModelEntity[]} */
+    const entities = symbols.map((s) => ({
+      id: pageId.get(s.id) ?? "",
+      kind: s.kind,
+      name: s.name,
+      qualifier: s.qualifier,
+      path: s.path,
+      line: s.line,
+      distance: distance.get(s.id) ?? 0,
+      columns: columns
+        .filter((c) => c.table === s.id)
+        .map((c) => ({ name: c.name, type: c.type, notNull: c.notNull === 1, key: c.key, foreign: foreign.get(s.id)?.has(c.name) ?? false })),
+    }));
+    entities.sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path) || a.line - b.line);
+    return { entities, relations: [...relations.values()], truncated };
   }
 
   /**
@@ -1630,6 +2210,41 @@ export class Graph {
     const procedures = this.symbolNodes(`f.path = ? AND s.kind != 'package'`, path).sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
     const around = procedures.filter((p) => (p.line ?? 0) <= line && line <= (p.end ?? 0)).at(-1);
     return (around ?? procedures.find((p) => p.mods?.includes("MAIN")) ?? procedures[0])?.id;
+  }
+
+  /**
+   * The page id `path:qualified:line` of the variable named `word` at
+   * `line`: the one declared there, else the one a statement there reads or
+   * writes, the innermost statement first. For a field of a LIKE copy, the copy.
+   * @param {string} path
+   * @param {number} line
+   * @param {string} word
+   * @returns {string | undefined}
+   */
+  variableAt(path, line, word) {
+    const name = word.toUpperCase();
+    const rows = /** @type {{ path: string, qualified: string, line: number }[]} */ (
+      this.all(
+        `SELECT vf.path, v.qualified, v.line FROM variables v JOIN files vf ON vf.id = v.file
+         WHERE vf.path = ? AND v.line = ? AND v.name = ?
+         UNION ALL
+         SELECT * FROM (SELECT vf.path, v.qualified, v.line FROM statements s JOIN files f ON f.id = s.file
+           JOIN accesses a ON a.statement = s.id JOIN variables v ON v.id = CASE WHEN a.through IS NULL THEN a.variable ELSE a.through END
+           JOIN files vf ON vf.id = v.file
+           WHERE f.path = ? AND s.line <= ? AND ? <= s.end_line AND (a.name = ? OR a.name LIKE '%.' || ?)
+           ORDER BY s.line DESC, s.id DESC)
+         LIMIT 1`,
+        path,
+        line,
+        name,
+        path,
+        line,
+        line,
+        name,
+        name,
+      )
+    );
+    return rows[0] && `${rows[0].path}:${rows[0].qualified}:${rows[0].line}`;
   }
 
   /**
