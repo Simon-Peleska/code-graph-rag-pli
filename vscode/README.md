@@ -59,6 +59,8 @@ extension keeps of each workspace folder:
 - **PL/I Graph: Show Flow Diagram of Procedure…** asks for a procedure in a
   quick pick that searches as you type and shows its flow. A caller can pass
   the name: `executeCommand("pliGraph.flowOf", "KDP00006")`.
+- **Show Flow Diagram of NAME** is a code action (lightbulb, Ctrl+.) on a
+  procedure's name, where it is declared or called.
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
   graph in the editor, starting at the active file's module. It is the page
   from `viz/`; it asks for what each view draws, and a worker thread of its

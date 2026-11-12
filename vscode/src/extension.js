@@ -142,6 +142,7 @@ export function activate(context) {
       LANGUAGES.map((language) => ({ language })),
       { provideReferences },
     ),
+    vscode.languages.registerCodeActionsProvider({ language: "pli" }, { provideCodeActions }),
     vscode.languages.registerCompletionItemProvider(
       ["pli", "hlasm", "jcl"].map((language) => ({ language })),
       { provideCompletionItems },
@@ -581,6 +582,29 @@ function provideDefinition(document, position) {
   );
 }
 
+// On a procedure's name, where it is declared or called: draw its flow.
+// Runs on every cursor move, so it logs nothing; the command does.
+/**
+ * @param {vscode.TextDocument} document
+ * @param {vscode.Range} range
+ * @returns {vscode.CodeAction[]}
+ */
+function provideCodeActions(document, range) {
+  const where = locate(document.uri);
+  const graph = where?.workspace.graph;
+  const found = graph && definitionsAt(document, range.start);
+  if (!where || !graph || !found) return [];
+  const word = found.word.toUpperCase();
+  const declared = [{ path: where.path, line: range.start.line }, ...found.places];
+  const procedure = declared
+    .map((p) => graph.flowProcedure(p.path, p.line + 1))
+    .find((id, i) => id?.endsWith(`:${word}:${declared[i].line + 1}`));
+  if (!procedure) return [];
+  const action = new vscode.CodeAction(`Show Flow Diagram of ${word}`);
+  action.command = { title: action.title, command: "pliGraph.flowOf", arguments: [procedure] };
+  return [action];
+}
+
 /**
  * @param {vscode.TextDocument} document
  * @param {vscode.Position} position
@@ -872,13 +896,15 @@ function showFlowAtCursor(context) {
   showFlow(context, shown.workspace, procedure);
 }
 
-// The flow of a procedure picked by name: `name` when a caller passes one,
-// else a quick pick that searches the graph as the user types.
+// The flow of a procedure picked by name: `name` when a caller passes one
+// (or a procedure's exact page id, as the code action does), else a quick
+// pick that searches the graph as the user types.
 /** @param {vscode.ExtensionContext} context @param {string} [name] */
 async function showFlowOf(context, name) {
   const shown = workspaceShown();
   if (!shown) return;
   const procedures = (/** @type {string} */ query) => shown.graph.pageSearch(query).filter((n) => n.kind === "function");
+  if (name && shown.graph.symbolOf(name) !== undefined) return showFlow(context, shown.workspace, name);
   if (name) {
     const found = procedures(name).find((n) => n.name.toUpperCase() === name.toUpperCase());
     if (found) return showFlow(context, shown.workspace, found.id);

@@ -121,6 +121,20 @@ exports.run = async () => {
   await webviewTab("PL/I Flow: HELPER");
   console.log("Show Flow Diagram of Procedure opens");
 
+  // On a call's procedure name (`call helper;`), the lightbulb offers its flow.
+  const flowTabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.label.startsWith("PL/I Flow: "));
+  await vscode.window.tabGroups.close(flowTabs);
+  const actions = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", main, new vscode.Range(1, 9, 1, 9));
+  const flowAction = actions.find((a) => a.title === "Show Flow Diagram of HELPER");
+  assert.ok(flowAction, JSON.stringify(actions.map((a) => a.title)));
+  await vscode.commands.executeCommand(flowAction.command.command, ...flowAction.command.arguments);
+  await webviewTab("PL/I Flow: HELPER");
+  console.log("The flow code action opens");
+  // And on its declaration, `helper: proc;`.
+  const declared = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", helper, new vscode.Range(0, 2, 0, 2));
+  assert.ok(declared.some((a) => a.title === "Show Flow Diagram of HELPER"), JSON.stringify(declared.map((a) => a.title)));
+  console.log("The flow code action is offered on a declaration");
+
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");
   assert.match(vscode.window.activeTextEditor?.document.getText() ?? "", /^# PL\/I Graph coverage/);

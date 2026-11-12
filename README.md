@@ -173,7 +173,8 @@ flow stops expanding calls at 3000 steps. Statements, conditions and loop
 specs are shown in full, wrapped over as many lines as they need. Click a
 step to open its source, a procedure's lane to show its flow, an include's
 lane to open it. *PL/I Graph: Show Flow Diagram of Procedure…* or the
-search field in the tab draws any procedure by name.
+search field in the tab draws any procedure by name, and the lightbulb
+(Ctrl+.) on a procedure's name, declared or called, draws that one.
 
 Edges are S-curves that leave a node downwards and enter the next from above.
 
