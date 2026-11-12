@@ -60,15 +60,29 @@ exports.run = async () => {
     return found.map((l) => `${vscode.workspace.asRelativePath(l.uri ?? l.targetUri)}:${(l.range ?? l.targetRange).start.line + 1}`);
   };
 
+  // A member gets its language once an editor shows it.
+  const shownAs = (uri, language) =>
+    until(`${vscode.workspace.asRelativePath(uri)} becomes ${language}`, async () => {
+      const editor = await vscode.window.showTextDocument(uri);
+      return editor.document.languageId === language && editor.document;
+    });
+
   const main = vscode.Uri.joinPath(folder, "ABMAIN01");
-  const document = await until("ABMAIN01 becomes PL/I", async () => {
-    const opened = await vscode.workspace.openTextDocument(main);
-    return opened.languageId === "pli" && opened;
-  });
-  await vscode.window.showTextDocument(document);
+  const document = await shownAs(main, "pli");
   assert.deepEqual(await definitionOf(main, 1, 9), ["ABHELP01:1"]);
   assert.deepEqual(await definitionOf(main, 2, 10), ["ABDYNP01:1"]);
   console.log("Go to Definition works");
+
+  // A hover's definition preview opens the member without an editor. Switching
+  // its language redid the hover, which opened it again as plain text, forever.
+  const helper = vscode.Uri.joinPath(folder, "ABHELP01");
+  await vscode.workspace.openTextDocument(helper);
+  // Answered after the reopen a language switch would send.
+  await definitionOf(main, 1, 9);
+  assert.equal(vscode.workspace.textDocuments.find((d) => d.uri.toString() === helper.toString())?.languageId, "plaintext");
+  await shownAs(helper, "pli");
+  await vscode.window.showTextDocument(document);
+  console.log("A member without an editor keeps its language");
 
   // `main: proc options(main);` starts with the label, then the keyword.
   const legend = await vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", main);
@@ -79,12 +93,13 @@ exports.run = async () => {
 
   // `select id ... from prod.customer`: id is a column of ABTCUST1's table.
   const show = vscode.Uri.joinPath(folder, "ABSHOW01");
-  await until("ABSHOW01 becomes PL/I", async () => (await vscode.workspace.openTextDocument(show)).languageId === "pli");
+  await shownAs(show, "pli");
   assert.deepEqual(await definitionOf(show, 2, 18), ["ABTCUST1:1"]);
   console.log("Go to Definition on a column works");
 
   const added = vscode.Uri.joinPath(folder, "ABNEWP01");
   writeFileSync(added.fsPath, "newpgm: proc;\n  call helper;\nend newpgm;\n");
+  await shownAs(added, "pli");
   await until("the indexer picks up a new file", async () => {
     const found = await definitionOf(added, 1, 9);
     return found.length === 1 && found[0] === "ABHELP01:1";
@@ -103,7 +118,7 @@ exports.run = async () => {
 
   // ABFCUST1 holds the format CUSTFMT.
   const screen = vscode.Uri.joinPath(folder, "ABFCUST1");
-  await until("ABFCUST1 becomes HLASM", async () => (await vscode.workspace.openTextDocument(screen)).languageId === "hlasm");
+  await shownAs(screen, "hlasm");
   await vscode.commands.executeCommand("pliGraph.showScreen", screen);
   await webviewTab("3270: CUSTFMT");
   console.log("Show 3270 Screen opens");

@@ -1,4 +1,4 @@
 tree-sitter-pli 2aa2abd12cc37543b842eab764fc52501d0a9343
-tree-sitter-jcl 0876984c9c2a51130cd7dec5315c3c734ffda0ad
-tree-sitter-hlasm d82d47c785ead7b3ec49e238f7fe176420fc3cc9
-tree-sitter-db2 9418b7cceade25038ebe31b6944016597b5b6bf4
+tree-sitter-jcl 0f02d274cd86f55ec3d84a39da3a77a0c33e0f89
+tree-sitter-hlasm 8b851ee36d2c1b1260b54983b4dcbf1c8c5b0034
+tree-sitter-db2 f4fd5d3af5758155519dd6e05b3f724f8f8c6ccc

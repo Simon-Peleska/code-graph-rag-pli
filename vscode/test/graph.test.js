@@ -136,6 +136,44 @@ test("the graph page's procedure view walks calls both ways as deep as asked", (
   assert.equal(graph.pageProcedure("shop/main.pli:MAIN:2", 1), null);
 });
 
+test("the graph page's procedure view walks all the way down, up or both", () => {
+  assert.deepEqual(named(graph.pageProcedure("ABREPT01:REPORT:1", 0, "down")), ["HELPER CALLS INNER", "HELPER CALLS MAIN", "MAIN CALLS HELPER", "REPORT CALLS HELPER"]);
+  assert.deepEqual(named(graph.pageProcedure("ABREPT01:REPORT:1", 0, "up")), []);
+  assert.deepEqual(named(graph.pageProcedure("shop/helper.pli:INNER:2", 0, "up")), ["HELPER CALLS INNER", "HELPER CALLS MAIN", "MAIN CALLS HELPER", "REPORT CALLS HELPER"]);
+  assert.deepEqual(named(graph.pageProcedure("shop/helper.pli:INNER:2", 0, "down")), []);
+  assert.deepEqual(named(graph.pageProcedure("shop/main.pli:MAIN:1", 1, "down")), ["HELPER CALLS MAIN", "MAIN CALLS HELPER"]);
+});
+
+test("the graph page's dependency view walks the modules a module uses, or is used by, all the way", () => {
+  /** @param {import("../src/graph.js").PageGraph | null} page */
+  const edges = (page) => page?.edges.map(([source, type, target]) => `${source} ${type} ${target}`).sort();
+  const down = [
+    "ABREPT01 CALLS shop/helper.pli",
+    "shop/helper.pli CALLS shop/main.pli",
+    "shop/main.pli CALLS shop/helper.pli",
+    "shop/main.pli INCLUDES copy/shopdcl.pli",
+  ];
+  assert.deepEqual(edges(graph.pageDependencies("ABREPT01", "down")), down);
+  assert.deepEqual(edges(graph.pageDependencies("ABREPT01", "up")), []);
+  assert.deepEqual(edges(graph.pageDependencies("ABREPT01", "both")), down);
+  assert.deepEqual(edges(graph.pageDependencies("copy/shopdcl.pli", "up")), down);
+  assert.deepEqual(edges(graph.pageDependencies("copy/shopdcl.pli", "down")), []);
+  assert.deepEqual(graph.pageDependencies("copy/shopdcl.pli", "down")?.nodes.map((n) => n.id), ["copy/shopdcl.pli"]);
+  assert.equal(graph.pageDependencies("nowhere.pli", "down"), null);
+});
+
+test("the graph page lists every dependency or dependent with its distance, as tab-separated text", () => {
+  assert.equal(
+    graph.pageDependencyList("ABREPT01", "down"),
+    "direction\tlevel\tmodule\tprocedure\tline\nuses\t1\tshop/helper.pli\t\t\nuses\t2\tshop/main.pli\t\t\nuses\t3\tcopy/shopdcl.pli\t\t\n",
+  );
+  assert.equal(
+    graph.pageDependencyList("shop/helper.pli:INNER:2", "both"),
+    "direction\tlevel\tmodule\tprocedure\tline\nused by\t1\tshop/helper.pli\tHELPER\t1\nused by\t2\tABREPT01\tREPORT\t1\nused by\t2\tshop/main.pli\tMAIN\t1\n",
+  );
+  assert.equal(graph.pageDependencyList("nowhere.pli", "both"), null);
+});
+
 test("the graph page's details list a module's and a procedure's neighbours", () => {
   /** @param {import("../src/graph.js").GraphNode[]} nodes */
   const ids = (nodes) => nodes.map((n) => n.id).sort();
@@ -183,6 +221,10 @@ test("the graph page's worker answers questions and reports failures", async () 
     const answer = /** @type {any} */ (await ask(1, "module", ["shop/main.pli"]));
     assert.deepEqual(answer.result.edges.length, 3);
     assert.equal(typeof answer.ms, "number");
+    const used = /** @type {any} */ (await ask(3, "dependencies", ["ABREPT01", "down"]));
+    assert.equal(used.result.edges.length, 4);
+    const all = /** @type {any} */ (await ask(4, "procedure", ["ABREPT01:REPORT:1", 0, "down"]));
+    assert.equal(all.result.edges.length, 4);
     const failed = /** @type {any} */ (await ask(2, "nonsense", []));
     assert.match(failed.error, /no question nonsense/);
   } finally {

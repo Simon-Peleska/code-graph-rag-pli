@@ -89,7 +89,16 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
   <div class="spacer"></div>
   <div class="tools" id="depth" hidden>
     <span class="sub">depth</span>
-    <vscode-button secondary data-depth="1">1</vscode-button><vscode-button secondary data-depth="2">2</vscode-button><vscode-button secondary data-depth="3">3</vscode-button>
+    <vscode-button secondary data-depth="1">1</vscode-button><vscode-button secondary data-depth="2">2</vscode-button><vscode-button secondary data-depth="3">3</vscode-button><vscode-button secondary data-depth="all">all</vscode-button>
+  </div>
+  <div class="tools" id="direction" hidden>
+    <vscode-button secondary data-direction="down" title="What it uses">uses ↓</vscode-button><vscode-button secondary data-direction="up" title="What uses it">used by ↑</vscode-button><vscode-button secondary data-direction="both">both</vscode-button>
+  </div>
+  <div class="tools" id="save-tool" hidden>
+    <vscode-button secondary id="save-list" title="Every module or procedure it uses, or is used by, all the way, as a file">Save list…</vscode-button>
+  </div>
+  <div class="tools" id="deps-tool" hidden>
+    <vscode-button secondary id="deps"></vscode-button>
   </div>
   <div class="tools" id="isolated-tool" hidden>
     <vscode-button secondary id="isolated">Show unconnected</vscode-button>
@@ -157,12 +166,13 @@ const isProc = n => n && (n.kind === "function" || n.kind === "method");
 const isModule = n => n && (n.kind === "module" || n.kind === "external");
 const push = (map, key, value) => (map.get(key) || map.set(key, []).get(key)).push(value);
 // The edges of the view drawn now.
-let callees = new Map(), callers = new Map(), parentOf = new Map();
+let callees = new Map(), callers = new Map(), parentOf = new Map(), includes = new Set();
 function useGraph(graph) {
   remember(graph.nodes);
-  callees = new Map(); callers = new Map(); parentOf = new Map();
+  callees = new Map(); callers = new Map(); parentOf = new Map(); includes = new Set();
   for (const [source, type, target] of graph.edges) {
-    if (type === "CALLS") { push(callees, source, target); push(callers, target, source); }
+    if (type === "CALLS" || type === "INCLUDES") { push(callees, source, target); push(callers, target, source); }
+    if (type === "INCLUDES") includes.add(`${source}>${target}`);
     else if (type === "DEFINES") parentOf.set(target, source);
   }
 }
@@ -202,7 +212,8 @@ function route() {
   return {
     view: params.get("v") || "overview",
     id: params.get("id"),
-    depth: Math.min(3, Math.max(1, Number(params.get("d")) || 2)),
+    depth: params.get("d") === "all" ? Infinity : Math.min(3, Math.max(1, Number(params.get("d")) || 2)),
+    direction: ["down", "up"].includes(params.get("dir")) ? params.get("dir") : "both",
     isolated: params.get("all") === "1",
   };
 }
@@ -211,7 +222,8 @@ function go(changes) {
   const params = new URLSearchParams();
   if (state.view !== "overview") params.set("v", state.view);
   if (state.id) params.set("id", state.id);
-  if (state.view === "proc" && state.depth !== 2) params.set("d", state.depth);
+  if (state.view === "proc" && state.depth !== 2) params.set("d", state.depth === Infinity ? "all" : state.depth);
+  if ((state.view === "proc" || state.view === "deps") && state.direction !== "both") params.set("dir", state.direction);
   if (state.isolated) params.set("all", "1");
   location.hash = params.toString();
 }
@@ -305,6 +317,7 @@ cy.on("tap", "node", event => { const id = nodeRef(event.target); if (byId.has(i
 cy.on("dbltap", "node", event => {
   const id = nodeRef(event.target);
   if (id.startsWith("dir:")) go({ view: "overview", id: id.slice(4) || null });
+  else if (route().view === "deps" && isModule(byId.get(id))) go({ id });
   else if (byId.has(id)) open(id);
 });
 cy.on("tap", event => { if (event.target === cy) showDetails(route().id); });
@@ -457,24 +470,29 @@ function orderColumns(columns, neighbours) {
   }
 }
 
-// VS Code sends the procedures `depth` calls away; this walks them again to
-// put each on the level it is reached at first, callees before callers.
+// VS Code sends the procedures `depth` calls away, or the modules a module
+// uses or is used by; this walks them again to put each on the level it is
+// reached at first, what it uses below, what uses it above.
 function procView(state, graph) {
   useGraph(graph);
   const focus = state.id;
   const level = new Map([[focus, 0]]);
   const walk = (neighbours, sign) => {
+    const seen = new Set([focus]);
     let frontier = [focus];
-    for (let depth = 1; depth <= state.depth; depth++) {
+    for (let depth = 1; depth <= state.depth && frontier.length; depth++) {
       const next = [];
       for (const id of frontier) for (const other of neighbours.get(id) || []) {
-        if (!level.has(other)) { level.set(other, sign * depth); next.push(other); }
+        if (seen.has(other)) continue;
+        seen.add(other);
+        next.push(other);
+        if (!level.has(other)) level.set(other, sign * depth);
       }
       frontier = next;
     }
   };
-  walk(callees, 1);
-  walk(callers, -1);
+  if (state.direction !== "up") walk(callees, 1);
+  if (state.direction !== "down") walk(callers, -1);
 
   const columns = new Map();
   for (const [id, column] of level) push(columns, column, id);
@@ -482,27 +500,36 @@ function procView(state, graph) {
   const PER_COLUMN = 60, LAYER_GAP = 150, STEP = widest([...level.keys()], true) + 24;
   for (const ids of columns.values()) ids.sort((a, b) => label(a).localeCompare(label(b)));
   orderColumns(columns, id => [...(callees.get(id) || []), ...(callers.get(id) || [])]);
-  for (const [column, ids] of columns) {
-    const shown = ids.slice(0, PER_COLUMN);
-    const rows = shown.length + (ids.length > PER_COLUMN ? 1 : 0);
+  // Rows fill outward from the focus, and a node is drawn only when the one
+  // it was reached from is: otherwise a full row leaves it hanging unconnected.
+  const drawn = new Set([focus]);
+  for (const column of [...columns.keys()].sort((a, b) => Math.abs(a) - Math.abs(b))) {
+    const ids = columns.get(column);
+    const from = column > 0 ? callers : callees;
+    const shown = column === 0 ? ids : ids.filter(id => (from.get(id) || []).some(n => drawn.has(n) && level.get(n) === column - Math.sign(column))).slice(0, PER_COLUMN);
+    for (const id of shown) drawn.add(id);
+    const more = ids.length - shown.length;
+    const rows = shown.length + (more ? 1 : 0);
     shown.forEach((id, row) => elements.push(nodeData(id, {
       withModule: true, classes: id === focus ? ["focus"] : [],
       position: { x: (row - (rows - 1) / 2) * STEP, y: column * LAYER_GAP },
     })));
-    if (ids.length > PER_COLUMN) elements.push({
-      data: { id: `more:${column}`, label: `… ${ids.length - PER_COLUMN} more`, w: 120, h: 28 }, classes: "more",
+    if (more) elements.push({
+      data: { id: `more:${column}`, label: `… ${more} more`, w: 120, h: 28 }, classes: "more",
       position: { x: (rows - 1 - (rows - 1) / 2) * STEP, y: column * LAYER_GAP },
     });
   }
   const shownIds = new Set(elements.map(e => e.data.id));
   for (const id of shownIds) for (const target of callees.get(id) || []) {
-    if (shownIds.has(target)) elements.push(edgeData(id, target, "calls"));
+    if (shownIds.has(target)) elements.push(edgeData(id, target, includes.has(`${id}>${target}`) ? "imports" : "calls"));
   }
   const up = [...level.values()].filter(v => v < 0).length, down = [...level.values()].filter(v => v > 0).length;
+  const counts = state.view === "deps" ? `${up} modules using ${focus} above, ${down} it uses below`
+    : `${up} callers above ${byId.get(focus).name}, ${down} callees below, depth ${state.depth === Infinity ? "all" : state.depth}`;
   return {
     elements,
     layout: { name: "preset", fit: true, padding: 40 },
-    status: `${up} callers above ${byId.get(focus).name}, ${down} callees below, depth ${state.depth} · double-click to refocus`,
+    status: `${counts} · double-click to refocus`,
   };
 }
 
@@ -562,6 +589,7 @@ async function showDetails(id) {
       section("Unresolved names", details.unresolved.length,
         details.unresolved.length ? el("div", { class: "sub text" }, details.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
     if (route().id !== id || route().view !== "module") head.append(" ", button("Open module", () => open(id)));
+    if (route().id !== id || route().view !== "deps") head.append(" ", button("Dependencies", () => go({ view: "deps", id })));
   } else {
     panel.append(...linkList("Defined in", details.definedIn, ""),
       ...linkList("Called by", details.calledBy, "no callers found"),
@@ -592,6 +620,7 @@ function renderCrumbs(state) {
   const moduleId = moduleOf(state.id) || "";
   const parts = [...folderCrumbs(parentFolder(moduleId)), "›"];
   if (state.view === "module") parts.push(here(moduleId));
+  else if (state.view === "deps") parts.push(el("a", { onclick: () => go({ view: "module", id: moduleId }) }, moduleId), "›", here("dependencies"));
   else parts.push(el("a", { onclick: () => go({ view: "module", id: moduleId }) }, moduleId), "›", here(label(state.id)));
   crumbs.replaceChildren(...parts);
 }
@@ -671,9 +700,24 @@ function fit() {
 }
 document.getElementById("fit").addEventListener("click", fit);
 document.getElementById("depth").addEventListener("click", event => {
-  const depth = Number(event.target.closest("[data-depth]")?.dataset.depth);
-  if (depth) go({ depth });
+  const chosen = event.target.closest("[data-depth]")?.dataset.depth;
+  if (chosen) go({ depth: chosen === "all" ? Infinity : Number(chosen) });
 });
+document.getElementById("direction").addEventListener("click", event => {
+  const direction = event.target.closest("[data-direction]")?.dataset.direction;
+  if (direction) go({ direction });
+});
+document.getElementById("save-list").addEventListener("click", async () => {
+  const state = route();
+  const which = { down: "uses", up: "used-by", both: "uses-and-used-by" }[state.direction];
+  try {
+    const text = await ask("dependencyList", state.id, state.direction);
+    host.postMessage({ type: "save", name: `${label(state.id).split("/").at(-1)}-${which}.tsv`, text });
+  } catch (error) {
+    showError("VIZ-106", `could not list what ${state.id} ${which.replaceAll("-", " ")}: ${error.message}`, error);
+  }
+});
+document.getElementById("deps").addEventListener("click", () => go({ view: route().view === "deps" ? "module" : "deps" }));
 document.getElementById("isolated").addEventListener("click", () => go({ isolated: !route().isolated }));
 document.getElementById("reload").addEventListener("click", () => {
   document.getElementById("reload-tool").hidden = true;
@@ -685,7 +729,8 @@ document.getElementById("reload").addEventListener("click", () => {
 const views = {
   overview: { draw: overview, read: state => ask("overview", state.id || "", state.isolated) },
   module: { draw: moduleView, read: state => ask("module", state.id) },
-  proc: { draw: procView, read: state => ask("procedure", state.id, state.depth) },
+  proc: { draw: procView, read: state => ask("procedure", state.id, state.depth === Infinity ? 0 : state.depth, state.direction) },
+  deps: { draw: (state, graph) => procView({ ...state, depth: Infinity }, graph), read: state => ask("dependencies", state.id, state.direction) },
 };
 let drawn = 0;
 async function render() {
@@ -718,7 +763,12 @@ async function render() {
     showError("VIZ-102", `could not draw the ${state.view} view: ${error.message}`, error);
   }
   document.getElementById("depth").hidden = state.view !== "proc";
-  for (const b of document.querySelectorAll("#depth vscode-button")) b.secondary = Number(b.dataset.depth) !== state.depth;
+  for (const b of document.querySelectorAll("#depth vscode-button")) b.secondary = (b.dataset.depth === "all" ? Infinity : Number(b.dataset.depth)) !== state.depth;
+  document.getElementById("direction").hidden = state.view !== "proc" && state.view !== "deps";
+  for (const b of document.querySelectorAll("#direction vscode-button")) b.secondary = b.dataset.direction !== state.direction;
+  document.getElementById("save-tool").hidden = state.view !== "proc" && state.view !== "deps";
+  document.getElementById("deps-tool").hidden = state.view !== "module" && state.view !== "deps";
+  document.getElementById("deps").textContent = state.view === "deps" ? "Procedures" : "Dependencies";
   document.getElementById("isolated-tool").hidden = state.view !== "overview";
   document.getElementById("isolated").secondary = !state.isolated;
   renderCrumbs(state);

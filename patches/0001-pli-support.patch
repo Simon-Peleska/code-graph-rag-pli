@@ -3689,25 +3689,25 @@ PcmdnMxPfuPdPaT#4iW;g
 
 diff --git a/grammars/tree-sitter-db2 b/grammars/tree-sitter-db2
 new file mode 160000
-index 000000000..9418b7cce
+index 000000000..f4fd5d3af
 --- /dev/null
 +++ b/grammars/tree-sitter-db2
 @@ -0,0 +1 @@
-+Subproject commit 9418b7cceade25038ebe31b6944016597b5b6bf4
++Subproject commit f4fd5d3af5758155519dd6e05b3f724f8f8c6ccc
 diff --git a/grammars/tree-sitter-hlasm b/grammars/tree-sitter-hlasm
 new file mode 160000
-index 000000000..b7a0fd2a0
+index 000000000..8b851ee36
 --- /dev/null
 +++ b/grammars/tree-sitter-hlasm
 @@ -0,0 +1 @@
-+Subproject commit b7a0fd2a0888bbefad7a513c407a7f3c206cf1ab
++Subproject commit 8b851ee36d2c1b1260b54983b4dcbf1c8c5b0034
 diff --git a/grammars/tree-sitter-jcl b/grammars/tree-sitter-jcl
 new file mode 160000
-index 000000000..0876984c9
+index 000000000..0f02d274c
 --- /dev/null
 +++ b/grammars/tree-sitter-jcl
 @@ -0,0 +1 @@
-+Subproject commit 0876984c9c2a51130cd7dec5315c3c734ffda0ad
++Subproject commit 0f02d274cd86f55ec3d84a39da3a77a0c33e0f89
 diff --git a/grammars/tree-sitter-pli b/grammars/tree-sitter-pli
 new file mode 160000
 index 000000000..2aa2abd12

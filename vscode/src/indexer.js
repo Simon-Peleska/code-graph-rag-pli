@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 18;
+const INDEXER_VERSION = 19;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -2041,6 +2041,7 @@ function readJcl(root, file) {
         break;
       }
       case "data_line":
+      case "instream_data":
         // IKJEFT01 with `DSN SYSTEM(..)` / `RUN PROGRAM(X)` in SYSTSIN.
         for (const match of statement.text.matchAll(RUN_PROGRAM)) {
           addRef(file, caller, "program", match[1].toUpperCase(), statement);

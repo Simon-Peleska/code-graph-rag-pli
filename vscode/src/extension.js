@@ -162,13 +162,13 @@ export function activate(context) {
       changed.fire(undefined);
     }),
     vscode.workspace.onDidOpenTextDocument((document) => {
-      claimMember(document);
       // Changing the language reopens the document in the same editor.
       if (document === vscode.window.activeTextEditor?.document) {
         followEditor();
       }
     }),
-    changed.event(() => vscode.workspace.textDocuments.forEach(claimMember)),
+    vscode.window.onDidChangeVisibleTextEditors((editors) => editors.forEach((editor) => claimMember(editor.document))),
+    changed.event(() => vscode.window.visibleTextEditors.forEach((editor) => claimMember(editor.document))),
     vscode.workspace.onDidChangeConfiguration((event) => {
       for (const workspace of workspaces.values()) {
         if (event.affectsConfiguration("pliGraph.extensionlessMembers", workspace.folder)) requestSync(workspace, {});
@@ -442,7 +442,9 @@ function locate(uri) {
 const LANGUAGES = ["pli", "jcl", "hlasm", "db2"];
 
 // z/OS members have no extension, so VS Code opens them as plain text. Those
-// in the graph are switched to the language they were indexed as.
+// in the graph are switched to the language they were indexed as, once an
+// editor shows them: a hover's definition preview opens the member without
+// one, and switching that redoes the hover, which opens it again, forever.
 /** @param {vscode.TextDocument} document */
 function claimMember(document) {
   if (document.languageId !== "plaintext" || document.uri.scheme !== "file") {
@@ -808,10 +810,10 @@ async function open(folder, target) {
 }
 
 /**
- * What the graph page posts: the view it switched to, a file to open, or a
- * question for the graph.
+ * What the graph page posts: the view it switched to, a file to open, a
+ * question for the graph, or a list to save as a file.
  * @typedef {object} PageMessage
- * @property {"route" | "open" | "ask"} type
+ * @property {"route" | "open" | "ask" | "save"} type
  * @property {string} [hash]
  * @property {number} [drawMs]
  * @property {number} [sinceLoadMs]
@@ -820,6 +822,8 @@ async function open(folder, target) {
  * @property {number} [id]
  * @property {import("./graphpage.js").PageQuestion["what"]} [what]
  * @property {unknown[]} [args]
+ * @property {string} [name] the file name a saved list is offered under
+ * @property {string} [text]
  */
 
 // The graph page asks for what each view draws. A worker of its own with its
@@ -904,6 +908,8 @@ function showGraph(context) {
     } else if (message.type === "route") {
       shown.hash = message.hash ?? "";
       log.info(`graph page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
+    } else if (message.type === "save" && message.name && message.text !== undefined) {
+      void saveList(workspace.folder.uri, message.name, message.text);
     } else if (message.type === "open" && message.path) {
       const uri = vscode.Uri.joinPath(workspace.folder.uri, message.path);
       const position = new vscode.Position((message.line ?? 1) - 1, 0);
@@ -917,6 +923,26 @@ function showGraph(context) {
     }
   });
   log.info(`graph page for ${name} opened at #${hash}`);
+}
+
+/**
+ * Asks where to save a list from the graph page, saves it and opens it.
+ * @param {vscode.Uri} folder
+ * @param {string} name
+ * @param {string} text
+ */
+async function saveList(folder, name, text) {
+  const target = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.joinPath(folder, name), filters: { "Tab-separated values": ["tsv"] } });
+  if (!target) return;
+  try {
+    await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(text));
+    log.info(`graph page saved ${text.split("\n").length - 2} rows to ${target.fsPath}`);
+    await vscode.window.showTextDocument(target, { preview: false });
+  } catch (error) {
+    const message = `[PLG033E] Saving the list to ${target.fsPath} failed: ${error}`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+  }
 }
 
 /**

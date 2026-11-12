@@ -61,6 +61,8 @@ import { MAIN_OPTIONS } from "./source.js";
  * @property {string[]} [mods] `MAIN` for an `OPTIONS(MAIN)` procedure
  */
 
+/** @typedef {"down" | "up" | "both"} Direction which way the page walks: what a node uses, what uses it */
+
 /**
  * What the Show Graph page draws for one view: nodes, and edges by node id.
  * @typedef {object} PageGraph
@@ -1140,10 +1142,12 @@ export class Graph {
    * levels up, and the calls between them; null when there is no such
    * procedure. A file calling from its top level is a caller that ends the walk.
    * @param {string} id
-   * @param {number} depth
+   * @param {number} depth 0 for all the way
+   * @param {Direction} [direction]
    * @returns {PageGraph | null}
    */
-  pageProcedure(id, depth) {
+  pageProcedure(id, depth, direction = "both") {
+    if (depth === 0) depth = Infinity;
     const focus = this.symbolOf(id);
     if (focus === undefined) return null;
     const edges = new Edges();
@@ -1158,7 +1162,7 @@ export class Graph {
         )
       );
     // Callees first, then callers, breadth first: the page draws a procedure on the level it is reached at first.
-    let frontier = [focus];
+    let frontier = direction === "up" ? [] : [focus];
     for (let level = 1; level <= depth && frontier.length > 0; level++) {
       /** @type {number[]} */
       const next = [];
@@ -1169,7 +1173,9 @@ export class Graph {
       }
       frontier = next;
     }
-    frontier = [focus];
+    // Its own set: a callee that calls back must not stop the walk up.
+    const above = new Set([`s${focus}`]);
+    frontier = direction === "down" ? [] : [focus];
     for (let level = 1; level <= depth && frontier.length > 0; level++) {
       /** @type {number[]} */
       const next = [];
@@ -1182,7 +1188,8 @@ export class Graph {
       )) {
         const caller = call.caller === null ? `f${call.file}` : `s${call.caller}`;
         edges.add(caller, "CALLS", `s${call.target}`);
-        if (seen.has(caller)) continue;
+        if (above.has(caller)) continue;
+        above.add(caller);
         seen.add(caller);
         if (call.caller !== null) next.push(call.caller);
       }
@@ -1193,6 +1200,95 @@ export class Graph {
       if (seen.has(`s${call.target}`)) edges.add(`s${call.caller}`, "CALLS", `s${call.target}`);
     }
     return this.pageGraph(edges, [`s${focus}`]);
+  }
+
+  /**
+   * The modules a module uses, transitively, or the modules using it, or
+   * both, and the calls and includes between them; null when the graph has
+   * no such module. Any reference that resolves to another file is a use.
+   * @param {string} path
+   * @param {Direction} direction
+   * @returns {PageGraph | null}
+   */
+  pageDependencies(path, direction) {
+    const file = this.module(path);
+    if (!file) return null;
+    const edges = new Edges();
+    /** @param {"r.file" | "l.target_file"} from */
+    const walk = (from) => {
+      const seen = new Set([file.id]);
+      let frontier = [file.id];
+      while (frontier.length > 0) {
+        /** @type {number[]} */
+        const next = [];
+        for (const use of /** @type {{ user: number, used: number, include: number }[]} */ (
+          this.all(
+            `SELECT DISTINCT r.file AS user, l.target_file AS used, r.kind = 'include' AS include FROM refs r JOIN links l ON l.ref = r.id
+             WHERE ${from} IN (SELECT value FROM json_each(?)) AND l.target_file IS NOT NULL AND l.target_file != r.file`,
+            JSON.stringify(frontier),
+          )
+        )) {
+          edges.add(`f${use.user}`, use.include ? "INCLUDES" : "CALLS", `f${use.used}`);
+          const other = from === "r.file" ? use.used : use.user;
+          if (seen.has(other)) continue;
+          seen.add(other);
+          next.push(other);
+        }
+        frontier = next;
+      }
+    };
+    if (direction !== "up") walk("r.file");
+    if (direction !== "down") walk("l.target_file");
+    return this.pageGraph(edges, [`f${file.id}`]);
+  }
+
+  /**
+   * Every module or procedure a module or procedure uses, or is used by, all
+   * the way, with its distance in calls or includes, as tab-separated text;
+   * null when there is no such module or procedure.
+   * @param {string} id a module's path or a procedure's page id
+   * @param {Direction} direction
+   * @returns {string | null}
+   */
+  pageDependencyList(id, direction) {
+    const page = this.module(id) ? this.pageDependencies(id, direction) : this.pageProcedure(id, 0, direction);
+    if (!page) return null;
+    const node = new Map(page.nodes.map((n) => [n.id, n]));
+    /** @type {Map<string, string[]>} */
+    const down = new Map();
+    /** @type {Map<string, string[]>} */
+    const up = new Map();
+    for (const [source, , target] of page.edges) {
+      (down.get(source) ?? down.set(source, []).get(source))?.push(target);
+      (up.get(target) ?? up.set(target, []).get(target))?.push(source);
+    }
+    const lines = ["direction\tlevel\tmodule\tprocedure\tline"];
+    for (const [label, next, wanted] of /** @type {const} */ ([["uses", down, "down"], ["used by", up, "up"]])) {
+      if (direction !== "both" && direction !== wanted) continue;
+      /** @type {Map<string, number>} */
+      const level = new Map([[id, 0]]);
+      let frontier = [id];
+      for (let depth = 1; frontier.length > 0; depth++) {
+        /** @type {string[]} */
+        const reached = [];
+        for (const at of frontier) {
+          for (const other of next.get(at) ?? []) {
+            if (level.has(other)) continue;
+            level.set(other, depth);
+            reached.push(other);
+          }
+        }
+        frontier = reached;
+      }
+      level.delete(id);
+      const rows = [...level].map(([key, depth]) => {
+        const n = /** @type {GraphNode} */ (node.get(key));
+        return n.kind === "module" ? { depth, module: n.id, procedure: "", line: "" } : { depth, module: n.path ?? "", procedure: n.name, line: String(n.line ?? "") };
+      });
+      rows.sort((a, b) => a.depth - b.depth || a.module.localeCompare(b.module) || a.procedure.localeCompare(b.procedure));
+      for (const row of rows) lines.push(`${label}\t${row.depth}\t${row.module}\t${row.procedure}\t${row.line}`);
+    }
+    return `${lines.join("\n")}\n`;
   }
 
   /**

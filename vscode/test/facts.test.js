@@ -83,11 +83,14 @@ test("JCL steps run programs under a PSB", () => {
     { job: "KDJOB02", name: "DRUCK", program: "KDDRUCK", procedure: null, psb: null, parm: null },
     { job: "KDJOB02", name: "BATCH", program: "KDP00001", procedure: "DLIBATCH", psb: "KDPSB02", parm: null },
     { job: "KDJOB03", name: "AUSK", program: "KDP00005", procedure: null, psb: "KDPSB01", parm: "BMP,KDP00005,KDPSB01" },
+    { job: "KDJOB04", name: "DB2", program: "IKJEFT01", procedure: null, psb: null, parm: null },
   ]);
   assert.deepEqual(rows(`SELECT r.name, l.target_symbol IS NOT NULL AS linked FROM refs r JOIN files f ON f.id = r.file LEFT JOIN links l ON l.ref = r.id WHERE r.kind = 'program' AND f.language = 'jcl' ORDER BY r.id`), [
     { name: "KDP00001", linked: 1 },
     { name: "KDDRUCK", linked: 1 },
     { name: "KDP00001", linked: 1 },
+    { name: "KDP00005", linked: 1 },
+    { name: "IKJEFT01", linked: 0 },
     { name: "KDP00005", linked: 1 },
   ]);
   assert.deepEqual(rows(`SELECT r.name FROM refs r JOIN files f ON f.id = r.file WHERE r.kind = 'psb' AND f.language = 'jcl' ORDER BY r.id`), [
@@ -286,6 +289,7 @@ test("a program named like a PSB gen links to the program, a PSB to the gen", ()
       { kind: "program", name: "KDP00001", path: "SRC/KDP00001" },
       { kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
       { kind: "psb", name: "KDPSB01", path: "IMS/KDPSB01" },
+      { kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
     ],
   );
 });

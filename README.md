@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG029E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG033E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -145,9 +145,19 @@ controls, colors and font follow the VS Code theme. It has three views:
 - **Module:** callers above, the module's procedures in source order in the
   middle, callees below. Each outside procedure sits straight above or below
   the procedures it connects to.
-- **Procedure:** callers above and callees below, 1-3 levels deep, one row
-  per level. Rows are sorted by barycenter (each node goes to the average
-  place of its neighbours), which keeps edges short and crossings few.
+- **Procedure:** callers above and callees below, 1-3 levels deep or all
+  the way, one row per level. Rows are sorted by barycenter (each node goes
+  to the average place of its neighbours), which keeps edges short and
+  crossings few.
+- **Dependencies** (the button in a module's view or details): every module
+  the module uses, through calls, includes or any other link, all the way
+  down, and every module using it all the way up, laid out like a procedure.
+
+In the procedure and dependency views, *uses ↓*, *used by ↑* and *both*
+choose which way to walk. Past 60 nodes a row says how many more there are.
+**Save list…** writes every module or procedure found that way, all the way
+down or up, to a tab-separated file with its distance (direction, level,
+module, procedure, line) and opens it.
 
 Edges are S-curves that leave a node downwards and enter the next from above.
 
@@ -157,7 +167,7 @@ the view, so the back button works. Click shows details; double-click opens.
 
 Error codes on the page: `VIZ-101` unknown id in the URL, `VIZ-102` a view
 failed to draw, `VIZ-103` details, `VIZ-104` the sidebar list, `VIZ-105`
-search could not be read.
+search could not be read, `VIZ-106` the list to save could not be read.
 
 ## 3270 screens
 

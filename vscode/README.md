@@ -299,6 +299,8 @@ can read it while VS Code runs:
 - `PLG031E` the model's answer is not JSON or lacks the summary or rules; it
   is asked once more.
 - `PLG032E` the model is not reachable at its URL (not running, wrong port).
+- `PLG033E` Show Graph: saving a list of dependencies failed (no permission,
+  disk full); the message names the file.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

@@ -16,10 +16,11 @@
 "SECOND" "SECONDS" "SELECT" "SENSITIVE" "SEQUENCE" "SET" "SETS" "SIGNAL" 
 "SKIP" "SOME" "SQL" "STATIC" "SYNONYM" "TABLE" "TEMPORARY" "THEN" "TIME" "TO" 
 "UNION" "UNIQUE" "UPDATE" "USING" "VALUE" "VALUES" "VIEW" "WHEN" "WHERE" 
-"WITH" "WITHIN" "WITHOUT" "YEAR" "YEARS" "ZONE" ] @keyword
+"WITH" "WITHIN" "WITHOUT" "YEAR" "YEARS" "ZONE" "WITH TIME ZONE" "ARRAY[" ] @keyword
 
 (null) @constant.builtin
 (string) @string
+(datetime_literal) @string
 (number) @number
 (host_variable) @variable
 (indicator) @variable
@@ -27,6 +28,7 @@
 
 (statement operation: (identifier) @keyword)
 (special_register (identifier) @variable.builtin)
+(special_register [ "SESSION TIME ZONE" "CLIENT" ] @variable.builtin)
 
 (function_call name: (object_name (identifier) @function .))
 (call_statement procedure: (object_name (identifier) @function .))
@@ -47,5 +49,5 @@
 
 [ "=" "<>" "¬=" "!=" "^=" "<" ">" "<=" ">=" "+" "-" "*" "/" "||" ] @operator
 (operator) @operator
-[ "(" ")" ] @punctuation.bracket
+[ "(" ")" "[" "]" "??(" "??)" ] @punctuation.bracket
 [ "," "." ";" ] @punctuation.delimiter
