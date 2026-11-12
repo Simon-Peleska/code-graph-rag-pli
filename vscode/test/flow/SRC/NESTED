@@ -1,0 +1,9 @@
+ /* Zwei Prozeduren, die innere zuerst gezeigt */
+ OUTER: PROC OPTIONS(MAIN);
+   CALL INNER(1,
+              2);
+ INNER: PROC(A, B);
+   DCL (A, B) FIXED BIN(31);
+   RETURN;
+ END INNER;
+ END OUTER;

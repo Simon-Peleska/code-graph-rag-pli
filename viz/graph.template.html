@@ -22,7 +22,8 @@ body {
 html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--text); padding: 0;
-  font-family: var(--vscode-font-family, system-ui, sans-serif); font-size: var(--vscode-font-size, 13px); line-height: 1.4;
+  font-family: var(--vscode-font-family, system-ui, sans-serif); --code-font: var(--vscode-editor-font-family, ui-monospace, monospace);
+  --flow-true: var(--vscode-terminal-ansiGreen, var(--vscode-charts-green, #23d18b)); --flow-false: var(--vscode-terminal-ansiRed, var(--vscode-charts-red, #f14c4c)); font-size: var(--vscode-font-size, 13px); line-height: 1.4;
   display: grid; grid-template-rows: auto 1fr; height: 100vh;
 }
 header {
@@ -80,6 +81,40 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
 .details .text { padding: 2px 14px 6px 22px; overflow-wrap: anywhere; }
 .details p { margin: 0 0 8px; }
 .empty { color: var(--muted); padding: 2px 14px 6px 22px; }
+body.flow-page { grid-template-rows: 1fr; }
+body.flow-page > header, body.flow-page > #sides { display: none; }
+#flow { display: flex; flex-direction: column; min-height: 0; }
+.flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.flow-head h2 { font-size: 1em; margin: 0; font-weight: 600; }
+.flow-head label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.flow-head input[type=range] { width: 160px; accent-color: var(--accent); }
+.flow-head output { color: var(--text); min-width: 2ch; font-variant-numeric: tabular-nums; }
+#flow-error { margin: 8px 12px 0; padding: 8px 10px; border-radius: 2px; border: 1px solid var(--vscode-inputValidation-errorBorder, var(--error)); background: var(--vscode-inputValidation-errorBackground, #5a1d1d); }
+#flow-body { flex: 1; overflow: auto; position: relative; }
+.flow-lanes { position: sticky; top: 0; z-index: 1; height: 38px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.flow-lanes div { position: absolute; top: 0; height: 100%; padding: 3px 8px; border-left: 1px solid var(--line); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.flow-lanes div:hover b { color: var(--accent); }
+.flow-lanes .include b { color: var(--imports); }
+.flow-lanes .sub { display: block; overflow: hidden; text-overflow: ellipsis; }
+#flow svg { display: block; font-size: 12px; }
+#flow .lane-odd { fill: var(--panel); }
+#flow .lane-line { stroke: var(--line); }
+#flow .edge { fill: none; stroke: var(--edge); stroke-width: 1.3; shape-rendering: crispEdges; }
+#flow .arrow { fill: var(--edge); }
+#flow .guard { fill: var(--muted); font-size: 11px; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+#flow .act rect, #flow .diamond { fill: var(--node); stroke: var(--node-border); stroke-width: 1.3; }
+#flow .act text { fill: var(--text); font-family: var(--code-font); white-space: pre; }
+#flow .act, #flow .diamond { cursor: pointer; }
+#flow .act:hover rect, #flow .diamond:hover { stroke: var(--accent); }
+#flow .call rect { stroke: var(--accent); }
+#flow .include rect { stroke: var(--imports); stroke-dasharray: 5 3; }
+#flow .missing rect { stroke: var(--error); stroke-dasharray: 3 3; }
+#flow .ends rect { stroke: var(--main); }
+#flow .cond rect { stroke: var(--muted); }
+#flow .edge.true { stroke: var(--flow-true); } #flow .arrow.true, #flow .guard.true { fill: var(--flow-true); }
+#flow .edge.false { stroke: var(--flow-false); } #flow .arrow.false, #flow .guard.false { fill: var(--flow-false); }
+#flow .dot { fill: var(--text); }
+#flow .ring { fill: none; stroke: var(--text); stroke-width: 1.5; }
 </style>
 </head>
 <body>
@@ -131,6 +166,16 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
     <aside class="details" id="details" slot="end"></aside>
   </vscode-split-layout>
 </vscode-split-layout>
+<main id="flow" hidden>
+  <div class="flow-head">
+    <h2 id="flow-title"></h2>
+    <label title="How many calls deep the flow follows into the procedures it calls; deeper calls are cut off">Calls deep
+      <input type="range" id="flow-depth" min="0" max="10" value="1"><output id="flow-depth-value">1</output></label>
+    <span class="sub" id="flow-status"></span>
+  </div>
+  <div id="flow-error" hidden></div>
+  <div id="flow-body"></div>
+</main>
 <script>/*__CYTOSCAPE__*/</script>
 <script>
 "use strict";
@@ -139,6 +184,7 @@ aside { background: var(--panel); overflow: auto; height: 100%; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
+const flowPage = new URLSearchParams(location.hash.slice(1)).get("v") === "flow";
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -158,7 +204,8 @@ window.addEventListener("message", event => {
     if (message.error) asking?.reject(new Error(message.error));
     else asking?.resolve(message.result);
   }
-  if (message?.type === "changed") document.getElementById("reload-tool").hidden = false;
+  if (message?.type === "changed" && flowPage) renderFlow();
+  else if (message?.type === "changed") document.getElementById("reload-tool").hidden = false;
   if (message?.type === "go") location.hash = message.hash;
 });
 
@@ -590,12 +637,16 @@ async function showDetails(id) {
         details.unresolved.length ? el("div", { class: "sub text" }, details.unresolved.join(", ")) : el("div", { class: "empty" }, "none")));
     if (route().id !== id || route().view !== "module") head.append(" ", button("Open module", () => open(id)));
     if (route().id !== id || route().view !== "deps") head.append(" ", button("Dependencies", () => go({ view: "deps", id })));
+    // The flow of the module's main procedure, else of its first.
+    const main = details.procedures.find(isMain) || [...details.procedures].sort((a, b) => a.line - b.line)[0];
+    if (main) head.append(" ", button("Flow diagram", () => host.postMessage({ type: "flow", procedure: main.id })));
   } else {
     panel.append(...linkList("Defined in", details.definedIn, ""),
       ...linkList("Called by", details.calledBy, "no callers found"),
       ...linkList("Calls", details.calls, "calls nothing known"));
     if (details.defines.length) panel.append(...linkList("Defines", details.defines, "", n.path));
     if (route().id !== id || route().view !== "proc") head.append(" ", button("Show call graph", () => open(id)));
+    head.append(" ", button("Flow diagram", () => host.postMessage({ type: "flow", procedure: id })));
   }
 }
 
@@ -665,6 +716,7 @@ async function renderResults() {
   let found = [];
   try {
     found = query ? await ask("search", query) : [];
+    if (flowPage) found = found.filter(isProc);
   } catch (error) {
     if (mine === searchAsked) showError("VIZ-105", `could not search for ${query}: ${error.message}`, error);
     return;
@@ -677,7 +729,7 @@ async function renderResults() {
     label(hit.id), el("div", { class: "sub" }, `${hit.kind} · ${hit.path || ""}`))),
     hits.length ? null : el("div", { class: "empty", style: "padding: 6px 10px" }, "no match")].filter(Boolean));
 }
-function pick(i) { if (!hits[i]) return; open(hits[i].id); search.value = ""; results.hidden = true; search.blur(); }
+function pick(i) { if (!hits[i]) return; flowPage ? go({ view: "flow", id: hits[i].id }) : open(hits[i].id); search.value = ""; results.hidden = true; search.blur(); }
 search.addEventListener("input", renderResults);
 search.addEventListener("keydown", event => {
   if (event.key === "Enter") pick(active);
@@ -724,6 +776,299 @@ document.getElementById("reload").addEventListener("click", () => {
   render();
   renderList();
 });
+
+// ---- flow page ------------------------------------------------------------
+// A procedure's statements as a UML activity diagram, control flowing down,
+// with a lane for each procedure and include it goes through. Branches sit
+// side by side in slots, columns that all lanes share, so nothing overlaps;
+// a lane drops the slots it does not use.
+const FLOW = { slot: 272, box: 232, gap: 40, line: 15, small: 13 };
+const FLOW_MARK = { cut: " ⋔", external: " ⋔", recursive: " ↻", missing: " ?" };
+let flowCanvas = null;
+// Greedy wrap to `px` pixels after spaces, commas and parentheses, breaking
+// words that are wider by themselves.
+// A line break in the text always breaks; `code` measures in the monospace font.
+function wrap(text, px, size, most = 30, code = false) {
+  flowCanvas ??= document.createElement("canvas").getContext("2d");
+  flowCanvas.font = `${size}px ${getComputedStyle(document.body).getPropertyValue(code ? "--code-font" : "font-family")}`;
+  const fits = s => flowCanvas.measureText(s).width <= px;
+  const lines = [];
+  for (const given of text.split("\n")) wrapLine(given, fits, lines);
+  if (lines.length > most) lines.splice(most - 1, Infinity, `${lines[most - 1]}…`);
+  return lines;
+}
+function wrapLine(text, fits, lines) {
+  let line = "";
+  for (let word of text.split(/(?<=[ ,(])/)) {
+    if (fits((line + word).trimEnd())) { line += word; continue; }
+    if (line) lines.push(line.trimEnd());
+    word = word.trimStart();
+    while (!fits(word)) {
+      let cut = word.length - 1;
+      while (cut > 1 && !fits(word.slice(0, cut))) cut--;
+      lines.push(word.slice(0, cut));
+      word = word.slice(cut);
+    }
+    line = word;
+  }
+  if (line.trim()) lines.push(line.trimEnd());
+}
+const FLOW_TONES = { true: "true", false: "false" };
+const FLOW_ENDS = new Set(["stop", "goto", "iterate", "leave", "return"]);
+function layoutFlow(flow) {
+  const nodes = [], edges = [];
+  const add = (type, step, lane, row, slot, extra) => nodes.push({ type, step, lane, row, slot, ...extra }) - 1;
+  // An IF's true and false branches keep their color down to the next step.
+  const link = (ends, to) => { for (const end of ends) edges.push({ from: end.node, to, guard: end.guard, route: end.route || "down", tone: end.tone ?? FLOW_TONES[end.guard] }); };
+  // Places the steps from `row` down in `slot`; returns the open ends, the
+  // next free row and the right-most slot used. A RETURN goes back to the
+  // caller and a LEAVE out of its loop, both along the right of their slot.
+  function place(steps, row, slot, ends, context) {
+    let last = slot;
+    for (const step of steps) {
+      if (step.branches) {
+        const decision = add("decision", step, step.lane, row, slot, { nest: context.loops.length + 1 });
+        link(ends, decision);
+        const open = [];
+        let next = slot, bottom = row + 1;
+        for (const branch of step.branches) {
+          const into = [{ node: decision, guard: branch.guard }];
+          // An IF's empty branch leaves the diamond to the side and runs down to whatever comes next.
+          if (!branch.steps.length && step.kind === "if") {
+            open.push({ node: decision, guard: branch.guard, route: "exit" });
+            continue;
+          }
+          // Any other empty branch still gets a slot, so its edge does not run through the other branches.
+          const placed = branch.steps.length ? place(branch.steps, row + 1, next, into, context)
+            : { ends: [{ node: add("pass", step, step.lane, row + 1, next), tone: FLOW_TONES[branch.guard] }], row: row + 2, last: next };
+          if (!branch.steps.length) link(into, placed.ends[0].node);
+          open.push(...placed.ends);
+          bottom = Math.max(bottom, placed.row);
+          last = Math.max(last, placed.last);
+          next = placed.last + 1;
+        }
+        // The branches go straight on to the next step, without a merge node.
+        ends = open;
+        row = bottom;
+      } else if (step.kind === "loop") {
+        // One decision: true runs the body and comes back, false leaves along the right.
+        const head = add("decision", step, step.lane, row, slot, { nest: context.loops.length });
+        link(ends, head);
+        const loop = { exits: [] };
+        const body = place(step.steps, row + 1, slot, [{ node: head, guard: "true" }], { ...context, loops: [...context.loops, loop] });
+        link(body.ends.map(end => end.route === "exit" ? { ...end, route: "side-back" } : { node: end.node, route: "back", tone: "" }), head);
+        nodes[head].bodyEnd = body.row;
+        const exit = add("pass", step, step.lane, body.row, slot);
+        link([{ node: head, guard: "false", route: "exit" }, ...loop.exits], exit);
+        ends = [{ node: exit, tone: "false" }];
+        last = Math.max(last, body.last);
+        row = body.row + 1;
+      } else {
+        const node = add("action", step, step.lane, row, slot);
+        link(ends, node);
+        ends = [{ node }];
+        row++;
+        if (step.steps?.length) {
+          // A callee's RETURN comes back here; code in an include returns from the includer.
+          const callee = step.kind === "call" ? { returns: [], loops: [] } : context;
+          const inner = place(step.steps, row, slot, ends, callee);
+          ends = step.kind === "call" ? [...inner.ends, ...callee.returns] : inner.ends;
+          last = Math.max(last, inner.last);
+          row = inner.row;
+        } else if (step.kind === "return") {
+          context.returns.push({ node, route: "jump" });
+          ends = [];
+        } else if (step.kind === "leave" && context.loops.length) {
+          context.loops.at(-1).exits.push({ node, route: "jump" });
+          ends = [];
+        } else if (FLOW_ENDS.has(step.kind)) {
+          nodes[node].end = step.kind === "stop" ? "activity" : "flow";
+          ends = [];
+        }
+      }
+    }
+    return { ends, row, last };
+  }
+  const top = { returns: [], loops: [] };
+  const start = add("initial", null, 0, 0, 0);
+  const body = place(flow.steps, 1, 0, [{ node: start }], top);
+  const final = add("final", null, 0, body.row, 0);
+  link([...body.ends, ...top.returns], final);
+
+  // Each lane keeps only its used slots, in order.
+  const used = flow.lanes.map(() => new Set());
+  for (const n of nodes) used[n.lane].add(n.slot);
+  const column = used.map(slots => new Map([...slots].sort((a, b) => a - b).map((slot, i) => [slot, i])));
+  const laneX = [];
+  let width = 0;
+  for (let lane = 0; lane < flow.lanes.length; lane++) { laneX.push(width); width += Math.max(1, used[lane].size) * FLOW.slot; }
+  // Text wraps, so a row is as tall as its tallest node, and the gap above
+  // it as tall as the longest guard going into it.
+  const space = new Array(body.row + 1).fill(0), gap = new Array(body.row + 1).fill(FLOW.gap);
+  for (const n of nodes) {
+    n.left = laneX[n.lane] + column[n.lane].get(n.slot) * FLOW.slot;
+    n.x = n.left + FLOW.slot / 2;
+    // An IF, SELECT or DO shows its statement in a box above its diamond.
+    n.boxed = n.type === "decision";
+    if (n.type === "action") n.lines = wrap(n.step.text + (FLOW_MARK[n.step.call] || ""), FLOW.box - 16, 12, 40, true);
+    if (n.boxed) n.lines = wrap(n.step.text, FLOW.box - 16, 12, 40, true);
+    n.boxH = n.lines ? n.lines.length * FLOW.line + 13 : 0;
+    n.h = n.type === "action" ? n.boxH : n.boxed ? n.boxH + 8 + 24 : { decision: 24, initial: 18, final: 22, pass: 0 }[n.type];
+    space[n.row] = Math.max(space[n.row], n.h + (n.end ? 22 : 0));
+  }
+  for (const e of edges) {
+    if (!e.guard) continue;
+    e.lines = wrap(`[${e.guard}]`, FLOW.slot / 2 - 14, 11);
+    if (e.route === "exit" || e.route === "side-back") continue;
+    const row = nodes[e.to].row;
+    gap[row] = Math.max(gap[row], FLOW.gap + e.lines.length * FLOW.small);
+  }
+  const rowTop = [0];
+  for (let row = 0; row <= body.row; row++) rowTop.push(rowTop[row] + gap[row] + space[row]);
+  for (const n of nodes) {
+    n.rowTop = rowTop[n.row];
+    n.top = n.rowTop + gap[n.row];
+    if (n.bodyEnd) n.loopBottom = rowTop[n.bodyEnd];
+    n.y = n.type === "decision" ? n.top + n.h - 12 : n.top + n.h / 2;
+  }
+  return { nodes, edges, laneX, width, height: rowTop[body.row + 1] + FLOW.gap };
+}
+
+const SVG = "http://www.w3.org/2000/svg";
+function svg(tag, props, ...children) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(props || {})) node.setAttribute(key, value);
+  for (const child of children) if (child != null) node.append(child);
+  return node;
+}
+const titled = text => svg("title", null, text);
+// Lines of text, the first baseline at y.
+const lines = (texts, x, y, step, props, title) =>
+  svg("text", props, ...texts.map((text, i) => svg("tspan", { x, y: y + i * step }, text)), title ? titled(title) : null);
+
+function drawFlow(flow, layout) {
+  const { nodes, edges, laneX, width, height } = layout;
+  const lanes = el("div", { class: "flow-lanes", style: `width: ${width}px` });
+  flow.lanes.forEach((lane, i) => {
+    const right = i + 1 < laneX.length ? laneX[i + 1] : width;
+    lanes.append(el("div", { class: lane.kind, style: `left: ${laneX[i]}px; width: ${right - laneX[i]}px`, title: `${lane.name} · ${lane.path}:${lane.line}`,
+      onclick: () => lane.kind === "include" ? host.postMessage({ type: "open", path: lane.path, line: 1 }) : go({ view: "flow", id: lane.id }) },
+      el("b", null, lane.name), el("span", { class: "sub" }, lane.kind === "include" ? `include · ${lane.path}` : lane.path)));
+  });
+  const root = svg("svg", { width, height, viewBox: `0 0 ${width} ${height}` },
+    svg("defs", null, ...["", "true", "false"].map(tone => svg("marker", { id: `flow-arrow${tone ? `-${tone}` : ""}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" },
+      svg("path", { d: "M0,0 L10,5 L0,10 z", class: `arrow ${tone}` })))));
+  flow.lanes.forEach((lane, i) => {
+    const right = i + 1 < laneX.length ? laneX[i + 1] : width;
+    if (i % 2) root.append(svg("rect", { x: laneX[i], y: 0, width: right - laneX[i], height, class: "lane-odd" }));
+    if (i) root.append(svg("line", { x1: laneX[i], y1: 0, x2: laneX[i], y2: height, class: "lane-line" }));
+  });
+  // Where edges share a stretch, the colored one is drawn last, so it shows on top.
+  for (const e of [...edges].sort((x, y) => !!x.tone - !!y.tone)) {
+    const a = nodes[e.from], b = nodes[e.to];
+    const top = b.top;
+    let d;
+    // Side lines step inwards per loop around them, so they don't run on top of each other.
+    const side = a.left + FLOW.slot - 6 - (a.nest ?? 0) * 4;
+    if (e.route === "back") {
+      d = `M${a.x},${a.top + a.h} V${b.loopBottom + 10} H${b.left + 6 + b.nest * 4} V${b.y} H${b.x - 12}`;
+    } else if (e.route === "side-back" && a.slot === b.slot) {
+      d = `M${a.x - 12},${a.y} H${b.left + 6 + b.nest * 4} V${b.y} H${b.x - 12}`;
+    } else if (e.route === "side-back") {
+      d = `M${a.x + 12},${a.y} H${side} V${b.loopBottom + 10} H${b.left + 6 + b.nest * 4} V${b.y} H${b.x - 12}`;
+    } else if (e.route === "jump" || e.route === "exit") {
+      const x = e.route === "exit" ? side : a.left + FLOW.slot - 6;
+      d = `M${a.x + (e.route === "exit" ? 12 : FLOW.box / 2)},${a.y} H${x} V${top - 10} H${b.x} V${top}`;
+    } else {
+      const bottom = a.top + a.h;
+      d = a.x === b.x ? `M${a.x},${bottom} V${top}` : `M${a.x},${bottom} V${b.rowTop + 10} H${b.x} V${top}`;
+    }
+    const tone = e.tone || "";
+    root.append(svg("path", { d, class: `edge ${tone}`, "marker-end": b.type === "pass" ? "" : `url(#flow-arrow${tone ? `-${tone}` : ""})` }));
+    if (e.lines && e.route === "side-back" && a.slot === b.slot) root.append(lines(e.lines, a.x - 16, a.y - 5 - (e.lines.length - 1) * FLOW.small, FLOW.small, { class: `guard ${e.tone || ""}`, "text-anchor": "end" }, e.guard));
+    else if (e.lines && (e.route === "exit" || e.route === "side-back")) root.append(lines(e.lines, a.x + 16, a.y - 5 - (e.lines.length - 1) * FLOW.small, FLOW.small, { class: `guard ${e.tone || ""}` }, e.guard));
+    else if (e.lines) root.append(lines(e.lines, b.x + 6, top - 6 - (e.lines.length - 1) * FLOW.small, FLOW.small, { class: `guard ${e.tone || ""}` }, e.guard));
+  }
+  const goTo = step => () => host.postMessage({ type: "open", path: step.path, line: step.line });
+  for (const n of nodes) {
+    if (n.type === "initial") root.append(svg("circle", { cx: n.x, cy: n.y, r: 9, class: "dot" }));
+    else if (n.type === "final") root.append(svg("circle", { cx: n.x, cy: n.y, r: 11, class: "ring" }), svg("circle", { cx: n.x, cy: n.y, r: 6, class: "dot" }));
+    else if (n.type === "decision") {
+      const where = `${n.step.text} · ${n.step.path}:${n.step.line}`;
+      if (n.boxed) {
+        const box = svg("g", { class: "act cond" },
+          svg("rect", { x: n.x - FLOW.box / 2, y: n.top, width: FLOW.box, height: n.boxH, rx: 2 }),
+          n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }),
+          titled(where));
+        box.addEventListener("click", goTo(n.step));
+        root.append(box, svg("line", { x1: n.x, y1: n.top + n.boxH, x2: n.x, y2: n.y - 12, class: "edge" }));
+      }
+      const diamond = svg("polygon", { points: `${n.x},${n.y - 12} ${n.x + 12},${n.y} ${n.x},${n.y + 12} ${n.x - 12},${n.y}`, class: "diamond" }, titled(where));
+      diamond.addEventListener("click", goTo(n.step));
+      root.append(diamond);
+    } else if (n.type === "action") {
+      const step = n.step;
+      const kind = step.call === "missing" ? "missing" : step.kind === "include" ? "include" : step.call ? "call" : n.end ? "ends" : "";
+      const box = svg("g", { class: `act ${kind}` },
+        svg("rect", { x: n.x - FLOW.box / 2, y: n.top, width: FLOW.box, height: n.h, rx: 8 }),
+        n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }),
+        titled(`${step.text}${step.call && step.call !== "expanded" ? ` (${step.call === "cut" ? "deeper than the slider" : step.call})` : ""} · ${step.path}:${step.line}`));
+      box.addEventListener("click", goTo(step));
+      root.append(box);
+      // Below the action: a flow final, or an activity final for STOP.
+      const y = n.top + n.h + 12;
+      if (n.end) root.append(svg("line", { x1: n.x, y1: n.top + n.h, x2: n.x, y2: y - 6, class: "edge" }));
+      if (n.end === "activity") root.append(svg("circle", { cx: n.x, cy: y, r: 6, class: "ring" }), svg("circle", { cx: n.x, cy: y, r: 3, class: "dot" }));
+      if (n.end === "flow") root.append(svg("circle", { cx: n.x, cy: y, r: 6, class: "ring" }),
+        svg("path", { d: `M${n.x - 4},${y - 4} L${n.x + 4},${y + 4} M${n.x - 4},${y + 4} L${n.x + 4},${y - 4}`, class: "ring" }));
+    }
+  }
+  document.getElementById("flow-body").replaceChildren(lanes, root);
+}
+
+let flowId = null, flowAsked = 0;
+function showFlow(id) {
+  flowId = id;
+  document.getElementById("flow-title").textContent = `Flow of ${id.replace(/^.*:(.*):\d+$/, "$1")}`;
+  document.getElementById("flow-body").replaceChildren();
+  renderFlow();
+}
+async function renderFlow() {
+  const mine = ++flowAsked;
+  const depth = Number(document.getElementById("flow-depth").value);
+  document.getElementById("flow-depth-value").textContent = String(depth);
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading the graph…";
+  const started = performance.now();
+  let flow;
+  try {
+    flow = await ask("flow", flowId, depth);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-107", `could not read the flow of ${flowId}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!flow) return fail("VIZ-108", `"${flowId}" is not in this graph`);
+  try {
+    const read = performance.now();
+    const layout = layoutFlow(flow);
+    drawFlow(flow, layout);
+    const actions = layout.nodes.filter(n => n.type === "action").length;
+    status.textContent = `${flow.lanes.length} lanes · ${actions} steps${flow.truncated ? " · deeper calls cut off at 3000 steps" : ""}`;
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `PL/I Flow: ${flowId.replace(/^.*:(.*):\d+$/, "$1")}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] flow ${flowId} depth ${depth}: ${flow.lanes.length} lanes, ${layout.nodes.length} nodes, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-109", `could not draw the flow of ${flowId}: ${cause.message}`, cause);
+  }
+}
+document.getElementById("flow-depth").addEventListener("input", renderFlow);
 
 // ---- render ---------------------------------------------------------------
 const views = {
@@ -784,9 +1129,19 @@ requestAnimationFrame(() => {
   document.getElementById("sides").handlePosition = `${left}px`;
   document.getElementById("details-side").handlePosition = `${width - left - right}px`;
 });
-window.addEventListener("hashchange", render);
-renderList();
-render();
+// The flow tab is this page showing only the flow of the procedure in its hash.
+if (flowPage) {
+  document.body.classList.add("flow-page");
+  document.getElementById("flow").hidden = false;
+  document.querySelector(".flow-head").append(el("span", { class: "spacer" }), document.querySelector(".search"));
+  search.placeholder = "Show the flow of procedure…  ( / )";
+  window.addEventListener("hashchange", () => showFlow(route().id));
+  showFlow(route().id);
+} else {
+  window.addEventListener("hashchange", render);
+  renderList();
+  render();
+}
 </script>
 </body>
 </html>

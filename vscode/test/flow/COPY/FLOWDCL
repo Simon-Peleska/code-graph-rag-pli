@@ -1,0 +1,2 @@
+ DCL RC FIXED BIN(31);
+ DCL (I, K, KZ, A, B) CHAR(1);

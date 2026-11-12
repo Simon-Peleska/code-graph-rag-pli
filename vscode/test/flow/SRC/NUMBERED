@@ -1,0 +1,4 @@
+ NUMBERED: PROC OPTIONS(MAIN);                                          NUM00001
+ EXEC SQL UPDATE PROD.KUNDE                                             NUM00002
+          SET ID = ID WHERE ID = :K;                                    NUM00003
+ END NUMBERED;                                                          NUM00004

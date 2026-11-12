@@ -139,6 +139,18 @@
         "icon": "$(type-hierarchy)"
       },
       {
+        "command": "pliGraph.flow",
+        "title": "Show Flow Diagram",
+        "category": "PL/I Graph",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "pliGraph.flowOf",
+        "title": "Show Flow Diagram of Procedure…",
+        "category": "PL/I Graph",
+        "icon": "$(search)"
+      },
+      {
         "command": "pliGraph.showScreen",
         "title": "Show 3270 Screen",
         "category": "PL/I Graph",
@@ -200,6 +212,11 @@
         {
           "command": "pliGraph.show",
           "when": "view == pliGraphDependencies || view == pliGraphDependents",
+          "group": "navigation"
+        },
+        {
+          "command": "pliGraph.flow",
+          "when": "view == pliGraphDependencies",
           "group": "navigation"
         },
         {

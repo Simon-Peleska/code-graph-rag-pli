@@ -3,7 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { MAIN_OPTIONS } from "./source.js";
+import { MAIN_OPTIONS, blankMargins } from "./source.js";
 
 /** @typedef {import("node:sqlite").DatabaseSync} DatabaseSync */
 /** @typedef {import("node:sqlite").StatementSync} StatementSync */
@@ -62,6 +62,29 @@ import { MAIN_OPTIONS } from "./source.js";
  */
 
 /** @typedef {"down" | "up" | "both"} Direction which way the page walks: what a node uses, what uses it */
+/**
+ * A column of the flow dialog: the procedure shown, a procedure it calls or an include.
+ * @typedef {object} FlowLane
+ * @property {string} id the page id of a procedure, the path of an include
+ * @property {"procedure" | "include"} kind
+ * @property {string} name
+ * @property {string} path
+ * @property {number} line
+ */
+/**
+ * A statement of the flow dialog. A call that is expanded holds the callee's
+ * steps; an IF or a SELECT holds a branch per guard; a loop holds its body.
+ * @typedef {object} FlowStep
+ * @property {string} kind a statement's kind, "loop" for a DO with a loop spec, or "include"
+ * @property {string} text
+ * @property {number} lane
+ * @property {string} path
+ * @property {number} line
+ * @property {"expanded" | "cut" | "recursive" | "external" | "missing"} [call]
+ * @property {FlowStep[]} [steps]
+ * @property {{ guard: string, steps: FlowStep[] }[]} [branches]
+ */
+/** @typedef {{ id: number, parent: number | null, kind: string, branch: string | null, detail: string | null, line: number, end_line: number, path: string }} FlowRow */
 
 /**
  * What the Show Graph page draws for one view: nodes, and edges by node id.
@@ -106,6 +129,8 @@ const SYMBOL = `s.id, s.file, s.name, f.path, s.line, s.end_line AS end`;
 // References that can stay unresolved and still mean something is missing:
 // a screen literal or a function call without its definition is common.
 const MISSING = `('call', 'fetch', 'program', 'procedure')`;
+// Steps a flow holds at most; calls past it are cut, whatever the depth.
+const FLOW_LIMIT = 3000;
 
 /** @param {TreeRow} a @param {TreeRow} b */
 const byLabel = (a, b) => a.label.localeCompare(b.label);
@@ -1292,6 +1317,141 @@ export class Graph {
   }
 
   /**
+   * A procedure's statements in source order, with each call expanded into
+   * the callee's statements `depth` calls deep, and the code of the includes
+   * where they are included. Each procedure and include on the way gets a
+   * lane. Null when there is no such procedure.
+   * @param {string} id
+   * @param {number} depth
+   * @returns {{ lanes: FlowLane[], steps: FlowStep[], truncated: boolean } | null}
+   */
+  pageFlow(id, depth) {
+    const focus = this.symbolOf(id);
+    if (focus === undefined) return null;
+    /** @type {FlowLane[]} */
+    const lanes = [];
+    /** @type {Map<string, number>} */
+    const laneOf = new Map();
+    /** @param {string} key @param {() => FlowLane} make */
+    const lane = (key, make) => laneOf.get(key) ?? laneOf.set(key, lanes.push(make()) - 1).get(key) ?? 0;
+    /** @param {number} symbol @returns {FlowLane} */
+    const procedureLane = (symbol) => {
+      const node = this.symbolNodes(`s.id = ?`, symbol)[0];
+      return { id: node.id, kind: "procedure", name: node.name, path: node.path ?? "", line: node.line ?? 1 };
+    };
+    /** @type {Map<string, string[]>} */
+    const sources = new Map();
+    /**
+     * The statement's source from its keyword to the semicolon, keeping its
+     * lines and their indentation, without comments.
+     * @param {FlowRow} row
+     */
+    const snippet = (row) => {
+      const lines = sources.get(row.path) ?? sources.set(row.path, blankMargins(this.read(row.path) ?? "", "pli").split("\n")).get(row.path) ?? [];
+      const blank = (/** @type {string} */ s) => s.replace(/[^\n]/g, " ");
+      let text = lines.slice(row.line - 1, Math.min(row.end_line ?? row.line, row.line + 60)).join("\n").replace(/\t/g, " ").replace(/\/\*[\s\S]*?\*\//g, blank);
+      const at = text.search(new RegExp(row.kind === "declare" ? "\\b(?:DCL|DECLARE)\\b" : `\\b${row.kind}\\b`, "i"));
+      // What comes before the statement on its first line turns into blanks, so the columns stay.
+      text = at >= 0 ? blank(text.slice(0, at)).replace(/[^\n]*\n/g, "") + text.slice(at) : text.replace(/^.*\b(?:THEN|ELSE|OTHERWISE)\b|^\s*WHEN\s*\([^)]*\)/i, blank);
+      const end = text.indexOf(";");
+      const kept = (end >= 0 ? text.slice(0, end + 1) : text).split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
+      const indent = Math.min(...kept.map((l) => l.length - l.trimStart().length));
+      text = kept.map((l) => l.slice(indent)).join("\n");
+      return (text.length > 1000 ? `${text.slice(0, 999)}…` : text) || row.kind.toUpperCase();
+    };
+    let budget = FLOW_LIMIT;
+    let truncated = false;
+
+    /**
+     * @param {{ caller: number } | { file: number }} owner a procedure, or an include's code outside any
+     * @param {number} at the lane
+     * @param {number} level calls made to get here
+     * @param {Set<string>} stack the procedures and includes on the way, which are not expanded again
+     * @returns {FlowStep[]}
+     */
+    const stepsOf = (owner, at, level, stack) => {
+      // By file first: statements have no index on caller.
+      const [where, ...keys] = "caller" in owner ? ["file = (SELECT file FROM symbols WHERE id = ?) AND {}.caller = ?", owner.caller, owner.caller] : ["file = ? AND {}.caller IS NULL", owner.file];
+      const rows = /** @type {FlowRow[]} */ (
+        this.all(`SELECT s.id, s.parent, s.kind, s.branch, s.detail, s.line, s.end_line, f.path FROM statements s JOIN files f ON f.id = s.file WHERE s.${where.replace("{}", "s")} ORDER BY s.line, s.id`, ...keys)
+      );
+      const refs = /** @type {{ kind: string, name: string, line: number, symbol: number | null, file: number | null, target: string | null }[]} */ (
+        this.all(
+          `SELECT r.kind, r.name, r.line, l.target_symbol AS symbol, l.target_file AS file, t.path AS target FROM refs r
+           LEFT JOIN links l ON l.ref = r.id LEFT JOIN files t ON t.id = l.target_file
+           WHERE r.${where.replace("{}", "r")} AND r.kind IN ('call', 'fetch', 'include') ORDER BY r.line, r.id`,
+          ...keys,
+        )
+      );
+      /** @type {Map<string, (typeof refs)[number]>} */
+      const callAt = new Map();
+      for (const ref of refs) if (ref.kind !== "include" && !callAt.has(`${ref.line} ${ref.name}`)) callAt.set(`${ref.line} ${ref.name}`, ref);
+      /** @type {Map<number | null, FlowRow[]>} */
+      const children = new Map();
+      for (const row of rows) (children.get(row.parent) ?? children.set(row.parent, []).get(row.parent))?.push(row);
+
+      /** @param {FlowRow} row @returns {FlowStep} */
+      const call = (row) => {
+        const step = { kind: "call", text: snippet(row), lane: at, path: row.path, line: row.line };
+        const ref = callAt.get(`${row.line} ${row.detail?.toUpperCase()}`);
+        if (!ref?.file) return { ...step, call: "missing" };
+        if (!ref.symbol) return { ...step, call: "external" };
+        if (stack.has(`s${ref.symbol}`)) return { ...step, call: "recursive" };
+        if (level >= depth) return { ...step, call: "cut" };
+        if (budget <= 0) {
+          truncated = true;
+          return { ...step, call: "cut" };
+        }
+        const to = lane(`s${ref.symbol}`, () => procedureLane(/** @type {number} */ (ref.symbol)));
+        return { ...step, call: "expanded", steps: stepsOf({ caller: ref.symbol }, to, level + 1, new Set([...stack, `s${ref.symbol}`])) };
+      };
+      /** @param {(typeof refs)[number]} ref @returns {FlowStep} */
+      const include = (ref) => {
+        const text = `%INCLUDE ${ref.name}`;
+        if (!ref.file || !ref.target) return { kind: "include", text, lane: at, path: rows[0]?.path ?? "", line: ref.line, call: "missing" };
+        const to = lane(`f${ref.file}`, () => ({ id: /** @type {string} */ (ref.target), kind: "include", name: ref.name, path: /** @type {string} */ (ref.target), line: 1 }));
+        // Code in an include runs where it is included: no call, so no level.
+        const steps = stack.has(`f${ref.file}`) ? [] : stepsOf({ file: ref.file }, to, level, new Set([...stack, `f${ref.file}`]));
+        return { kind: "include", text, lane: to, path: ref.target, line: 1, ...(steps.length > 0 && { steps }) };
+      };
+      /** @param {FlowRow} row @returns {FlowStep[]} */
+      const convert = (row) => {
+        budget--;
+        const inner = children.get(row.id) ?? [];
+        const step = { kind: row.kind, text: snippet(row), lane: at, path: row.path, line: row.line };
+        switch (row.kind) {
+          case "if":
+            return [{ ...step, text: `IF ${row.detail ?? ""}`, branches: [
+              { guard: "true", steps: walk(inner.filter((r) => r.branch === "then")) },
+              { guard: "false", steps: walk(inner.filter((r) => r.branch === "else")) },
+            ] }];
+          case "select":
+            return [{ ...step, branches: inner.map((r) => ({ guard: r.kind === "otherwise" ? "otherwise" : r.detail ?? "", steps: walk(children.get(r.id) ?? []) })) }];
+          case "do":
+          case "begin":
+            return row.detail ? [{ ...step, kind: "loop", text: `DO ${row.detail}`, steps: walk(inner) }] : walk(inner);
+          case "call":
+          case "fetch":
+            return [call(row)];
+        }
+        // An ON-unit runs when its condition is raised, not here.
+        return [step];
+      };
+      /** @param {FlowRow[]} list @returns {FlowStep[]} */
+      const walk = (list) => list.flatMap(convert);
+
+      /** @type {(FlowRow | (typeof refs)[number])[]} */
+      const top = [...(children.get(null) ?? []), ...refs.filter((r) => r.kind === "include")];
+      top.sort((a, b) => a.line - b.line);
+      return top.flatMap((item) => ("id" in item ? convert(item) : [include(item)]));
+    };
+
+    lane(`s${focus}`, () => procedureLane(focus));
+    const steps = stepsOf({ caller: focus }, 0, 0, new Set([`s${focus}`]));
+    return { lanes, steps, truncated };
+  }
+
+  /**
    * What the details panel lists for a module or a procedure; null for neither.
    * @param {string} id
    */
@@ -1457,6 +1617,19 @@ export class Graph {
       this.all(`SELECT ${SYMBOL}, s.kind, s.detail FROM symbols s JOIN files f ON f.id = s.file WHERE ${where}`, ...params)
     );
     return rows.map(symbolNode);
+  }
+
+  /**
+   * The page id of the procedure to draw the flow of for `path`: the
+   * innermost one around `line`, else the file's main one, else its first.
+   * @param {string} path
+   * @param {number} line
+   * @returns {string | undefined}
+   */
+  flowProcedure(path, line) {
+    const procedures = this.symbolNodes(`f.path = ? AND s.kind != 'package'`, path).sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
+    const around = procedures.filter((p) => (p.line ?? 0) <= line && line <= (p.end ?? 0)).at(-1);
+    return (around ?? procedures.find((p) => p.mods?.includes("MAIN")) ?? procedures[0])?.id;
   }
 
   /**

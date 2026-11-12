@@ -225,6 +225,8 @@ test("the graph page's worker answers questions and reports failures", async () 
     assert.equal(used.result.edges.length, 4);
     const all = /** @type {any} */ (await ask(4, "procedure", ["ABREPT01:REPORT:1", 0, "down"]));
     assert.equal(all.result.edges.length, 4);
+    const flow = /** @type {any} */ (await ask(5, "flow", ["shop/main.pli:MAIN:1", 1]));
+    assert.deepEqual(flow.result.lanes.map((/** @type {any} */ l) => l.name), ["MAIN", "SHOPDCL", "HELPER"]);
     const failed = /** @type {any} */ (await ask(2, "nonsense", []));
     assert.match(failed.error, /no question nonsense/);
   } finally {

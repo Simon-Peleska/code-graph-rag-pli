@@ -51,6 +51,14 @@ extension keeps of each workspace folder:
 - **Progress** of indexing: the status bar shows `PL/I graph 42%` while a
   sync runs, and a sync of 50 files or more, such as the first one, also
   shows a notification with the step (`Reading files: 5,000 of 20,000`).
+- **PL/I Graph: Show Flow Diagram** (also the flow icon beside the graph icon
+  on PL/I Dependencies) opens the flow diagram of the procedure at the
+  cursor, else of the file's main or first procedure, in the *PL/I Flow* tab.
+  It is the graph page showing only the flow, with a worker of its own; its
+  search field shows the flow of another procedure.
+- **PL/I Graph: Show Flow Diagram of Procedure…** asks for a procedure in a
+  quick pick that searches as you type and shows its flow. A caller can pass
+  the name: `executeCommand("pliGraph.flowOf", "KDP00006")`.
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
   graph in the editor, starting at the active file's module. It is the page
   from `viz/`; it asks for what each view draws, and a worker thread of its
@@ -301,10 +309,16 @@ can read it while VS Code runs:
 - `PLG032E` the model is not reachable at its URL (not running, wrong port).
 - `PLG033E` Show Graph: saving a list of dependencies failed (no permission,
   disk full); the message names the file.
+- `PLG034E` Show Flow Diagram: the active file has no procedure, or no PL/I
+  file is open.
+- `PLG035E` Show Flow Diagram of Procedure: no procedure has the name passed
+  to the command.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
-sidebar list, `VIZ-105` search could not be read.
+sidebar list, `VIZ-105` search could not be read, `VIZ-106` the list to save,
+`VIZ-107` the flow diagram could not be read, `VIZ-108` its procedure is not
+in the graph, `VIZ-109` it could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

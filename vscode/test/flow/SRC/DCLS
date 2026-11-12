@@ -1,0 +1,6 @@
+ DCLS: PROC;
+   DCL 1 KUNDE,
+         2 NAME   CHAR(20),  /* Nachname */
+
+         2 SALDO  FIXED DEC(9,2);
+ END DCLS;

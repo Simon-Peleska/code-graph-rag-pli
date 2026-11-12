@@ -111,6 +111,16 @@ exports.run = async () => {
   await webviewTab("PL/I Graph");
   console.log("Show Graph opens");
 
+  await vscode.window.showTextDocument(document);
+  await vscode.commands.executeCommand("pliGraph.flow");
+  await webviewTab("PL/I Flow: ");
+  console.log("Show Flow Diagram opens");
+
+  // By name, as a caller would pass it; without one it asks in a quick pick.
+  await vscode.commands.executeCommand("pliGraph.flowOf", "helper");
+  await webviewTab("PL/I Flow: HELPER");
+  console.log("Show Flow Diagram of Procedure opens");
+
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");
   assert.match(vscode.window.activeTextEditor?.document.getText() ?? "", /^# PL\/I Graph coverage/);

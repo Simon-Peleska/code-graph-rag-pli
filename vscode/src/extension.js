@@ -71,9 +71,13 @@ let showStatus = () => {};
 let openedFromTree;
 /** @type {string | undefined} the file the dependency views show, as a URI */
 let shownInTree;
-// The Show Graph page; `hash` is the view it shows, kept for reloads.
-/** @type {{ panel: vscode.WebviewPanel, workspace: Workspace, hash: string } | undefined} */
+// The Show Graph page and the flow diagram page; `hash` is the view each
+// shows, kept for reloads.
+/** @typedef {{ panel: vscode.WebviewPanel, workspace: Workspace, hash: string }} PagePanel */
+/** @type {PagePanel | undefined} */
 let graphPanel;
+/** @type {PagePanel | undefined} */
+let flowPanel;
 
 /** @param {vscode.ExtensionContext} context */
 export function activate(context) {
@@ -125,6 +129,8 @@ export function activate(context) {
     }),
     vscode.commands.registerCommand("pliGraph.open", open),
     vscode.commands.registerCommand("pliGraph.show", () => showGraph(context)),
+    vscode.commands.registerCommand("pliGraph.flow", () => showFlowAtCursor(context)),
+    vscode.commands.registerCommand("pliGraph.flowOf", (/** @type {string | undefined} */ name) => showFlowOf(context, name)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     registerMcpServer(context),
@@ -260,6 +266,7 @@ function startWorker(context) {
       openGraph(workspace);
       changed.fire(undefined);
       void graphPanel?.panel.webview.postMessage({ type: "changed" });
+      void flowPanel?.panel.webview.postMessage({ type: "changed" });
       return;
     }
     requests.delete(reply.id);
@@ -294,6 +301,7 @@ function startWorker(context) {
     if (first || result.changed > 0) {
       changed.fire(undefined);
       void graphPanel?.panel.webview.postMessage({ type: "changed" });
+      void flowPanel?.panel.webview.postMessage({ type: "changed" });
     }
     showStatus();
   });
@@ -813,7 +821,9 @@ async function open(folder, target) {
  * What the graph page posts: the view it switched to, a file to open, a
  * question for the graph, or a list to save as a file.
  * @typedef {object} PageMessage
- * @property {"route" | "open" | "ask" | "save"} type
+ * @property {"route" | "open" | "ask" | "save" | "flow"} type
+ * @property {string} [procedure] the page id of the procedure whose flow to show
+ * @property {string} [title] a new title for the page's tab
  * @property {string} [hash]
  * @property {number} [drawMs]
  * @property {number} [sinceLoadMs]
@@ -826,40 +836,113 @@ async function open(folder, target) {
  * @property {string} [text]
  */
 
-// The graph page asks for what each view draws. A worker of its own with its
-// own connection answers, so the overview's second of SQL on a big graph
-// never stalls the editor.
+/** The workspace of the active editor's file, else the first; reports PLG006E when it has no graph yet. */
+function workspaceShown() {
+  const editor = vscode.window.activeTextEditor;
+  const where = editor && locate(editor.document.uri);
+  const workspace = where?.workspace ?? [...workspaces.values()][0];
+  if (workspace?.graph) return { editor, where, workspace, graph: workspace.graph };
+  const message = sqliteError ?? workspace?.error ?? "[PLG006E] There is no graph to show yet: it is still being built, or no folder is open.";
+  log.error(message);
+  void vscode.window.showErrorMessage(message);
+  return undefined;
+}
+
 /** @param {vscode.ExtensionContext} context */
 function showGraph(context) {
-  const document = vscode.window.activeTextEditor?.document;
-  const where = document && locate(document.uri);
-  const workspace = where?.workspace ?? [...workspaces.values()][0];
-  if (!workspace?.graph) {
-    const message =
-      sqliteError ?? workspace?.error ?? "[PLG006E] There is no graph to show yet: it is still being built, or no folder is open.";
+  const shown = workspaceShown();
+  if (!shown) return;
+  const module = shown.where && shown.graph.module(shown.where.path);
+  const hash = module ? `v=module&id=${encodeURIComponent(module.path)}` : (graphPanel?.hash ?? "");
+  openPage(context, shown.workspace, "graph", hash, `PL/I Graph: ${shown.workspace.folder.name}`, Boolean(module));
+}
+
+// The flow of the procedure at the cursor, else of the file's main or first procedure.
+/** @param {vscode.ExtensionContext} context */
+function showFlowAtCursor(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const procedure = shown.where && shown.graph.flowProcedure(shown.where.path, (shown.editor?.selection.active.line ?? 0) + 1);
+  if (!procedure) {
+    const message = `[PLG034E] There is no procedure to draw the flow of${shown.where ? ` in ${shown.where.path}` : ": no PL/I file is open"}.`;
     log.error(message);
     void vscode.window.showErrorMessage(message);
     return;
   }
-  const module = where && workspace.graph.module(where.path);
-  const hash = module ? `v=module&id=${encodeURIComponent(module.path)}` : (graphPanel?.hash ?? "");
+  showFlow(context, shown.workspace, procedure);
+}
 
-  if (graphPanel?.workspace === workspace) {
-    graphPanel.panel.reveal(undefined, true);
-    if (module) {
-      void graphPanel.panel.webview.postMessage({ type: "go", hash });
+// The flow of a procedure picked by name: `name` when a caller passes one,
+// else a quick pick that searches the graph as the user types.
+/** @param {vscode.ExtensionContext} context @param {string} [name] */
+async function showFlowOf(context, name) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const procedures = (/** @type {string} */ query) => shown.graph.pageSearch(query).filter((n) => n.kind === "function");
+  if (name) {
+    const found = procedures(name).find((n) => n.name.toUpperCase() === name.toUpperCase());
+    if (found) return showFlow(context, shown.workspace, found.id);
+    const message = `[PLG035E] There is no procedure ${name} to draw the flow of in ${shown.workspace.folder.name}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  /** @type {vscode.QuickPick<vscode.QuickPickItem & { id: string }>} */
+  const pick = vscode.window.createQuickPick();
+  pick.placeholder = "Show the flow of procedure…";
+  pick.matchOnDescription = true;
+  pick.onDidChangeValue((query) => {
+    pick.items = procedures(query).map((n) => ({ id: n.id, label: n.name, description: `${n.path}:${n.line}` }));
+  });
+  pick.onDidAccept(() => {
+    const chosen = pick.selectedItems[0];
+    pick.dispose();
+    if (chosen) showFlow(context, shown.workspace, chosen.id);
+  });
+  pick.onDidHide(() => pick.dispose());
+  pick.show();
+}
+
+/** @param {vscode.ExtensionContext} context @param {Workspace} workspace @param {string} procedure a page id */
+function showFlow(context, workspace, procedure) {
+  log.info(`flow diagram of ${procedure}`);
+  const name = procedure.replace(/^.*:(.*):\d+$/, "$1");
+  openPage(context, workspace, "flow", `v=flow&id=${encodeURIComponent(procedure)}`, `PL/I Flow: ${name}`, true);
+}
+
+// Both pages ask for what they draw. A worker of its own with its own
+// connection answers, so the overview's second of SQL on a big graph never
+// stalls the editor. A page already open for the workspace is reused.
+/**
+ * @param {vscode.ExtensionContext} context
+ * @param {Workspace} workspace
+ * @param {"graph" | "flow"} kind
+ * @param {string} hash the view to show
+ * @param {string} title
+ * @param {boolean} go whether an open page goes to `hash`
+ */
+function openPage(context, workspace, kind, hash, title, go) {
+  const open = kind === "graph" ? graphPanel : flowPanel;
+  if (open?.workspace === workspace) {
+    open.panel.reveal(undefined, true);
+    if (go) {
+      open.panel.title = title;
+      void open.panel.webview.postMessage({ type: "go", hash });
     }
     return;
   }
-  graphPanel?.panel.dispose();
+  open?.panel.dispose();
   const panel = vscode.window.createWebviewPanel(
-    "pliGraph",
-    `PL/I Graph: ${workspace.folder.name}`,
+    kind === "graph" ? "pliGraph" : "pliFlow",
+    title,
     { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
     { enableScripts: true, retainContextWhenHidden: true },
   );
+  /** @type {PagePanel} */
   const shown = { panel, workspace, hash };
-  graphPanel = shown;
+  const current = () => (kind === "graph" ? graphPanel : flowPanel) === shown;
+  if (kind === "graph") graphPanel = shown;
+  else flowPanel = shown;
   panel.webview.html = graphPage(context, workspace.folder.name, hash);
 
   const name = workspace.folder.name;
@@ -872,31 +955,30 @@ function showGraph(context) {
     const asked = pending.get(answer.id);
     pending.delete(answer.id);
     if ("error" in answer) {
-      const text = `[PLG026E] The graph page's question ${asked?.what} for ${name} failed: ${answer.error}`;
+      const text = `[PLG026E] The ${kind} page's question ${asked?.what} for ${name} failed: ${answer.error}`;
       log.error(text);
       void panel.webview.postMessage({ type: "answer", id: answer.id, error: text });
       return;
     }
-    log.info(`graph page ${asked?.what}: ${answer.ms} ms in SQL, ${Date.now() - (asked?.started ?? 0)} ms in all`);
+    log.info(`${kind} page ${asked?.what}: ${answer.ms} ms in SQL, ${Date.now() - (asked?.started ?? 0)} ms in all`);
     void panel.webview.postMessage({ type: "answer", id: answer.id, result: answer.result });
   });
   /** @type {string | undefined} */
   let stopped;
   const failed = (/** @type {unknown} */ why) => {
-    stopped ??= `[PLG027E] The graph page's worker for ${name} stopped: ${why}`;
+    stopped ??= `[PLG027E] The ${kind} page's worker for ${name} stopped: ${why}`;
     log.error(stopped);
     for (const id of pending.keys()) void panel.webview.postMessage({ type: "answer", id, error: stopped });
     pending.clear();
   };
   queries.on("error", failed);
   queries.on("exit", (code) => {
-    if (graphPanel === shown) failed(`exit code ${code}`);
+    if (current()) failed(`exit code ${code}`);
   });
 
   panel.onDidDispose(() => {
-    if (graphPanel === shown) {
-      graphPanel = undefined;
-    }
+    if (current() && kind === "graph") graphPanel = undefined;
+    if (current() && kind === "flow") flowPanel = undefined;
     void queries.terminate();
   });
   panel.webview.onDidReceiveMessage((/** @type {PageMessage} */ message) => {
@@ -907,7 +989,10 @@ function showGraph(context) {
       queries.postMessage({ id: message.id, what: message.what, args: message.args ?? [] });
     } else if (message.type === "route") {
       shown.hash = message.hash ?? "";
-      log.info(`graph page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
+      if (message.title) panel.title = message.title;
+      log.info(`${kind} page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
+    } else if (message.type === "flow" && message.procedure) {
+      showFlow(context, workspace, message.procedure);
     } else if (message.type === "save" && message.name && message.text !== undefined) {
       void saveList(workspace.folder.uri, message.name, message.text);
     } else if (message.type === "open" && message.path) {
@@ -922,7 +1007,7 @@ function showGraph(context) {
         });
     }
   });
-  log.info(`graph page for ${name} opened at #${hash}`);
+  log.info(`${kind} page for ${name} opened at #${hash}`);
 }
 
 /**
