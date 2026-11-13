@@ -9,7 +9,7 @@ import { Graph } from "./graph.js";
 /**
  * @typedef {object} PageQuestion
  * @property {number} id
- * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "dataFlow" | "dataModel" | "transactions" | "dataUse" | "deadCode" | "messages" | "screenInput" | "columnPath" | "details" | "search" | "list" | "coverage"} what
+ * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "dataFlow" | "dataModel" | "transactions" | "dataUse" | "deadCode" | "messages" | "batchChain" | "hotspots" | "screenInput" | "columnPath" | "details" | "search" | "list" | "coverage"} what
  * @property {any[]} args
  */
 /** @typedef {{ id: number, result: unknown, ms: number } | { id: number, error: string }} PageAnswer */
@@ -34,6 +34,8 @@ const answers = {
   dataUse: (id) => graph.procedureCrud(id),
   deadCode: (path) => graph.deadCode(path),
   messages: (path) => graph.messages(path),
+  batchChain: (path) => graph.batchChain(path),
+  hotspots: (path) => graph.hotspots(path),
   screenInput: (name) => graph.screenInput(name),
   columnPath: (/** @type {string} */ id) => graph.columnPath(id.slice(0, id.lastIndexOf(".")), id.slice(id.lastIndexOf(".") + 1)),
   details: (id) => graph.pageDetails(id),

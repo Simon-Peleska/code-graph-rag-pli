@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Graph } from "../src/graph.js";
-import { indexed } from "./indexed.js";
+import { sync } from "../src/indexer.js";
+import { indexed, indexer } from "./indexed.js";
 
 const root = join(import.meta.dirname, "facts");
 const db = await indexed(root);
@@ -45,9 +46,9 @@ test("constants, initial values, LIKE and parameters", () => {
   assert.deepEqual(of("MAX_KREDIT"), [{ scope: "KDP00001", type: "FIXED DEC", storage: "CONSTANT", init: "50000", like: null, external: 0, parameter: null }]);
   assert.deepEqual(of("KUNDE_SSA.SEGNAME"), [{ scope: "KDP00001", type: "CHAR", storage: null, init: "'KUNDE   '", like: null, external: 0, parameter: null }]);
   assert.deepEqual(of("PLITDLI"), [{ scope: "KDP00001", type: "ENTRY", storage: null, init: null, like: null, external: 1, parameter: null }]);
-  assert.deepEqual(of("K2"), [{ scope: "KDP00001", type: null, storage: null, init: null, like: "KUNDE_SEG", external: 0, parameter: null }]);
+  assert.deepEqual(of("K2"), [{ scope: "KDP00001", type: "STRUCTURE", storage: null, init: null, like: "KUNDE_SEG", external: 0, parameter: null }]);
   assert.deepEqual(of("DBPCB_PTR"), [{ scope: "KDP00001", type: "POINTER", storage: "PARAMETER", init: null, like: null, external: 0, parameter: 2 }]);
-  assert.deepEqual(of("K"), [{ scope: "PRUEFEN", type: null, storage: "PARAMETER", init: null, like: "KUNDE_SEG", external: 0, parameter: 1 }]);
+  assert.deepEqual(of("K"), [{ scope: "PRUEFEN", type: "STRUCTURE", storage: "PARAMETER", init: null, like: "KUNDE_SEG", external: 0, parameter: 1 }]);
   assert.deepEqual(rows(`SELECT dims, init FROM variables WHERE name = 'TAGE'`), [{ dims: "12", init: "31,28,31,30,31,30,31,31,30,31,30,31" }]);
 });
 
@@ -85,6 +86,8 @@ test("JCL steps run programs under a PSB", () => {
     { job: "KDJOB03", name: "AUSK", program: "KDP00005", procedure: null, psb: "KDPSB01", parm: "BMP,KDP00005,KDPSB01" },
     { job: "KDJOB04", name: "DB2", program: "IKJEFT01", procedure: null, psb: null, parm: null },
     { job: "KDJOB05", name: "LISTE", program: "KDP00014", procedure: null, psb: null, parm: null },
+    { job: "KDJOB06", name: "MAHN", program: "KDP00017", procedure: null, psb: null, parm: null },
+    { job: "KDJOB07", name: "DRUCK", program: "KDDRUCK", procedure: null, psb: null, parm: null },
   ]);
   assert.deepEqual(rows(`SELECT r.name, l.target_symbol IS NOT NULL AS linked FROM refs r JOIN files f ON f.id = r.file LEFT JOIN links l ON l.ref = r.id WHERE r.kind = 'program' AND f.language = 'jcl' ORDER BY r.id`), [
     { name: "KDP00001", linked: 1 },
@@ -94,6 +97,8 @@ test("JCL steps run programs under a PSB", () => {
     { name: "IKJEFT01", linked: 0 },
     { name: "KDP00005", linked: 1 },
     { name: "KDP00014", linked: 1 },
+    { name: "KDP00017", linked: 1 },
+    { name: "KDDRUCK", linked: 1 },
   ]);
   assert.deepEqual(rows(`SELECT r.name FROM refs r JOIN files f ON f.id = r.file WHERE r.kind = 'psb' AND f.language = 'jcl' ORDER BY r.id`), [
     { name: "KDPSB01" },
@@ -170,11 +175,63 @@ test("a program's files go to the datasets of the steps running it", () => {
   assert.deepEqual(
     files.map((f) => [f.name, f.dd, f.operations.join(","), f.records.join(","), f.dds.map((d) => `${d.job}.${d.step} ${d.dsn ?? "-"}(${d.member ?? ""}) ${d.disp ?? "-"}`)]),
     [
-      ["AUSZUG", "AUSZUG", "OPEN,READ,CLOSE", "SATZ", ["KDJOB02.DRUCK PROD.KD.AUSZUG(0) SHR"]],
-      ["LISTE", "LISTE", "OPEN,PUT,CLOSE", "", ["KDJOB02.DRUCK -() -"]],
+      ["AUSZUG", "AUSZUG", "OPEN,READ,CLOSE", "SATZ", ["KDJOB02.DRUCK PROD.KD.AUSZUG(0) SHR", "KDJOB07.DRUCK PROD.KD.MAHNUNG(0) SHR"]],
+      ["LISTE", "LISTE", "OPEN,PUT,CLOSE", "", ["KDJOB02.DRUCK -() -", "KDJOB07.DRUCK -() -"]],
       ["ARCHIV", "ARCH", "OPEN,WRITE,CLOSE", "SATZ", []],
     ],
   );
+});
+
+test("a batch chain orders the jobs by the datasets they pass on, with the records written and read", () => {
+  const graph = new Graph(db, root);
+  const side = (/** @type {any} */ s) =>
+    `${s.job}.${s.step} ${s.program} ${s.dd}${s.generation ? `(${s.generation})` : ""} ${s.disp}${s.operations.length ? ` ${s.operations.join(",")}` : ""}${s.records.map((/** @type {any} */ r) => ` ${r.name} [${r.fields.join("; ")}] ${r.path}:${r.line}`).join("")}`;
+  const chain = graph.batchChain("");
+  assert.deepEqual(chain.jobs.map((j) => `${j.job} ${j.path}:${j.line}${j.after.length ? ` after ${j.after.join(",")}` : ""}`), [
+    "KDJOB01 JCL/KDJOB01:1",
+    "KDJOB02 JCL/KDJOB02:1 after KDJOB01",
+    "KDJOB05 JCL/KDJOB05:1",
+    "KDJOB06 JCL/KDJOB06:1 after KDJOB05",
+    "KDJOB07 JCL/KDJOB07:1 after KDJOB06",
+  ]);
+  assert.deepEqual(
+    chain.datasets.map((d) => [d.dsn, d.writers.map(side), d.readers.map(side)]),
+    [
+      ["PROD.KD.AUSZUG", ["KDJOB01.PRUEF KDP00001 AUSZUG(+1) NEW,CATLG,DELETE"], ["KDJOB02.DRUCK KDDRUCK AUSZUG(0) SHR READ SATZ [1 SATZ; 2 KDNR CHAR(8); 2 BETRAG FIXED DEC(11,2)] SRC/KDDRUCK:5"]],
+      ["PROD.KD.SALDEN", ["KDJOB05.LISTE KDP00014 LISTE NEW,CATLG WRITE ZEILE [1 ZEILE; 2 KDNR CHAR(8); 2 SALDO PIC '(9)9V99-'] SRC/KDP00014:4"], ["KDJOB06.MAHN KDP00017 SALDEN SHR READ SALDEN_SATZ [1 SALDEN_SATZ; 2 KDNR CHAR(8); 2 SALDO PIC '(9)9V99-'] INCLUDE/KDC00004:3"]],
+      ["PROD.KD.MAHNUNG", ["KDJOB06.MAHN KDP00017 MAHNUNG(+1) NEW,CATLG,DELETE WRITE MAHN_SATZ [1 MAHN_SATZ; 2 KDNR CHAR(8); 2 MSTUFE FIXED BIN(15)] SRC/KDP00017:6"], ["KDJOB07.DRUCK KDDRUCK AUSZUG(0) SHR READ SATZ [1 SATZ; 2 KDNR CHAR(8); 2 BETRAG FIXED DEC(11,2)] SRC/KDDRUCK:5"]],
+    ],
+  );
+  assert.equal(chain.truncated, false);
+  for (const path of ["JCL/KDJOB06", "SRC/KDP00017"]) {
+    const around = graph.batchChain(path);
+    assert.deepEqual(around.jobs.map((j) => j.job), ["KDJOB05", "KDJOB06", "KDJOB07"], path);
+    assert.deepEqual(around.datasets.map((d) => d.dsn), ["PROD.KD.SALDEN", "PROD.KD.MAHNUNG"], path);
+  }
+  assert.deepEqual(graph.batchChain("SRC/KDP00016").datasets, []);
+});
+
+test("hotspots rank the fields and columns used by the most programs, with the transactions reaching them", () => {
+  const graph = new Graph(db, root);
+  const field = (/** @type {any} */ f) =>
+    `${f.qualified} ${f.path}:${f.line} uses ${f.uses} r${f.reads} w${f.writes} p${f.passes} t${f.tests} in ${f.procedures} procedures, ${f.programs} programs${f.transactions.length ? ` ${f.transactions.join(",")}` : ""}${f.comment ? ` -- ${f.comment}` : ""}`;
+  const column = (/** @type {any} */ c) =>
+    `${c.table}.${c.column} ${c.type} ${c.path}:${c.line} uses ${c.uses} r${c.reads} w${c.writes} t${c.tests} in ${c.procedures} procedures, ${c.programs} programs ${c.transactions.join(",")}`;
+  const all = graph.hotspots("");
+  assert.deepEqual(all.fields.slice(0, 3).map(field), [
+    "KUNDE_SEG.KDTYP INCLUDE/KDC00001:4 uses 4 r4 w0 p0 t3 in 3 procedures, 3 programs -- KUNDENTYP: P ODER G",
+    "KUNDE_SEG.KREDIT INCLUDE/KDC00001:8 uses 4 r2 w1 p1 t1 in 2 procedures, 2 programs",
+    "AUSGABE.MELDUNG SRC/KDP00011:23 uses 5 r0 w5 p0 t0 in 2 procedures, 1 programs KD06",
+  ]);
+  assert.deepEqual(all.columns.slice(0, 2).map(column), [
+    "KUNDE.KDNR CHAR(8) INCLUDE/KDT00001:2 uses 7 r2 w0 t5 in 3 procedures, 3 programs KD05,KD07",
+    "KUNDE.SALDO DECIMAL(11,2) INCLUDE/KDT00001:4 uses 6 r6 w2 t0 in 3 procedures, 3 programs KD05,KD07",
+  ]);
+  assert.equal(all.truncated, false);
+  const one = graph.hotspots("SRC/KDP00013");
+  assert.equal(one.fields.length, 14);
+  assert.deepEqual(one.fields[0] && field(one.fields[0]), "KD_NR SRC/KDP00013:23 uses 3 r2 w1 p0 t0 in 1 procedures, 1 programs KD07");
+  assert.deepEqual(one.columns.map((/** @type {any} */ c) => `${c.table}.${c.column}`), ["KUNDE.KDNR", "KUNDE.SALDO"]);
 });
 
 test("CREATE TABLE gives each column its type, NOT NULL and key position", () => {
@@ -305,6 +362,8 @@ test("a program named like a PSB gen links to the program, a PSB to the gen", ()
       { kind: "psb", name: "KDPSB01", path: "IMS/KDPSB01" },
       { kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
       { kind: "program", name: "KDP00014", path: "SRC/KDP00014" },
+      { kind: "program", name: "KDP00017", path: "SRC/KDP00017" },
+      { kind: "program", name: "KDDRUCK", path: "SRC/KDDRUCK" },
     ],
   );
 });
@@ -482,6 +541,7 @@ test("comments describe procedures and declarations, literals are kept with thei
     { name: "KDP00014", comment: "KDP00014: SALDENLISTE", line: 2 },
     { name: "KDP00015", comment: "KDP00015: KREDITRAHMEN PRUEFEN", line: 2 },
     { name: "KDP00016", comment: "KDP00016: KUNDENTYP EINSTUFEN", line: 2 },
+    { name: "KDP00017", comment: "KDP00017: MAHNLAUF", line: 2 },
   ]);
   assert.deepEqual(
     rows(`SELECT v.qualified, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE v.comment IS NOT NULL AND f.path IN ('SRC/KDP00009', 'INCLUDE/KDC00001') ORDER BY v.id`),
@@ -686,6 +746,72 @@ test("decision table: every value a code field is compared to, in every program,
     { value: "OTHERWISE", at: ["SRC/KDP00006:22"], then: ["SIGNAL ERROR;"], else: [] },
   ]);
   assert.equal(graph.decisionTable("SRC/KDP00006", "NIX"), null);
+});
+
+test("what a declaration leaves out gets PL/I's defaults, and an undeclared name an implicit declaration", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "pli-defaults-"));
+  writeFileSync(
+    join(folder, "TYPP01"),
+    [
+      " TYPP01: PROC(P1, P2, NP) OPTIONS(MAIN);",
+      "   DCL P1 CHAR(10), P2;",
+      "   %INCLUDE TYPC01;",
+      "   DCL 1 S1, 2 F1 CHAR(4), 2 F2 BIT;",
+      "   DCL 1 S2 LIKE S1;",
+      "   DCL (R FIXED BIN, T FIXED DEC, U FLOAT, V BIN, W DEC(7), G FLOAT BIN, NX, AX) STATIC;",
+      "   DCL B_SATZ CHAR(8) BASED(AP);",
+      "   DCL SUBSTR BUILTIN;",
+      "   I = 1; ZAHL = 2;",
+      "   IF SQLCODE = 100 THEN S2 = S1;",
+      "   ALLOCATE B_SATZ SET(AP);",
+      "   ZAHL = SUBSTR(F1, 1, 1);",
+      " INNEN: PROC;",
+      "   I = 2;",
+      " END INNEN;",
+      " END TYPP01;",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(folder, "TYPC01"), " DCL KONST CHAR(2) INIT('AB');\n");
+  const db = await indexed(folder);
+  /** @param {string} sql */
+  const rows = (sql) => db.prepare(sql).all().map((row) => ({ ...row }));
+  const of = () => rows(`SELECT v.name, v.type, v.size, v.dims, v.storage, s.name AS scope, v.line FROM variables v LEFT JOIN symbols s ON s.id = v.scope WHERE v.level = 1 ORDER BY v.storage IS 'IMPLICIT', v.line, v.name`);
+  const declared = [
+    { name: "KONST", type: "CHAR", size: "2", dims: null, storage: null, scope: null, line: 1 },
+    { name: "NP", type: "FIXED BIN", size: "15", dims: null, storage: "PARAMETER", scope: "TYPP01", line: 1 },
+    { name: "P1", type: "CHAR", size: "10", dims: null, storage: "PARAMETER", scope: "TYPP01", line: 2 },
+    { name: "P2", type: "FLOAT DEC", size: "6", dims: null, storage: "PARAMETER", scope: "TYPP01", line: 2 },
+    { name: "S1", type: "STRUCTURE", size: null, dims: null, storage: null, scope: "TYPP01", line: 4 },
+    { name: "S2", type: "STRUCTURE", size: null, dims: null, storage: null, scope: "TYPP01", line: 5 },
+    { name: "AX", type: "FLOAT DEC", size: "6", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "G", type: "FLOAT BIN", size: "21", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "NX", type: "FIXED BIN", size: "15", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "R", type: "FIXED BIN", size: "15", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "T", type: "FIXED DEC", size: "5", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "U", type: "FLOAT DEC", size: "6", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "V", type: "FLOAT BIN", size: "21", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "W", type: "FLOAT DEC", size: "7", dims: null, storage: "STATIC", scope: "TYPP01", line: 6 },
+    { name: "B_SATZ", type: "CHAR", size: "8", dims: null, storage: "BASED", scope: "TYPP01", line: 7 },
+    { name: "SUBSTR", type: "BUILTIN", size: null, dims: null, storage: null, scope: "TYPP01", line: 8 },
+  ];
+  assert.deepEqual(of(), [
+    ...declared,
+    { name: "I", type: "FIXED BIN", size: "15", dims: null, storage: "IMPLICIT", scope: "TYPP01", line: 9 },
+    { name: "ZAHL", type: "FLOAT DEC", size: "6", dims: null, storage: "IMPLICIT", scope: "TYPP01", line: 9 },
+    { name: "SQLCODE", type: "FIXED BIN", size: "31", dims: null, storage: "IMPLICIT", scope: "TYPP01", line: 10 },
+    { name: "AP", type: "POINTER", size: null, dims: null, storage: "IMPLICIT", scope: "TYPP01", line: 11 },
+  ]);
+  assert.deepEqual(rows(`SELECT type, size FROM variables WHERE qualified = 'S1.F2'`), [{ type: "BIT", size: "1" }]);
+  assert.deepEqual(rows(`SELECT count(*) AS n FROM accesses WHERE variable IS NULL`), [{ n: 0 }]);
+  // INNEN's I is the main procedure's: one implicit declaration for both.
+  assert.deepEqual(rows(`SELECT count(DISTINCT variable) AS n, count(*) AS uses FROM accesses WHERE name = 'I'`), [{ n: 1, uses: 2 }]);
+
+  // Once the include declares ZAHL, it is no longer implicit.
+  writeFileSync(join(folder, "TYPC01"), " DCL KONST CHAR(2) INIT('AB');\n DCL ZAHL FIXED DEC(5);\n");
+  await sync(db, folder, indexer);
+  assert.deepEqual(rows(`SELECT name FROM variables WHERE storage = 'IMPLICIT' ORDER BY id`), [{ name: "I" }, { name: "SQLCODE" }, { name: "AP" }]);
+  assert.deepEqual(rows(`SELECT count(*) AS n FROM accesses a JOIN variables v ON v.id = a.variable WHERE a.name = 'ZAHL' AND v.type = 'FIXED DEC'`), [{ n: 2 }]);
 });
 
 test("a ß before a name does not shift its column", async () => {

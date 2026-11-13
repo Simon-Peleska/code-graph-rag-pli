@@ -88,7 +88,8 @@ tables, PSBs and DBDs keep every definition at the nearest distance.
 | Every file | how many places the grammar could not read and the first one; why reading it failed, if it did | `files` |
 
 Derived from these rows when asked, not stored: who writes and reads a
-dataset across jobs (MCP tool `dataset`), a program's files with their DDs
+dataset across jobs (MCP tool `dataset`), the jobs in processing order
+with the datasets and records they pass on (`batch_chain`), which fields and columns most of the logic depends on (`hotspots`), a program's files with their DDs
 and datasets (`program_files`), a table's columns with every SQL statement
 using each and its host variable (`table_columns`), a PSB's layout and users (`psb`), a screen's fields and
 the programs naming it (`screen`), the variable each input field lands in

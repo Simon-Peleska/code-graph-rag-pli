@@ -34,7 +34,7 @@ test("the coverage report counts what could not be read or resolved", () => {
   assert.match(shared, /\| pli \| 1 \| 0\.0 \| 1 \(100\.0 %\) \|/);
   assert.match(shared, /\| pli \| 1 \| `\) x x ; ;` \|/);
   assert.match(shared, /\| call \| 1 \| 1 \(100\.0 %\) \| 1 \|/);
-  assert.match(shared, /\| write \| 1 \| 1 \(100\.0 %\) \|/);
+  assert.match(shared, /\| write \| 1 \| 0 \(0\.0 %\) \| 1 \(100\.0 %\) \|/);
 });
 
 test("the shareable part has no names or paths, the second part has them", () => {
@@ -42,7 +42,7 @@ test("the shareable part has no names or paths, the second part has them", () =>
     assert.ok(!shared.includes(secret), `${secret} is not in part 1`);
   }
   assert.match(names, /\| KDNIRGENDS \| 1 \| KDPRUEF\.pli:3 \|/);
-  assert.match(names, /\| KD_RABATT \| 1 \| KDPRUEF\.pli:4 \|/);
+  assert.match(names, /\| KD_RABATT \| FIXED BIN\(15\) \| 1 \| KDPRUEF\.pli:4 \|/);
   assert.match(names, /KDPRUEF\.pli:5/);
 });
 

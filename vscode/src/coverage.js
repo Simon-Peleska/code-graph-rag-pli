@@ -141,23 +141,29 @@ export function coverageReport(db, root, keywords) {
       ),
   );
 
-  const accesses = all("SELECT mode, count(*) AS n, total(variable IS NULL) AS unresolved FROM accesses GROUP BY mode ORDER BY n DESC");
+  const accesses = all(
+    `SELECT a.mode, count(*) AS n, total(a.variable IS NULL) AS unresolved, total(v.storage = 'IMPLICIT') AS implicit
+     FROM accesses a LEFT JOIN variables v ON v.id = a.variable GROUP BY a.mode ORDER BY n DESC`,
+  );
   share.push(
-    "### Field accesses\n\nResolved when the field is found among the declarations in scope, includes and `LIKE` counted.\n\n" +
-      table(["mode", "accesses", "unresolved"], accesses.map((a) => [a.mode, a.n, `${a.unresolved} (${percent(a.unresolved, a.n)})`])),
+    "### Field accesses\n\nResolved when the field is found among the declarations in scope, includes and `LIKE` counted. A simple name declared nowhere is declared implicitly, as PL/I does: often a typo.\n\n" +
+      table(
+        ["mode", "accesses", "unresolved", "of implicit declarations"],
+        accesses.map((a) => [a.mode, a.n, `${a.unresolved} (${percent(a.unresolved, a.n)})`, `${a.implicit} (${percent(a.implicit, a.n)})`]),
+      ),
   );
 
   const statements = all("SELECT kind, count(*) AS n FROM statements GROUP BY kind ORDER BY n DESC");
   share.push("### Statements by kind\n\n" + table(["kind", "statements"], statements.map((s) => [s.kind, s.n])));
 
-  const variables = all("SELECT count(*) AS n, total(type IS NULL) AS untyped FROM variables")[0];
+  const variables = all("SELECT count(*) AS n, total(type IS NULL) AS untyped, total(storage = 'IMPLICIT') AS implicit FROM variables")[0];
   const untypedShapes = new Map();
   for (const { attributes } of all("SELECT attributes FROM variables WHERE type IS NULL AND level <= 1 AND attributes != '' LIMIT 20000")) {
     const key = shape(attributes, keywords);
     untypedShapes.set(key, (untypedShapes.get(key) ?? 0) + 1);
   }
   share.push(
-    `### Declarations\n\n${variables.n} variables and fields, ${variables.untyped} (${percent(variables.untyped, variables.n)}) without a type (structures have none). Attributes of the untyped ones that are no structure, by shape:\n\n` +
+    `### Declarations\n\n${variables.n} variables and fields, ${variables.implicit} (${percent(variables.implicit, variables.n)}) of them declared implicitly, ${variables.untyped} (${percent(variables.untyped, variables.n)}) without a known type. Attributes of the untyped ones, by shape:\n\n` +
       table(["variables", "attributes"], [...untypedShapes].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([text, count]) => [count, `\`${text}\``])),
   );
 
@@ -227,6 +233,15 @@ export function coverageReport(db, root, keywords) {
      WHERE a.variable IS NULL GROUP BY a.name ORDER BY n DESC LIMIT 40`,
   );
   mine.push("### Unresolved field accesses, most frequent\n\n" + table(["name", "accesses", "example"], unresolvedFields.map((u) => [u.name, u.n, at(u)])));
+
+  const implicit = all(
+    `SELECT v.name, v.type, v.size, v.file, v.line, (SELECT count(*) FROM accesses a WHERE a.variable = v.id) AS n
+     FROM variables v WHERE v.storage = 'IMPLICIT' ORDER BY n DESC LIMIT 40`,
+  );
+  mine.push(
+    "### Implicitly declared names, most used\n\n" +
+      table(["name", "type", "accesses", "first used at"], implicit.map((v) => [v.name, v.size ? `${v.type}(${v.size})` : v.type, v.n, at(v)])),
+  );
 
   const vagueDli = all("SELECT file, line, entry, arguments FROM dli_calls WHERE function IS NULL OR segment IS NULL LIMIT 30");
   mine.push("### DL/I calls with an unknown function or segment\n\n" + table(["call", "arguments", "at"], vagueDli.map((d) => [d.entry, d.arguments, at(d)])));

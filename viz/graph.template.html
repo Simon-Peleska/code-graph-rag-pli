@@ -126,6 +126,11 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 .crud table { table-layout: fixed; }
 .crud th:first-child { width: 70px; }
 .crud th:nth-child(2) { width: 18%; }
+.chain th:first-child { width: 22%; }
+.chain th:nth-child(2) { width: 39%; }
+.hot th, .hot th:nth-child(2) { width: 7.5%; }
+.hot th:first-child { width: 30%; }
+.hot th:last-child { width: auto; }
 .rules td:first-child { width: 30%; }
 #flow .lane-odd { fill: var(--panel); }
 #flow .lane-line { stroke: var(--line); }
@@ -232,7 +237,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
-const flowPage = ["flow", "data", "model", "crud", "use", "dead", "messages", "input", "column"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
+const flowPage = ["flow", "data", "model", "crud", "use", "dead", "messages", "chain", "hot", "input", "column"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -1880,17 +1885,189 @@ async function renderMessages() {
   }
 }
 
+// ---- batch chain ------------------------------------------------------------
+// The datasets the jobs of a JCL file or a program's steps (the id), or all
+// jobs (v=chain), pass on: the jobs in order, then who writes and reads each
+// dataset, with the records the programs write and read through the DD.
+let chainPath = "";
+function showChain(path) {
+  chainPath = path || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderChain();
+}
+async function renderChain() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the batch chain of ${chainPath || "the workspace"}`;
+  let chain;
+  try {
+    chain = await ask("batchChain", chainPath);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-137", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!chain.datasets.length) return fail("VIZ-138", `no job writes a dataset${chainPath ? ` that ${chainPath} uses` : ""}`);
+  try {
+    const read = performance.now();
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const filter = el("input", { type: "search", placeholder: "filter by dataset, job, program or field", class: "filter" });
+    const list = el("div", {});
+    const side = (s, y) => {
+      const dd = el("pre", { title: `${s.path}:${s.line}`, onclick: open(s) },
+        `${s.job} · ${s.step ?? "?"}${s.program ? ` · ${s.program}` : ""}\nDD ${s.dd}${s.generation ? ` (${s.generation})` : ""} DISP=${s.disp ?? "NEW"}${s.operations.length ? ` · ${s.operations.join(", ")}` : ""}`);
+      target(dd, s, 1, y);
+      const records = s.records.map(r => {
+        const text = [r.name, ...r.fields.slice(1).map(f => `${"  ".repeat(Math.max(0, Number(f.split(" ")[0]) - 1))}${f}`)].join("\n");
+        return r.path ? el("pre", { class: "guard", title: `${r.path}:${r.line}`, onclick: open(r) }, text) : el("div", { class: "guard" }, `${r.name}, declaration not found`);
+      });
+      return el("div", {}, dd, records);
+    };
+    // The filter redraws the tables, so the keyboard moves over the shown rows only.
+    const draw = () => {
+      const wanted = filter.value.trim().toUpperCase();
+      targets = [];
+      let row = 0;
+      const jobs = chain.jobs.map(j => {
+        const node = el("pre", { title: `${j.path}:${j.line}`, onclick: open(j) }, j.job);
+        target(node, j, 0, row++);
+        return el("tr", {}, el("td", {}, node), el("td", {}, j.after.length ? el("pre", {}, j.after.join(", ")) : el("div", { class: "guard" }, "first")));
+      });
+      const words = s => `${s.job} ${s.step} ${s.program} ${s.dd} ${s.records.map(r => `${r.name} ${r.fields.join(" ")}`).join(" ")}`;
+      const rows = chain.datasets
+        .filter(d => !wanted || `${d.dsn} ${[...d.writers, ...d.readers].map(words).join(" ")}`.toUpperCase().includes(wanted))
+        .map(d => {
+          const y = row++;
+          return el("tr", {},
+            el("td", {}, el("pre", {}, d.dsn)),
+            el("td", {}, d.writers.map((s, i) => side(s, y + i / 100))),
+            el("td", {}, d.readers.length ? d.readers.map((s, i) => side(s, y + 0.5 + i / 100)) : el("div", { class: "guard" }, "no job")));
+        });
+      list.replaceChildren(
+        el("section", {}, el("h3", { class: "in" }, "Jobs in processing order"), table(["Job", "After"], jobs)),
+        el("section", {}, el("h3", { class: "in" }, "Datasets passed on"), rows.length ? table(["Dataset", "Written by", "Read by"], rows) : el("div", { class: "guard" }, "nothing matches the filter")));
+    };
+    filter.addEventListener("input", draw);
+    draw();
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud chain" }, filter, list,
+      chain.truncated ? el("div", { class: "guard" }, "only the first 2000 datasets are shown") : ""));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Batch Chain: ${chainPath ? chainPath.split("/").pop() : "all"}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${chain.jobs.length} jobs, ${chain.datasets.length} datasets, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-139", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
+// ---- hotspots ---------------------------------------------------------------
+// The fields and columns most of the logic depends on, of a program (the id)
+// or the workspace (v=hot): ranked by programs, procedures and uses, with how
+// often each is read, written, passed and tested, and the transactions
+// reaching it.
+let hotPath = "";
+function showHot(path) {
+  hotPath = path || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderHot();
+}
+async function renderHot() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the hotspots of ${hotPath || "the workspace"}`;
+  let hot;
+  try {
+    hot = await ask("hotspots", hotPath);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-140", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!hot.fields.length && !hot.columns.length) return fail("VIZ-141", `no field or column is used${hotPath ? ` in ${hotPath}` : ""}`);
+  try {
+    const read = performance.now();
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const filter = el("input", { type: "search", placeholder: "filter by name, type, comment or transaction", class: "filter" });
+    const list = el("div", {});
+    const count = (n) => el("td", {}, String(n));
+    const reached = (codes) => el("td", {}, codes.length ? el("pre", {}, codes.join(", ")) : "");
+    const draw = () => {
+      const wanted = filter.value.trim().toUpperCase();
+      const shows = (words) => !wanted || words.join(" ").toUpperCase().includes(wanted);
+      targets = [];
+      let row = 0;
+      const fields = hot.fields
+        .filter(f => shows([f.qualified, f.type, f.size, f.comment, ...f.transactions]))
+        .map(f => {
+          const node = el("pre", { title: `${f.path}:${f.line}`, onclick: open(f) }, `${f.qualified}\n${f.type ? `${f.type}${f.size ? `(${f.size})` : ""} · ` : ""}${f.path.split("/").pop()}`);
+          target(node, f, 0, row++);
+          return el("tr", {}, el("td", {}, node, f.comment ? el("div", { class: "guard" }, f.comment) : ""),
+            count(f.programs), count(f.procedures), count(f.uses), count(f.reads), count(f.writes), count(f.passes), count(f.tests), reached(f.transactions));
+        });
+      const columns = hot.columns
+        .filter(c => shows([`${c.table}.${c.column}`, c.type, ...c.transactions]))
+        .map(c => {
+          const name = `${c.table}.${c.column}${c.type ? `\n${c.type}` : ""}${c.path ? ` · ${c.path.split("/").pop()}` : ""}`;
+          const node = c.path ? el("pre", { title: `${c.path}:${c.line}`, onclick: open(c) }, name) : el("pre", {}, name);
+          target(node, c, 0, row++);
+          return el("tr", {}, el("td", {}, node),
+            count(c.programs), count(c.procedures), count(c.uses), count(c.reads), count(c.writes), count(c.tests), reached(c.transactions));
+        });
+      list.replaceChildren(
+        el("section", {}, el("h3", { class: "in" }, "Fields"),
+          fields.length ? table(["Field", "Programs", "Procedures", "Uses", "Read", "Written", "Passed", "Tested", "Transactions"], fields) : el("div", { class: "guard" }, hot.fields.length ? "nothing matches the filter" : "none")),
+        el("section", {}, el("h3", { class: "in" }, "Db2 columns"),
+          columns.length ? table(["Column", "Programs", "Procedures", "Uses", "Read", "Written", "In WHERE", "Transactions"], columns) : el("div", { class: "guard" }, hot.columns.length ? "nothing matches the filter" : "none")));
+    };
+    filter.addEventListener("input", draw);
+    draw();
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud hot" }, filter, list,
+      hot.truncated ? el("div", { class: "guard" }, "only the first 200 fields and 200 columns are shown") : ""));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Hotspots: ${hotPath ? hotPath.split("/").pop() : "all"}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${hot.fields.length} fields, ${hot.columns.length} columns, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-142", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
 // The diagram tab shows a procedure's flow, a variable's data flow, a DDL
 // file's data model, what transactions or a procedure do to the data, the
-// dead code, the messages and codes, a screen's input rules or a column's path.
+// dead code, the messages and codes, the batch chain, the hotspots, a screen's input rules
+// or a column's path.
 const isModel = () => route().view === "model";
 const isCrud = () => ["crud", "use"].includes(route().view);
 const isDead = () => route().view === "dead";
 const isInput = () => route().view === "input";
 const isColumn = () => route().view === "column";
 const isMessages = () => route().view === "messages";
-const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isMessages() ? showMessages(route().id) : isInput() ? showInput(route().id) : isColumn() ? showColumn(route().id) : showFlow(route().id);
-const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isMessages() ? renderMessages() : isInput() ? renderInput() : isColumn() ? renderColumn() : renderFlow();
+const isChain = () => route().view === "chain";
+const isHot = () => route().view === "hot";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isMessages() ? showMessages(route().id) : isChain() ? showChain(route().id) : isHot() ? showHot(route().id) : isInput() ? showInput(route().id) : isColumn() ? showColumn(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isMessages() ? renderMessages() : isChain() ? renderChain() : isHot() ? renderHot() : isInput() ? renderInput() : isColumn() ? renderColumn() : renderFlow();
 document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------

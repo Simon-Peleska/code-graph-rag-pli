@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 25;
+const INDEXER_VERSION = 26;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -1667,8 +1667,9 @@ function readPli(root, file, db2) {
     const symbol = file.symbols[scope];
     for (const [i, name] of names.entries()) {
       if (declared.has(`${scope} ${name}`)) continue;
+      const [type, size] = withDefaults(name, null, null);
       file.variables.push({
-        scope, parent: -1, level: 1, name, qualified: name, type: null, size: null, dims: null, storage: "PARAMETER",
+        scope, parent: -1, level: 1, name, qualified: name, type, size, dims: null, storage: "PARAMETER",
         base: null, init: null, like: null, external: false, parameter: i + 1, attributes: "", line: symbol.line,
       });
     }
@@ -1834,6 +1835,37 @@ const TYPES = {
 /** Storage classes as simple attributes, abbreviations included. @type {Record<string, string>} */
 const STORAGE = { STATIC: "STATIC", AUTOMATIC: "AUTOMATIC", AUTO: "AUTOMATIC", CONTROLLED: "CONTROLLED", CTL: "CONTROLLED" };
 
+/** The SQLCA fields as type, size and dims. @type {Record<string, [string, string | null, string | null]>} */
+const SQLCA = {
+  SQLCAID: ["CHAR", "8", null],
+  SQLCABC: ["FIXED BIN", "31", null],
+  SQLCODE: ["FIXED BIN", "31", null],
+  SQLERRM: ["VARCHAR", "70", null],
+  SQLERRP: ["CHAR", "8", null],
+  SQLERRD: ["FIXED BIN", "31", "6"],
+  ...Object.fromEntries([..."0123456789A"].map((c) => [`SQLWARN${c}`, ["CHAR", "1", null]])),
+  SQLSTATE: ["CHAR", "5", null],
+};
+
+/** @type {Record<string, string>} */
+const DEFAULT_SIZES = { "FIXED BIN": "15", "FIXED DEC": "5", "FLOAT BIN": "21", "FLOAT DEC": "6", CHAR: "1", BIT: "1" };
+
+/**
+ * PL/I's defaults for what a declaration leaves out: a name from I to N is
+ * FIXED BIN, any other FLOAT DEC, BIN or DEC alone are FLOAT, and each
+ * has its default precision.
+ * @param {string} name
+ * @param {string | null} type
+ * @param {string | null} size
+ * @returns {[string, string | null]}
+ */
+function withDefaults(name, type, size) {
+  if (type === null) type = /^[I-N]/.test(name) ? "FIXED BIN" : "FLOAT DEC";
+  else if (type === "BIN" || type === "DEC") type = `FLOAT ${type}`;
+  else if (type === "FLOAT") type = "FLOAT DEC";
+  return [type, size ?? DEFAULT_SIZES[type] ?? null];
+}
+
 /**
  * The items of one DECLARE: `DCL 1 A BASED(P), 2 (B, C) CHAR(8), 2 * CHAR(2);`.
  * @param {Node} statement
@@ -1844,6 +1876,8 @@ const STORAGE = { STATIC: "STATIC", AUTOMATIC: "AUTOMATIC", AUTO: "AUTOMATIC", C
 function readDeclaration(statement, file, scope, parameters) {
   /** @type {number[]} positions in file.variables of the open structures */
   const structure = [];
+  /** @type {Set<number>} positions in file.variables whose type is only the default */
+  const defaulted = new Set();
   for (const item of statement.namedChildren) {
     if (item?.type !== "declaration_item") continue;
     const levelNode = item.childForFieldName("level");
@@ -1873,7 +1907,7 @@ function readDeclaration(statement, file, scope, parameters) {
 
     while (structure.length && file.variables[structure[structure.length - 1]].level >= level) structure.pop();
     const parent = structure.length ? structure[structure.length - 1] : -1;
-    if (parent >= 0) file.variables[parent].type ??= "STRUCTURE";
+    if (parent >= 0 && (defaulted.delete(parent) || file.variables[parent].type === null)) Object.assign(file.variables[parent], { type: "STRUCTURE", size: null });
     for (const { name, nodes, text: attributes } of declared) {
       let type = null;
       let size = null;
@@ -1883,6 +1917,7 @@ function readDeclaration(statement, file, scope, parameters) {
       let init = null;
       let like = null;
       let external = false;
+      let unknown = false;
       /** @param {Node} node */
       const inParens = (node) => {
         const spec = node.namedChildren.find((c) => c?.type === "length_spec" || c?.type === "precision");
@@ -1935,15 +1970,26 @@ function readDeclaration(statement, file, scope, parameters) {
             else if (word === "EXTERNAL" || word === "EXT") external = true;
             else if (word === "FILE") type = "FILE";
             else if (word === "LABEL") type = "LABEL";
+            else if (word === "BUILTIN") type = "BUILTIN";
+            else if (word === "CONDITION" || word === "COND") type = "CONDITION";
             break;
           default:
-            if (attribute.type in TYPES) {
-              type = type === "FIXED" && attribute.type === "float_attribute" ? "FLOAT" : TYPES[attribute.type];
+            if (attribute.type === "float_attribute" && (type === "FIXED" || type === "BIN" || type === "DEC")) {
+              type = type === "FIXED" ? "FLOAT" : `FLOAT ${type}`;
               size = inParens(attribute) ?? size;
-            }
+            } else if (attribute.type in TYPES) {
+              type = TYPES[attribute.type];
+              size = inParens(attribute) ?? size;
+            } else unknown = true;
         }
       }
       if (type === "FIXED") type = "FIXED DEC";
+      if (like) type = "STRUCTURE";
+      // An attribute this reader does not know may be the type: no guess then.
+      else if (type !== null || !unknown) {
+        if (type === null) defaulted.add(file.variables.length);
+        [type, size] = withDefaults(name, type, size);
+      }
 
       const parameter = level === 1 ? parameters.indexOf(name) + 1 || null : null;
       file.variables.push({
@@ -2614,6 +2660,7 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  * @property {number | null} scope
  * @property {string} name
  * @property {string} qualified
+ * @property {string | null} storage
  * @property {string | null} like
  * @property {number | null} parent
  * @property {string | null} init
@@ -2634,7 +2681,12 @@ const REF_COLUMNS = "id, file, caller, kind, name, qualifier";
  * @returns {number} accesses resolved
  */
 function resolveAccesses(db, files, failures, fresh) {
-  const variablesOf = db.prepare("SELECT id, scope, parent, name, qualified, like, init, base, parameter FROM variables WHERE file = ? ORDER BY id");
+  const variablesOf = db.prepare("SELECT id, scope, parent, name, qualified, storage, like, init, base, parameter FROM variables WHERE file = ? ORDER BY id");
+  const dropImplicit = db.prepare("DELETE FROM variables WHERE file = ? AND storage = 'IMPLICIT'");
+  const insertImplicit = db.prepare(
+    `INSERT INTO variables (file, scope, parent, level, name, qualified, type, size, dims, storage, external, attributes, line)
+     VALUES (?, ?, NULL, 1, ?, ?, ?, ?, ?, 'IMPLICIT', 0, '', (SELECT line FROM statements WHERE id = ?))`,
+  );
   const includesOf = db.prepare(
     "SELECT r.caller, l.target_file AS target FROM refs r JOIN links l ON l.ref = r.id WHERE r.file = ? AND r.kind = 'include' ORDER BY r.id",
   );
@@ -2643,7 +2695,7 @@ function resolveAccesses(db, files, failures, fresh) {
   const updateDliCall = db.prepare("UPDATE dli_calls SET function = ?, pcb_parameter = ?, segment = ?, path = ? WHERE id = ?");
   const pendingOf = db.prepare("SELECT accesses FROM pending_accesses WHERE file = ?");
   const insert = db.prepare("INSERT INTO accesses (statement, name, mode, value, position, variable, through) VALUES (?, ?, ?, ?, ?, ?, ?)");
-  const accessesOf = db.prepare("SELECT a.id, a.name, s.caller FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ?");
+  const accessesOf = db.prepare("SELECT a.id, a.statement, a.name, s.caller FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ?");
   const clear = db.prepare("UPDATE accesses SET variable = NULL, through = NULL WHERE statement IN (SELECT id FROM statements WHERE file = ?) AND variable IS NOT NULL");
   const update = db.prepare("UPDATE accesses SET variable = ?, through = ? WHERE id = ?");
   const pathOf = db.prepare("SELECT path FROM files WHERE id = ?");
@@ -2684,10 +2736,12 @@ function resolveAccesses(db, files, failures, fresh) {
     const pending = /** @type {{ accesses: string } | undefined} */ (pendingOf.get(file));
     const rows = pending ? /** @type {PendingAccess[]} */ (JSON.parse(pending.accesses)) : null;
     const accesses = rows
-      ? rows.map(([, caller, name]) => ({ id: 0, name, caller }))
+      ? rows.map(([statement, caller, name]) => ({ id: 0, statement, name, caller }))
       : fresh
         ? []
-        : /** @type {{ id: number, name: string, caller: number | null }[]} */ (accessesOf.all(file));
+        : /** @type {{ id: number, statement: number, name: string, caller: number | null }[]} */ (accessesOf.all(file));
+    // Declared again below, as the includes may now declare them.
+    if (!rows && !fresh) dropImplicit.run(file);
     /** @type {(VariableRow | undefined)[]} */
     const variables = [];
     /** @type {(number | null)[]} */
@@ -2743,6 +2797,32 @@ function resolveAccesses(db, files, failures, fresh) {
         }
       };
 
+      /** @type {Set<string> | undefined} the pointers BASED variables name */
+      let pointers;
+      /**
+       * Declares a name used but never declared as PL/I does: in the outermost
+       * procedure, with the defaults for its first letter, or as a POINTER when
+       * a BASED variable names it. SQLCODE and the other SQLCA fields come from
+       * the Db2 precompiler.
+       * @param {string} name @param {number} scope @param {number} statement
+       */
+      const declareImplicitly = (name, scope, statement) => {
+        let top = scope;
+        for (let up = parentOf.get(top); up; up = parentOf.get(top)) top = up;
+        if (!pointers) {
+          pointers = new Set();
+          for (const byName of [...scopes.values()].flat()) {
+            for (const list of byName.values()) for (const v of list) if (v.storage === "BASED" && v.base) pointers.add(v.base);
+          }
+        }
+        const [type, size, dims] = SQLCA[name] ?? (pointers.has(name) ? ["POINTER", null, null] : [...withDefaults(name, null, null), null]);
+        const id = Number(insertImplicit.run(file, top || null, name, name, type, size, dims, statement).lastInsertRowid);
+        /** @type {VariableRow} */
+        const variable = { id, scope: top || null, parent: null, name, qualified: name, storage: "IMPLICIT", like: null, init: null, base: null, parameter: null };
+        declare(tablesOf(top)[0], variable);
+        return variable;
+      };
+
       for (const access of accesses) {
         const parts = access.name.split(".");
         const scope = access.caller ?? 0;
@@ -2755,6 +2835,7 @@ function resolveAccesses(db, files, failures, fresh) {
           variable = find([...structure.like.split("."), ...parts.slice(i)], scope);
           if (variable) through = structure.id;
         }
+        if (!variable && parts.length === 1) variable = declareImplicitly(parts[0], scope, access.statement);
         variables.push(variable);
         throughs.push(through);
       }

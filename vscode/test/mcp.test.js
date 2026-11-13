@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "messages", "decision_table", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "batch_chain", "hotspots", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "messages", "decision_table", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -67,6 +67,48 @@ test("dataset tells who writes and who reads a dataset", () => {
   assert.equal(none.result.content[0].text, "No DD statement names NIX.");
 });
 
+test("hotspots ranks the fields and columns a program uses by how much of the code depends on them", () => {
+  const [hot, none] = serve([tool("hotspots", { path: "SRC/KDP00004" }), tool("hotspots", { path: "JCL/KDJOB01" })], facts);
+  assert.deepEqual(hot.result.content[0].text.split("\n").slice(0, 11), [
+    "Fields, by programs, procedures and uses:",
+    "  KD.SALDO FIXED DEC(11,2) at SRC/KDP00004:3: 1 programs, 1 procedures, 4 uses (2 read, 2 written, 0 passed, 0 tested), transactions KD05",
+    "  KD_NR CHAR(8) at SRC/KDP00004:2: 1 programs, 1 procedures, 3 uses (3 read, 0 written, 0 passed, 0 tested), transactions KD05",
+    "  ANZAHL FIXED BIN(31) at SRC/KDP00004:5: 1 programs, 1 procedures, 2 uses (0 read, 2 written, 0 passed, 0 tested), transactions KD05",
+    "  KD.NAME CHAR(40) at SRC/KDP00004:3: 1 programs, 1 procedures, 1 uses (0 read, 1 written, 0 passed, 0 tested), transactions KD05",
+    "  SALDO_IND FIXED BIN(15) at SRC/KDP00004:4: 1 programs, 1 procedures, 1 uses (0 read, 1 written, 0 passed, 0 tested), transactions KD05",
+    "Columns:",
+    "  KUNDE.KDNR CHAR(8) at INCLUDE/KDT00001:2: 3 programs, 3 procedures, 7 uses (2 read, 0 written, 5 in WHERE), transactions KD05, KD07",
+    "  KUNDE.SALDO DECIMAL(11,2) at INCLUDE/KDT00001:4: 3 programs, 3 procedures, 6 uses (6 read, 2 written, 0 in WHERE), transactions KD05, KD07",
+    "  BUCHUNG.BUCHNR INTEGER at INCLUDE/KDT00001:9: 1 programs, 1 procedures, 4 uses (3 read, 1 written, 0 in WHERE), transactions KD05",
+    "  BUCHUNG.BETRAG DECIMAL(11,2) at INCLUDE/KDT00001:11: 1 programs, 1 procedures, 3 uses (2 read, 1 written, 0 in WHERE), transactions KD05",
+  ]);
+  assert.equal(none.result.content[0].text, "No field or column is used in JCL/KDJOB01.");
+});
+
+test("batch_chain gives the jobs in order and what passes between them, down to the record", () => {
+  const [chain, none] = serve([tool("batch_chain", { path: "JCL/KDJOB06" }), tool("batch_chain", { path: "SRC/KDP00016" })], facts);
+  assert.equal(
+    chain.result.content[0].text,
+    [
+      "Jobs in processing order:",
+      "  KDJOB05 JCL/KDJOB05:1",
+      "  KDJOB06 JCL/KDJOB06:1, after KDJOB05",
+      "  KDJOB07 JCL/KDJOB07:1, after KDJOB06",
+      "PROD.KD.SALDEN:",
+      "  written by KDJOB05 step LISTE running KDP00014: DD LISTE DISP=NEW,CATLG, WRITE, JCL/KDJOB05:3",
+      "    record ZEILE at SRC/KDP00014:4: 1 ZEILE; 2 KDNR CHAR(8); 2 SALDO PIC '(9)9V99-'",
+      "  read by KDJOB06 step MAHN running KDP00017: DD SALDEN DISP=SHR, READ, JCL/KDJOB06:3",
+      "    record SALDEN_SATZ at INCLUDE/KDC00004:3: 1 SALDEN_SATZ; 2 KDNR CHAR(8); 2 SALDO PIC '(9)9V99-'",
+      "PROD.KD.MAHNUNG:",
+      "  written by KDJOB06 step MAHN running KDP00017: DD MAHNUNG generation +1 DISP=NEW,CATLG,DELETE, WRITE, JCL/KDJOB06:4",
+      "    record MAHN_SATZ at SRC/KDP00017:6: 1 MAHN_SATZ; 2 KDNR CHAR(8); 2 MSTUFE FIXED BIN(15)",
+      "  read by KDJOB07 step DRUCK running KDDRUCK: DD AUSZUG generation 0 DISP=SHR, READ, JCL/KDJOB07:3",
+      "    record SATZ at SRC/KDDRUCK:5: 1 SATZ; 2 KDNR CHAR(8); 2 BETRAG FIXED DEC(11,2)",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No job writes a dataset that SRC/KDP00016 uses.");
+});
+
 test("program_files maps a program's files to its datasets", () => {
   const [found] = serve([tool("program_files", { program: "kddruck" })], facts);
   assert.equal(
@@ -74,8 +116,10 @@ test("program_files maps a program's files to its datasets", () => {
     [
       "AUSZUG: OPEN, READ, CLOSE record SATZ",
       "  KDJOB02 step DRUCK: PROD.KD.AUSZUG(0) DISP=SHR, JCL/KDJOB02:3",
+      "  KDJOB07 step DRUCK: PROD.KD.MAHNUNG(0) DISP=SHR, JCL/KDJOB07:3",
       "LISTE: OPEN, PUT, CLOSE",
       "  KDJOB02 step DRUCK: no dataset, JCL/KDJOB02:4",
+      "  KDJOB07 step DRUCK: no dataset, JCL/KDJOB07:4",
       "ARCHIV (DD ARCH): OPEN, WRITE, CLOSE record SATZ",
       "  in no JCL step running the program",
     ].join("\n"),
@@ -320,6 +364,7 @@ test("field shows where a field is set, passed and compared, and under which con
       "sets SALDO by an assignment in KDP00006: SRC/KDP00006:25 when DO I = 1 TO 10 WHILE (RC = 0)",
       "sets AUSGABE.SALDO by an assignment in KDP00013: SRC/KDP00013:32 when BUCHUNG > 0",
       "sets ZEILE.SALDO by an assignment in KDP00014: SRC/KDP00014:18 when DO WHILE (^ENDE); NOT (SQLCODE = 100)",
+      "compares SALDEN_SATZ.SALDO < 0 in KDP00017: SRC/KDP00017:14 when DO WHILE(^ENDE)",
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "No statement sets, passes or compares nix.");

@@ -192,6 +192,24 @@ extension keeps of each workspace folder:
   fields set to two values or more, the rules found in most places first,
   with the conditions of up to 50 places each. A box filters by field,
   value or condition; a click opens the line.
+- **PL/I Graph: Show Batch Chain** shows, for the jobs of the active JCL
+  file, the steps running the active program or, with neither, the whole
+  workspace, the jobs in processing order, each after the jobs whose
+  datasets it reads, and for each dataset a job writes (`DISP=NEW` or
+  `MOD`, or a program writing the DD) who writes it and who reads it, with
+  the PL/I record each program writes or reads through the DD and its
+  fields, so two programs that disagree on a layout show side by side.
+  Datasets nobody writes, such as libraries, are left out. A box filters by
+  dataset, job, program or field; a click opens the line.
+- **PL/I Graph: Show Hotspots** ranks the fields and Db2 columns the active
+  program uses, or with none those of the whole workspace, by how many
+  programs, then procedures use them: the few that most of the logic
+  depends on, to put in the glossary and before the experts first. Each row
+  gives how often the field is read, written, passed to a CALL and tested
+  (in an IF, WHEN, SELECT or DO; for a column, in a WHERE), its type,
+  comment and file, and the IMS transactions reaching it. A field of an
+  include counts once for all programs. A box filters by name, type,
+  comment or transaction; a click opens the declaration.
 - **PL/I Graph: Show Input Rules of the Screen** takes the MFS format or
   message at the cursor (or the active file's) and lists, per field the user
   types, the variable of the program's I/O area it lands in, the conditions
@@ -253,6 +271,11 @@ extension keeps of each workspace folder:
   as the server **PL/I Graph: <folder>**, with nothing to configure. Its
   tools are `find_definition`, `find_references`, `dependencies`,
   `dependents`, `dataset` (which job steps write and read a dataset),
+  `batch_chain` (the jobs in processing order and the datasets they pass
+  on, with the record each program writes or reads and its fields, of a
+  JCL file, a program or all), `hotspots` (the fields and columns used
+  by the most programs and procedures, with their reads, writes, tests and
+  transactions),
   `program_files` (a program's files, records, keys and the datasets they
   are in), `table_columns` (a Db2 table's columns and the SQL statements
   that select, compare, set or insert each, with their host variables),
@@ -422,7 +445,15 @@ can read it while VS Code runs:
   `CONSTANT` for `VALUE` or `PARAMETER` (with its position in `parameter`).
   `comment` holds the comments right above the declaration and after it on
   its line; `symbols.comment` a procedure's, from right above it.
-  A parameter that is never declared still gets a row.
+  A parameter that is never declared still gets a row. What a declaration
+  leaves out gets PL/I's defaults: a name from I to N is `FIXED BIN(15)`,
+  any other `FLOAT DEC(6)`; `BIN` or `DEC` alone are `FLOAT`; `FIXED BIN`
+  is 15 bits, `FIXED DEC` 5 digits, `FLOAT BIN` 21, `CHAR` and `BIT` 1. A
+  `LIKE` variable is a `STRUCTURE` whose fields are the template's, reached
+  through `accesses.through`. A simple name used but declared nowhere gets a
+  row with `storage` `IMPLICIT` in the outermost procedure, `line` its first
+  use, typed by those defaults, as a `POINTER` when a `BASED` names it, or as
+  its SQLCA field (`SQLCODE`, `SQLSTATE`, ...).
 - `steps(id, file, job, name, program, procedure, psb, parm, line)`: every
   JCL `EXEC`, `job` being its job or procedure. `program` is what runs: `PGM=`,
   `MBR=`, or for `DFSRRC00` the program in its `PARM`, where `psb` comes from
@@ -532,7 +563,10 @@ not be read, `VIZ-131` no DDL defines the column and no SQL uses it,
 `VIZ-132` its path could not be drawn, `VIZ-133` the messages and codes
 could not be read, `VIZ-134` none are set or passed on, `VIZ-135` they
 could not be drawn, `VIZ-136` the data flow could not be drawn as a
-decision table.
+decision table, `VIZ-137` the batch chain could not be read, `VIZ-138` no
+job writes a dataset, `VIZ-139` the batch chain could not be drawn, `VIZ-140` the hotspots
+could not be read, `VIZ-141` no field or column is used, `VIZ-142` the
+hotspots could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

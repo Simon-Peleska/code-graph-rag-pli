@@ -116,8 +116,19 @@ name are not followed.
   record structure.
 - That shows the nightly processing order and what passes between programs.
 
-Status: the `dataset` MCP tool gives one dataset's writers and readers; no
-chain across jobs.
+Status: built. The `batch_chain` MCP tool and *Show Batch Chain* (the
+active JCL file's jobs, the steps running the active program, else the
+workspace's) give the jobs in processing order, each after the jobs whose
+datasets it reads, and for each dataset a step writes (`DISP=NEW` or `MOD`,
+or a program writing through the DD) who writes and who reads it, with the
+generation, the DISP, the operations and the PL/I record written or read
+through the DD with its fields, also from an include: KDJOB06 writes
+`PROD.KD.MAHNUNG(+1)` from `MAHN_SATZ`, KDJOB07 reads it into `SATZ` with
+another layout. Jobs that wait on each other come by name. Limits: datasets
+nobody writes (libraries, input from outside) are left out; a DD without a
+program file I/O on it counts by its DISP alone; jobs are ordered by their
+datasets, not by the scheduler. The sample's DDs only read libraries, so
+it has no chain; the workspace query takes 20 ms there.
 
 ## 7. Dead code and dead fields
 
@@ -152,4 +163,19 @@ the number of procedures and transactions involved.
 - These are good candidates for the glossary and for the experts' review
   first.
 
-Status: not started.
+Status: built. The `hotspots` MCP tool and *Show Hotspots* (the active
+program's, else the workspace's) rank the fields and the Db2 columns by the
+programs, then the procedures using them, then their uses. Each row gives:
+- how often the field is read, written, passed to a CALL and tested (read in
+  an IF, WHEN, SELECT or DO), or how often a column is read, written and in
+  a WHERE;
+- its declaration and comment;
+- the IMS transactions reaching it.
+
+A field of an include is one field for all programs, so `KUNDE_SEG.KDTYP`
+("KUNDENTYP: P ODER G") comes first in the fixture, in 3 programs. The page
+filters by name, type, comment or transaction. On the sample the workspace
+takes 640 ms, once per graph version, and the first 200 of each are shown;
+the top fields are those of the generator's shared record `RBM00061`, in 18
+programs. Limits: a field counts as tested only where its statement is an
+IF, WHEN, SELECT or DO, not when an assignment computes a flag from it.

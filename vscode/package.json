@@ -194,6 +194,18 @@
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "pliGraph.batchChain",
+        "title": "Show Batch Chain",
+        "category": "PL/I Graph",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "pliGraph.hotspots",
+        "title": "Show Hotspots",
+        "category": "PL/I Graph",
+        "icon": "$(flame)"
+      },
+      {
         "command": "pliGraph.screenInput",
         "title": "Show Input Rules of the Screen",
         "category": "PL/I Graph",

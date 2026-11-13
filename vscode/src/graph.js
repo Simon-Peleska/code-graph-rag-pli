@@ -211,6 +211,8 @@ export class Graph {
     this.db = db;
     /** @type {{ version: number | undefined, found: DeadCode } | undefined} */
     this.dead = undefined;
+    /** @type {({ version: number | undefined } & ReturnType<Graph["countHotspots"]>) | undefined} */
+    this.hot = undefined;
     this.project = basename(root);
     /** Reads a file of the project; the extension hands in the open editors' text. */
     /** @type {(path: string) => string | undefined} */
@@ -738,6 +740,128 @@ export class Graph {
   }
 
   /**
+   * The datasets jobs pass on to each other: who writes each one (DISP=NEW or
+   * MOD, or a program writing its DD) and who reads it, with the PL/I records
+   * written and read through the DD. Jobs come in processing order, each
+   * after the jobs whose datasets it reads. For a JCL file only the datasets
+   * of its steps, for a program those of the steps running it, else all.
+   * Datasets nobody writes (libraries, input from outside) are left out.
+   * @param {string} path
+   */
+  batchChain(path) {
+    /** @typedef {{ dsn: string, generation: string | null, disp: string | null, dd: string, path: string, line: number, step: string | null, program: string | null, job: string | null, job_line: number | null }} DdRow */
+    const columns = `SELECT d.dsn, d.member AS generation, d.disp, d.name AS dd, f.path, d.line, s.name AS step, s.program, j.name AS job, j.line AS job_line
+       FROM dds d JOIN files f ON f.id = d.file JOIN steps s ON s.id = d.step LEFT JOIN symbols j ON j.id = s.job`;
+    /** @type {DdRow[]} */
+    let dds;
+    if (path) {
+      const file = /** @type {{ id: number, language: string, member: string } | undefined} */ (this.all(`SELECT id, language, member FROM files WHERE path = ?`, path)[0]);
+      if (!file) return { jobs: [], datasets: [], truncated: false };
+      const steps = file.language === "jcl" ? `SELECT id FROM steps WHERE file = ?` : `SELECT id FROM steps WHERE program = ?`;
+      const dsns = /** @type {{ dsn: string }[]} */ (
+        this.all(`SELECT DISTINCT dsn FROM dds WHERE step IN (${steps}) AND dsn IS NOT NULL`, file.language === "jcl" ? file.id : file.member)
+      ).map((d) => d.dsn);
+      dds = /** @type {DdRow[]} */ (this.all(`${columns} WHERE d.dsn IN (SELECT value FROM json_each(?)) ORDER BY f.path, d.line`, JSON.stringify(dsns)));
+    } else {
+      dds = /** @type {DdRow[]} */ (this.all(`${columns} WHERE d.dsn IS NOT NULL /* full scan */ ORDER BY f.path, d.line`));
+    }
+
+    // What each program does through each DD, and the records it uses there.
+    /** @type {Map<string, Map<string, { operations: Set<string>, records: Map<string, { name: string, path: string | null, line: number | null, fields: string[] }> }>>} */
+    const programs = new Map();
+    const throughDds = (/** @type {string} */ program) => {
+      const known = programs.get(program);
+      if (known) return known;
+      const ios = /** @type {{ operation: string, name: string, title: string | null, record: string | null, file: number, line: number }[]} */ (
+        this.all(`SELECT io.operation, io.name, io.title, io.record, io.file, io.line FROM file_io io JOIN files f ON f.id = io.file WHERE f.member = ? ORDER BY io.id`, program)
+      );
+      const titles = new Map(ios.filter((io) => io.title).map((io) => [io.name, /** @type {string} */ (io.title)]));
+      /** @type {Map<string, { operations: Set<string>, records: Map<string, { name: string, path: string | null, line: number | null, fields: string[] }> }>} */
+      const byDd = new Map();
+      for (const io of ios) {
+        if (io.operation === "OPEN" || io.operation === "CLOSE") continue;
+        const dd = titles.get(io.name) ?? io.name;
+        if (!byDd.has(dd)) byDd.set(dd, { operations: new Set(), records: new Map() });
+        const use = /** @type {{ operations: Set<string>, records: Map<string, any> }} */ (byDd.get(dd));
+        use.operations.add(io.operation);
+        if (!io.record || use.records.has(io.record)) continue;
+        // The record as declared, through the access the I/O statement resolved, so a record of an include is found too.
+        const variable = /** @type {{ variable: number } | undefined} */ (
+          this.all(`SELECT a.variable FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ? AND s.line = ? AND a.name = ? AND a.variable IS NOT NULL`, io.file, io.line, io.record)[0]
+        );
+        /** @type {{ id: number, level: number, name: string, attributes: string, path: string, line: number }[]} */
+        const fields = variable
+          ? /** @type {any[]} */ (this.all(`SELECT v.id, v.level, v.name, v.attributes, f.path, v.line FROM variables v JOIN files f ON f.id = v.file WHERE v.id = ?`, variable.variable))
+          : [];
+        for (let i = 0; i < fields.length; i++) {
+          fields.push(.../** @type {any[]} */ (this.all(`SELECT v.id, v.level, v.name, v.attributes, f.path, v.line FROM variables v JOIN files f ON f.id = v.file WHERE v.parent = ?`, fields[i].id)));
+        }
+        fields.sort((a, b) => a.id - b.id);
+        use.records.set(io.record, {
+          name: io.record,
+          path: fields[0]?.path ?? null,
+          line: fields[0]?.line ?? null,
+          fields: fields.map((f) => `${f.level} ${f.name}${f.attributes ? ` ${f.attributes}` : ""}`),
+        });
+      }
+      programs.set(program, byDd);
+      return byDd;
+    };
+
+    /** @typedef {{ job: string, step: string | null, program: string | null, dd: string, generation: string | null, disp: string | null, operations: string[], records: { name: string, path: string | null, line: number | null, fields: string[] }[], path: string, line: number }} Side */
+    /** @type {Map<string, { dsn: string, writers: Side[], readers: Side[] }>} */
+    const datasets = new Map();
+    /** @type {Map<string, { job: string, path: string, line: number, after: Set<string> }>} */
+    const jobs = new Map();
+    for (const d of dds) {
+      const use = d.program ? throughDds(d.program).get(d.dd) : undefined;
+      const operations = [...(use?.operations ?? [])];
+      // A DD without DISP creates its dataset, as in JCL.
+      const writes = /^(NEW|MOD)/.test(d.disp ?? "NEW") || operations.some((o) => ["WRITE", "REWRITE", "PUT", "LOCATE", "DELETE"].includes(o));
+      const reads = operations.some((o) => ["READ", "GET"].includes(o)) || (operations.length === 0 && /^(SHR|OLD)/.test(d.disp ?? ""));
+      if (!writes && !reads) continue;
+      const job = d.job ?? "?";
+      if (!jobs.has(job)) jobs.set(job, { job, path: d.path, line: d.job_line ?? d.line, after: new Set() });
+      if (!datasets.has(d.dsn)) datasets.set(d.dsn, { dsn: d.dsn, writers: [], readers: [] });
+      const dataset = /** @type {{ dsn: string, writers: Side[], readers: Side[] }} */ (datasets.get(d.dsn));
+      /** @type {Side} */
+      const side = { job, step: d.step, program: d.program, dd: d.dd, generation: d.generation, disp: d.disp, operations, records: [...(use?.records.values() ?? [])], path: d.path, line: d.line };
+      if (writes) dataset.writers.push(side);
+      if (reads) dataset.readers.push(side);
+    }
+    const passed = [...datasets.values()].filter((d) => d.writers.length > 0);
+    for (const dataset of passed) {
+      for (const reader of dataset.readers) {
+        for (const writer of dataset.writers) if (writer.job !== reader.job) jobs.get(reader.job)?.after.add(writer.job);
+      }
+    }
+
+    // Processing order: a job comes once every job it reads from has come; the first by name where they wait on each other.
+    const used = new Set(passed.flatMap((d) => [...d.writers, ...d.readers].map((s) => s.job)));
+    const waiting = [...jobs.values()].filter((j) => used.has(j.job)).sort((a, b) => a.job.localeCompare(b.job));
+    /** @type {Map<string, number>} */
+    const position = new Map();
+    while (waiting.length > 0) {
+      let next = waiting.findIndex((j) => [...j.after].every((a) => position.has(a) || !used.has(a)));
+      if (next < 0) next = 0;
+      position.set(waiting[next].job, position.size);
+      waiting.splice(next, 1);
+    }
+    const ordered = [...position.keys()].map((name) => {
+      const job = /** @type {{ job: string, path: string, line: number, after: Set<string> }} */ (jobs.get(name));
+      return { job: job.job, path: job.path, line: job.line, after: [...job.after].sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0)) };
+    });
+    const bySide = (/** @type {Side} */ a, /** @type {Side} */ b) => (position.get(a.job) ?? 0) - (position.get(b.job) ?? 0) || a.path.localeCompare(b.path) || a.line - b.line;
+    for (const dataset of passed) {
+      dataset.writers.sort(bySide);
+      dataset.readers.sort(bySide);
+    }
+    passed.sort((a, b) => bySide(a.writers[0], b.writers[0]) || a.dsn.localeCompare(b.dsn));
+    const limit = 2000;
+    return { jobs: ordered, datasets: passed.slice(0, limit), truncated: passed.length > limit };
+  }
+
+  /**
    * A Db2 table's columns from its CREATE TABLE, and every embedded SQL
    * statement using each column, in the order of the DDL; columns only SQL
    * names come after.
@@ -874,13 +998,29 @@ export class Graph {
    * @param {string} name
    */
   transactionCrud(name) {
+    return this.transactionPrograms(name).map(({ reached, ...transaction }) => ({
+      ...transaction,
+      programs: reached.map(({ member, path }) => ({ member, path })),
+      ...this.dataUse("file", reached.map((f) => f.id), transaction.psb),
+    }));
+  }
+
+  /**
+   * IMS transactions, all or those of a code, PSB or program, with the
+   * program files each runs: the program named like the PSB first, then
+   * every program it calls.
+   * @param {string} name
+   */
+  transactionPrograms(name) {
+    const named = name
+      ? `t.id IN (SELECT id FROM symbols WHERE name = ? UNION SELECT caller FROM refs WHERE name = ? AND kind = 'psb')`
+      : `1 /* full scan */`;
     const transactions = /** @type {{ code: string, psb: string, path: string, line: number }[]} */ (
       this.all(
         `SELECT t.name AS code, r.name AS psb, f.path, t.line
          FROM symbols t JOIN files f ON f.id = t.file JOIN refs r ON r.caller = t.id AND r.kind = 'psb'
-         WHERE t.kind = 'transaction' AND (? = '' OR ? IN (t.name, r.name)) ORDER BY t.name, f.path`,
-        name,
-        name,
+         WHERE t.kind = 'transaction' AND ${named} ORDER BY t.name, f.path`,
+        ...(name ? [name, name] : []),
       )
     );
     // The programs a PSB's program calls; transactions often share a PSB.
@@ -902,12 +1042,7 @@ export class Graph {
         );
         reaches.set(transaction.psb, reach);
       }
-      const reached = reaches.get(transaction.psb) ?? [];
-      return {
-        ...transaction,
-        programs: reached.map(({ member, path }) => ({ member, path })),
-        ...this.dataUse("file", reached.map((f) => f.id), transaction.psb),
-      };
+      return { ...transaction, reached: reaches.get(transaction.psb) ?? [] };
     });
   }
 
@@ -1065,6 +1200,106 @@ export class Graph {
     /** @param {{ path: string }} item */
     const inPath = (item) => !path || item.path === path;
     return { conditions: conditions.filter(inPath), procedures: procedures.filter(inPath), variables: variables.filter(inPath) };
+  }
+
+  /**
+   * The fields and Db2 columns most of the logic depends on: for each, how
+   * often it is read, written, passed to a CALL and tested (read in an IF, WHEN, SELECT or DO;
+   * for a column, in a WHERE), in how many procedures and programs, and
+   * which transactions reach it. A field of an include is one field for all
+   * programs. Ranked by programs, then procedures, then uses. Counted over
+   * the workspace once per graph version; `path` keeps those its file uses.
+   * @param {string} path
+   */
+  hotspots(path) {
+    const version = Graph.version(this.db);
+    if (this.hot?.version !== version) this.hot = { version, ...this.countHotspots() };
+    const { fields, columns, transactions } = /** @type {NonNullable<Graph["hot"]>} */ (this.hot);
+    const limit = 200;
+    /** @type {typeof fields} */
+    let shownFields;
+    /** @type {typeof columns} */
+    let shownColumns;
+    if (path) {
+      const used = new Set(
+        /** @type {{ variable: number }[]} */ (
+          this.all(`SELECT DISTINCT a.variable FROM statements s JOIN accesses a ON a.statement = s.id JOIN files f ON f.id = s.file WHERE f.path = ? AND a.variable IS NOT NULL`, path)
+        ).map((a) => a.variable),
+      );
+      const usedColumns = new Set(
+        /** @type {{ key: string }[]} */ (
+          this.all(`SELECT DISTINCT c.table_name || '.' || c.column_name AS key FROM sql_columns c JOIN files f ON f.id = c.file WHERE f.path = ? AND c.column_name IS NOT NULL`, path)
+        ).map((c) => c.key),
+      );
+      shownFields = fields.filter((f) => used.has(f.id));
+      shownColumns = columns.filter((c) => usedColumns.has(`${c.table}.${c.column}`));
+    } else {
+      shownFields = fields;
+      shownColumns = columns;
+    }
+    const truncated = shownFields.length > limit || shownColumns.length > limit;
+    shownFields = shownFields.slice(0, limit);
+    shownColumns = shownColumns.slice(0, limit);
+
+    const reaching = (/** @type {number[]} */ files) => [...new Set(files.flatMap((file) => transactions.get(file) ?? []))].sort();
+    return {
+      fields: shownFields.map((f) => {
+        const v = /** @type {{ qualified: string, type: string | null, size: string | null, comment: string | null, path: string, line: number }} */ (
+          this.all(`SELECT v.qualified, v.type, v.size, v.comment, f.path, v.line FROM variables v JOIN files f ON f.id = v.file WHERE v.id = ?`, f.id)[0]
+        );
+        const files = transactions.size
+          ? /** @type {{ file: number }[]} */ (this.all(`SELECT DISTINCT s.file FROM accesses a JOIN statements s ON s.id = a.statement WHERE a.variable = ?`, f.id)).map((s) => s.file)
+          : [];
+        return { ...v, uses: f.uses, reads: f.reads, writes: f.writes, passes: f.passes, tests: f.tests, procedures: f.procedures, programs: f.programs, transactions: reaching(files) };
+      }),
+      columns: shownColumns.map((c) => {
+        const ddl = /** @type {{ type: string, path: string, line: number } | undefined} */ (
+          this.all(`SELECT c.type, f.path, c.line FROM columns c JOIN files f ON f.id = c.file WHERE c.table_name = ? AND c.name = ?`, c.table, c.column)[0]
+        );
+        const files = transactions.size
+          ? /** @type {{ file: number }[]} */ (this.all(`SELECT DISTINCT file FROM sql_columns WHERE table_name = ? AND column_name = ?`, c.table, c.column)).map((s) => s.file)
+          : [];
+        return { ...c, type: ddl?.type ?? null, path: ddl?.path ?? null, line: ddl?.line ?? null, transactions: reaching(files) };
+      }),
+      truncated,
+    };
+  }
+
+  /**
+   * The workspace's counts for `hotspots`, ranked, and the transactions
+   * reaching each program file.
+   */
+  countHotspots() {
+    const fields = /** @type {{ id: number, uses: number, reads: number, writes: number, passes: number, tests: number, procedures: number, programs: number }[]} */ (
+      this.all(
+        `SELECT a.variable AS id, count(*) AS uses, sum(a.mode = 'read') AS reads, sum(a.mode = 'write') AS writes, sum(a.mode = 'arg') AS passes,
+           sum(a.mode = 'read' AND s.kind IN ('if', 'when', 'select', 'do')) AS tests,
+           count(DISTINCT s.caller) AS procedures, count(DISTINCT s.file) AS programs
+         FROM accesses a JOIN statements s ON s.id = a.statement WHERE a.variable IS NOT NULL /* full scan */
+         GROUP BY a.variable ORDER BY programs DESC, procedures DESC, uses DESC, a.variable`,
+      )
+    );
+    const columns = /** @type {{ table: string, column: string, uses: number, reads: number, writes: number, tests: number, procedures: number, programs: number }[]} */ (
+      this.all(
+        `SELECT table_name AS "table", column_name AS "column", count(DISTINCT file || ':' || line || ':' || operation) AS uses,
+           count(DISTINCT CASE WHEN usage IN ('select', 'read', 'order') THEN file || ':' || line END) AS reads,
+           count(DISTINCT CASE WHEN usage IN ('set', 'insert') THEN file || ':' || line END) AS writes,
+           count(DISTINCT CASE WHEN usage = 'where' THEN file || ':' || line END) AS tests,
+           count(DISTINCT caller) AS procedures, count(DISTINCT file) AS programs
+         FROM sql_columns WHERE table_name IS NOT NULL AND column_name IS NOT NULL /* full scan */
+         GROUP BY table_name, column_name ORDER BY programs DESC, procedures DESC, uses DESC, table_name, column_name`,
+      )
+    );
+    // The program files each transaction runs: the program named like its PSB and every program it calls.
+    /** @type {Map<number, string[]>} */
+    const transactions = new Map();
+    for (const t of this.transactionPrograms("")) {
+      for (const file of t.reached) {
+        if (!transactions.has(file.id)) transactions.set(file.id, []);
+        transactions.get(file.id)?.push(t.code);
+      }
+    }
+    return { fields, columns, transactions };
   }
 
   /** @returns {DeadCode} */

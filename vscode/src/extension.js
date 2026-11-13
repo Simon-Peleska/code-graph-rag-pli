@@ -178,6 +178,8 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.dataUse", (/** @type {string | undefined} */ id) => showDataUse(context, id)),
     vscode.commands.registerCommand("pliGraph.deadCode", () => showDeadCode(context)),
     vscode.commands.registerCommand("pliGraph.messages", () => showMessages(context)),
+    vscode.commands.registerCommand("pliGraph.batchChain", () => showBatchChain(context)),
+    vscode.commands.registerCommand("pliGraph.hotspots", () => showHotspots(context)),
     vscode.commands.registerCommand("pliGraph.screenInput", () => showScreenInput(context)),
     vscode.commands.registerCommand("pliGraph.columnPath", () => showColumnPath(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
@@ -1192,6 +1194,32 @@ function showDeadCode(context) {
   const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
   log.info(`dead code of ${path || "the workspace"}`);
   openPage(context, shown.workspace, "flow", `v=dead&id=${encodeURIComponent(path)}`, `Dead Code: ${path ? path.split("/").pop() : "all"}`, true);
+}
+
+/**
+ * The datasets the jobs of the active JCL file, or the steps running the
+ * active program, pass on, else those of the workspace, in job order.
+ * @param {vscode.ExtensionContext} context
+ */
+function showBatchChain(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
+  log.info(`batch chain of ${path || "the workspace"}`);
+  openPage(context, shown.workspace, "flow", `v=chain&id=${encodeURIComponent(path)}`, `Batch Chain: ${path ? path.split("/").pop() : "all"}`, true);
+}
+
+/**
+ * The fields and columns most of the active program's logic depends on,
+ * else the workspace's, ranked by the programs and procedures using them.
+ * @param {vscode.ExtensionContext} context
+ */
+function showHotspots(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
+  log.info(`hotspots of ${path || "the workspace"}`);
+  openPage(context, shown.workspace, "flow", `v=hot&id=${encodeURIComponent(path)}`, `Hotspots: ${path ? path.split("/").pop() : "all"}`, true);
 }
 
 /**

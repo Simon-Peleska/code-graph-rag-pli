@@ -32,7 +32,7 @@ accesses(id, statement → statements, name: the field as written, KD.TYP or TYP
 comparisons(id, statement → statements, left, operator: =|^=|<>|<|>|<=|>=|^<|^>, right): from conditions, and a SELECT's subject = each WHEN value
 literals(id, statement → statements, text: a string literal of the statement, without quotes, trailing blanks trimmed)
 dli_calls(id, file → files, caller → symbols, entry: PLITDLI|CEETDLI|AIBTDLI, function: GU|GN|GNP|GHU|ISRT|REPL|DLET|CHKP|..., pcb: the PCB (AIB) passed, pcb_parameter: the main procedure's parameter the PCB comes from, its position in the PSB counting the I/O PCB, io_area, segment: the last SSA's, path: all SSA segments KUNDE/KONTO, ? for one not known, arguments, line)
-variables(id, file → files, scope → symbols: the procedure, NULL in an include outside one, parent → variables: the enclosing structure, level, name, qualified: KUNDE.ADRESSE.ORT, type: CHAR|VARCHAR|BIT|PIC|FIXED DEC|FIXED BIN|FLOAT|POINTER|ENTRY|FILE|STRUCTURE|..., size: 8|11,2|99999 for PIC, dims: 12|0:9,3, storage: STATIC|AUTOMATIC|BASED|DEFINED|CONTROLLED|CONSTANT for VALUE|PARAMETER, base: the BASED pointer or DEFINED target, init: the INIT or VALUE text, like, external: 0|1, parameter: position from 1, attributes: the declaration's attribute text, comment: the comments right above it or after it on its line, line); a filler is named *`;
+variables(id, file → files, scope → symbols: the procedure, NULL in an include outside one, parent → variables: the enclosing structure, level, name, qualified: KUNDE.ADRESSE.ORT, type: CHAR|VARCHAR|BIT|PIC|FIXED DEC|FIXED BIN|FLOAT DEC|FLOAT BIN|POINTER|ENTRY|FILE|BUILTIN|STRUCTURE (also for LIKE)|..., PL/I defaults filled in, size: 8|11,2|99999 for PIC, defaults filled in (FIXED BIN 15), dims: 12|0:9,3, storage: STATIC|AUTOMATIC|BASED|DEFINED|CONTROLLED|CONSTANT for VALUE|PARAMETER|IMPLICIT for a name used but declared nowhere (line: its first use), base: the BASED pointer or DEFINED target, init: the INIT or VALUE text, like, external: 0|1, parameter: position from 1, attributes: the declaration's attribute text, comment: the comments right above it or after it on its line, line); a filler is named *`;
 
 const TOOLS = [
   {
@@ -62,6 +62,18 @@ const TOOLS = [
     description:
       "Who writes and who reads a z/OS dataset: every JCL DD statement naming it, with its DISP, job, step and the program the step runs. % in the name matches anything, so PROD.KD.% finds a whole group.",
     inputSchema: { type: "object", properties: { dsn: { type: "string" } }, required: ["dsn"] },
+  },
+  {
+    name: "batch_chain",
+    description:
+      "The batch chain: which job writes each dataset (DISP=NEW or MOD, or a program writing its DD) and which jobs read it, with the PL/I record each program writes or reads through the DD and its fields, and the jobs in processing order, each after the jobs whose datasets it reads. For a JCL file the datasets of its steps, for a program those of the steps running it, empty for all. Datasets no step writes (libraries, input from outside) are left out.",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "a JCL or program file's path in the workspace; empty for all" } } },
+  },
+  {
+    name: "hotspots",
+    description:
+      "The fields and Db2 columns most of the logic depends on, ranked by how many programs, then procedures use them: for each, how often it is read, written, passed to a CALL and tested (read in an IF, WHEN, SELECT or DO; for a column, in a WHERE), its declaration and comment, and the IMS transactions reaching it. A field of an include is one field for all programs. Candidates for the glossary and the experts' review. For a file, the ones it uses; empty for the workspace.",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "a program file's path in the workspace; empty for all" } } },
   },
   {
     name: "program_files",
@@ -441,6 +453,44 @@ function call(name, args) {
       ...section("Variables nothing reads", dead.variables.map((v) => `${v.path}:${v.line} ${v.name}${v.procedure ? ` in ${v.procedure}` : ""}${v.written ? ", written but never read" : ", never used"}`)),
     ];
     return text.length ? text.join("\n") : `Found no dead code${args.path ? ` in ${args.path}` : ""}.`;
+  }
+  if (name === "batch_chain") {
+    const chain = open().batchChain(args.path ?? "");
+    if (chain.datasets.length === 0) return `No job writes a dataset${args.path ? ` that ${args.path} uses` : ""}.`;
+    /** @param {string} role @param {ReturnType<import("./graph.js").Graph["batchChain"]>["datasets"][number]["writers"][number]} s */
+    const side = (role, s) => [
+      `  ${role} ${s.job} step ${s.step ?? "?"}${s.program ? ` running ${s.program}` : ""}: DD ${s.dd}${s.generation ? ` generation ${s.generation}` : ""} DISP=${s.disp ?? "NEW"}${s.operations.length ? `, ${s.operations.join(", ")}` : ""}, ${s.path}:${s.line}`,
+      ...s.records.map((r) => r.path ? `    record ${r.name} at ${r.path}:${r.line}: ${r.fields.join("; ")}` : `    record ${r.name}, declaration not found`),
+    ];
+    return [
+      "Jobs in processing order:",
+      ...chain.jobs.map((j) => `  ${j.job} ${j.path}:${j.line}${j.after.length ? `, after ${j.after.join(", ")}` : ""}`),
+      ...chain.datasets.flatMap((d) => [
+        `${d.dsn}:`,
+        ...d.writers.flatMap((s) => side("written by", s)),
+        ...(d.readers.length ? d.readers.flatMap((s) => side("read by", s)) : ["  read by no job"]),
+      ]),
+      ...(chain.truncated ? ["Only the first 2000 datasets are shown."] : []),
+    ].join("\n");
+  }
+  if (name === "hotspots") {
+    const hot = open().hotspots(args.path ?? "");
+    if (hot.fields.length === 0 && hot.columns.length === 0) return `No field or column is used${args.path ? ` in ${args.path}` : ""}.`;
+    /** @param {string[]} transactions */
+    const reached = (transactions) => (transactions.length ? `, transactions ${transactions.join(", ")}` : "");
+    return [
+      "Fields, by programs, procedures and uses:",
+      ...hot.fields.map(
+        (f) =>
+          `  ${f.qualified}${f.type ? ` ${f.type}${f.size ? `(${f.size})` : ""}` : ""} at ${f.path}:${f.line}: ${f.programs} programs, ${f.procedures} procedures, ${f.uses} uses (${f.reads} read, ${f.writes} written, ${f.passes} passed, ${f.tests} tested)${reached(f.transactions)}${f.comment ? ` -- ${f.comment}` : ""}`,
+      ),
+      "Columns:",
+      ...hot.columns.map(
+        (c) =>
+          `  ${c.table}.${c.column}${c.type ? ` ${c.type}` : ""}${c.path ? ` at ${c.path}:${c.line}` : ""}: ${c.programs} programs, ${c.procedures} procedures, ${c.uses} uses (${c.reads} read, ${c.writes} written, ${c.tests} in WHERE)${reached(c.transactions)}`,
+      ),
+      ...(hot.truncated ? ["Only the first 200 fields and 200 columns are shown."] : []),
+    ].join("\n");
   }
   if (name === "messages") {
     const { rules, truncated } = open().messages(args.path ?? "");

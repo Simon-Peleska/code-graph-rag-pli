@@ -238,6 +238,13 @@ exports.run = async () => {
   await vscode.commands.executeCommand("pliGraph.messages");
   await webviewTab("Messages: all");
   console.log("Show Messages and Codes opens");
+  // The sample's DDs only read libraries, so the page says no job writes a dataset.
+  await vscode.commands.executeCommand("pliGraph.batchChain");
+  await webviewTab("Batch Chain: all");
+  console.log("Show Batch Chain opens");
+  await vscode.commands.executeCommand("pliGraph.hotspots");
+  await webviewTab("Hotspots: all");
+  console.log("Show Hotspots opens");
 
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");
