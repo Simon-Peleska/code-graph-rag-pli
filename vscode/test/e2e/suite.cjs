@@ -125,6 +125,23 @@ exports.run = async () => {
   assert.equal(typed.selection.active.character, 4);
   await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
   await vscode.window.showTextDocument(document);
+
+  // Format Document indents PL/I by its blocks, writes its words the
+  // configured way and lines up JCL's fields.
+  const formatSettings = vscode.workspace.getConfiguration("pliGraph.format");
+  for (const [language, content, expected, abbreviations] of [
+    ["pli", " p: procedure;\n x = \"a\";\n  declare key\n\n char(8);\n end;\n", " P: PROC;\n    X = 'a';\n    DCL KEY CHAR(8);\n END P;\n", "short"],
+    ["pli", " P: PROC;\n DCL KEY CHAR(8);\n END P;\n", " P: PROCEDURE;\n    DECLARE KEY CHARACTER(8);\n END P;\n", "long"],
+    ["jcl", "//s1 exec pgm=x\n", "//S1       EXEC PGM=X\n", "short"],
+  ]) {
+    await formatSettings.update("abbreviations", abbreviations, vscode.ConfigurationTarget.Global);
+    const formatting = await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language, content }));
+    await vscode.commands.executeCommand("editor.action.formatDocument");
+    assert.equal(formatting.document.getText(), expected);
+    await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
+  }
+  await formatSettings.update("abbreviations", undefined, vscode.ConfigurationTarget.Global);
+  await vscode.window.showTextDocument(document);
   console.log("PL/I rulers and tab stops work");
 
   // `select id ... from prod.customer`: id is a column of ABTCUST1's table.

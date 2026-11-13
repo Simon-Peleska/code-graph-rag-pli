@@ -267,6 +267,27 @@
           "default": true,
           "scope": "resource",
           "markdownDescription": "Index files named like z/OS members (`ABMAIN01`, no extension). The member name's third character picks the language: `J` is JCL, `F` is MFS, `T` is Db2, anything else is PL/I."
+        },
+        "pliGraph.format.keywordCase": {
+          "type": "string",
+          "enum": ["upper", "lower", "keep"],
+          "default": "upper",
+          "scope": "resource",
+          "markdownDescription": "Case of keywords when formatting: PL/I's (`DCL`, `IF`), SQL's, assembler's and the letters in numbers and strings (`'1'B`, `1E5`). JCL is always upper case."
+        },
+        "pliGraph.format.identifierCase": {
+          "type": "string",
+          "enum": ["upper", "lower", "keep"],
+          "default": "upper",
+          "scope": "resource",
+          "markdownDescription": "Case of PL/I names and SQL host variables when formatting."
+        },
+        "pliGraph.format.abbreviations": {
+          "type": "string",
+          "enum": ["short", "long", "keep"],
+          "default": "short",
+          "scope": "resource",
+          "markdownDescription": "PL/I keywords when formatting: the Language Reference's abbreviations (`DCL`, `PROC`, `CHAR`, `BIN`, `INIT`, `GOTO`, `CONV`), or written out (`DECLARE`, `PROCEDURE`, ..., `GO TO`, `CONVERSION`)."
         }
       }
     },

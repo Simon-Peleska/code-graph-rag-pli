@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import { Graph } from "./graph.js";
 import { createHighlighter, highlight, TOKEN_MODIFIERS, TOKEN_TYPES } from "./highlight.js";
 import { mfsFormats } from "./mfs.js";
+import { format } from "./format.js";
 import { describe } from "./progress.js";
 import { PLI_BUILTINS, insertBlanks } from "./source.js";
 import { Symbols } from "./symbols.js";
@@ -88,6 +89,11 @@ export function activate(context) {
     workspaces.set(folder.uri.toString(), { folder, graphFile: join(storage, `${name}.sqlite`), changes: new Set(), running: 0 });
   }
 
+  const grammars = createHighlighter(join(context.extensionPath, "out")).catch((error) => {
+    log.error(`[PLG014E] Loading the grammars for highlighting and formatting failed; only the TextMate colors remain.`, error);
+    return undefined;
+  });
+
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
   status.command = "pliGraph.menu";
   showStatus = () => {
@@ -154,8 +160,12 @@ export function activate(context) {
     ),
     vscode.languages.registerDocumentSemanticTokensProvider(
       LANGUAGES.map((language) => ({ language })),
-      highlighting(context),
+      highlighting(grammars),
       SEMANTIC_LEGEND,
+    ),
+    vscode.languages.registerDocumentFormattingEditProvider(
+      LANGUAGES.map((language) => ({ language })),
+      { provideDocumentFormattingEdits: (document, options) => formatDocument(grammars, document, options) },
     ),
     treeView("pliGraphDependencies", "dependencies"),
     treeView("pliGraphDependents", "dependents"),
@@ -217,17 +227,13 @@ const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIF
 
 /**
  * Colors documents from the grammars' highlights queries.
- * @param {vscode.ExtensionContext} context
+ * @param {Promise<import("./highlight.js").Highlighter | undefined>} grammars
  * @returns {vscode.DocumentSemanticTokensProvider}
  */
-function highlighting(context) {
-  const ready = createHighlighter(join(context.extensionPath, "out")).catch((error) => {
-    log.error(`[PLG014E] Loading the grammars for highlighting failed; only the TextMate colors remain.`, error);
-    return undefined;
-  });
+function highlighting(grammars) {
   return {
     async provideDocumentSemanticTokens(document) {
-      const highlighter = await ready;
+      const highlighter = await grammars;
       if (!highlighter) return undefined;
       try {
         const builder = new vscode.SemanticTokensBuilder(SEMANTIC_LEGEND);
@@ -242,6 +248,53 @@ function highlighting(context) {
       }
     },
   };
+}
+
+// One edit from the first changed line to the last, so markers and the cursor around it stay put.
+/**
+ * @param {Promise<import("./highlight.js").Highlighter | undefined>} grammars
+ * @param {vscode.TextDocument} document
+ * @param {vscode.FormattingOptions} options
+ * @returns {Promise<vscode.TextEdit[]>}
+ */
+async function formatDocument(grammars, document, options) {
+  const highlighter = await grammars;
+  const fail = (/** @type {string} */ message, /** @type {unknown} */ error) => {
+    log.error(`${message} (${document.uri.fsPath})`, error ?? "");
+    void vscode.window.showErrorMessage(message);
+    return [];
+  };
+  if (!highlighter) return fail("[PLG042E] The grammars did not load, so nothing can be formatted.");
+  const started = performance.now();
+  let formatted;
+  try {
+    const language = /** @type {import("./source.js").Language} */ (document.languageId);
+    const settings = vscode.workspace.getConfiguration("pliGraph.format", document.uri);
+    formatted = format(language, document.getText(), {
+      indent: options.tabSize,
+      pli: highlighter.pli.parser,
+      keywordCase: settings.get("keywordCase"),
+      identifierCase: settings.get("identifierCase"),
+      abbreviations: settings.get("abbreviations"),
+    });
+  } catch (error) {
+    return fail("[PLG040E] Formatting failed, so nothing was changed.", error);
+  }
+  if ("error" in formatted) return fail(formatted.error);
+  const lines = formatted.lines;
+  const count = document.lineCount;
+  let first = 0;
+  while (first < Math.min(count, lines.length) && lines[first] === document.lineAt(first).text) first++;
+  let last = 0;
+  while (last < Math.min(count, lines.length) - first && lines[lines.length - 1 - last] === document.lineAt(count - 1 - last).text) last++;
+  log.info(`[format] ${document.uri.fsPath}: lines ${first + 1}-${count - last} formatted in ${Math.round(performance.now() - started)} ms`);
+  if (first === count && first === lines.length) return [];
+  const eol = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+  const middle = lines.slice(first, lines.length - last);
+  if (last > 0) return [vscode.TextEdit.replace(new vscode.Range(first, 0, count - last, 0), middle.map((line) => line + eol).join(""))];
+  const end = document.lineAt(count - 1).range.end;
+  if (middle.length === 0 && first > 0) return [vscode.TextEdit.delete(new vscode.Range(document.lineAt(first - 1).range.end, end))];
+  return [vscode.TextEdit.replace(new vscode.Range(first, 0, end.line, end.character), middle.join(eol))];
 }
 
 // Electron ships node:sqlite only in recent VS Code versions, so it is loaded

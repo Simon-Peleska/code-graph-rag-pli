@@ -23,6 +23,50 @@ extension keeps of each workspace folder:
   (`*****/`, `----*/`, `====*/`, blanks), then each run of blanks from the
   right, keeping one blank between words and every blank in a string.
   Indenting selected lines moves them by 3.
+- **Format Document** (Shift+Alt+F) for all four languages, in the style
+  of IBM's language references. Statements are laid out anew from their
+  tokens, and the words in them are normalized too; what a string holds
+  never changes. Sequence numbers (columns 73-80) are dropped, and in PL/I
+  the carriage control in column 1. No blank lines at the top or bottom,
+  one line break at the end.
+  - PL/I words: keywords in `pliGraph.format.keywordCase`, names in
+    `pliGraph.format.identifierCase` (both upper case by default).
+    `pliGraph.format.abbreviations` writes keywords the Language Reference's
+    short way (`DCL`, `PROC`, `CHAR`, `BIN`, `DEC`, `INIT`, `VAR`, `PTR`,
+    `GOTO`, `OTHER`, conditions as `CONV`, `NOFOFL`, ...; the default) or
+    long (`DECLARE`, ..., `GO TO`, `CONVERSION`). Strings get single quotes
+    (`"it's"` becomes `'it''s'`), their suffix and numbers' letters the
+    keyword case (`'1'B`, `1E5`). NOT and OR are written `¬`/`^` and `|`/`!`
+    as the file mostly does (IBM's `¬` and `|` if even). A comment gets a
+    blank after `/*` and before `*/`, a one-line one just one; boxes and
+    rules (`/****`, `/*----`) stay as they are. A procedure's or package's
+    bare END gets its name (`END P;`). No blank line at the start of a
+    block or before END, one before a nested procedure (before its comment,
+    if it has one), at most one elsewhere.
+  - PL/I layout: code from column 2, each statement one indent (the tab size, 3)
+    in from the DO, BEGIN, SELECT, WHEN, OTHERWISE, PROC, ON or IF it is in,
+    END and ELSE level with it. One blank between tokens (`CALL X(KEY, RC);`,
+    `IF A > 0 & B ^= 'X' THEN`), a statement on one line when it fits, else
+    wrapped after a comma or before an operator, aligned after its
+    parenthesis. A short statement stays after its IF, ELSE, WHEN or ON, a
+    DO or BEGIN too. A structure's members go one per line, level 2 under
+    the level-1 name and 2 further in per level. EXEC SQL goes a clause per
+    line (INTO, FROM, WHERE, ...) under the first, AND and OR 2 further in.
+    Comments stay on their line. A statement with a string running over a
+    line end keeps its lines, and a file the parser can't read is not
+    formatted (`PLG039W`).
+  - JCL: upper case but for strings and comments, the operation in column 12, its operands one blank after it. A
+    statement goes on one line when it fits, else a parameter per line from
+    column 16. Comment statements, in-stream data, IF/THEN/ELSE and a string
+    continued on the next line are left alone.
+  - HLASM, MFS, PSB and DBD gens: in the keyword case but for strings and
+    remarks, the operation in column 10, operands in 16, remarks in 40.
+    Comment and continuation lines are left alone.
+  - Db2 DDL and EXEC SQL: words in the keyword case, host variables
+    (`:KDNR`) in the name case, strings and `"delimited"` names as they are.
+    A statement in column 1, its clauses (IN, USING, FROM, WHERE,
+    ...) on lines of their own 2 in; a CREATE TABLE's columns one per line,
+    names, types and the rest lined up.
 - **Go to Definition** (F12, Ctrl+click) on a called procedure or an
   `%INCLUDE` member, a job's programs and procedures, a screen's formats and
   messages and the tables a program or view uses. It uses the calls the
@@ -206,7 +250,10 @@ and reads every file again. Messages and errors go to the **PL/I Graph**
 output.
 
 `pliGraph.extensionlessMembers` (default on) indexes files named like
-`ABMAIN01`, by their third character as above.
+`ABMAIN01`, by their third character as above. `pliGraph.format.keywordCase`,
+`pliGraph.format.identifierCase` (`upper`, `lower`, `keep`) and
+`pliGraph.format.abbreviations` (`short`, `long`, `keep`) set how Format
+Document writes words, as above.
 
 Needs VS Code 1.101 or newer, whose Node has `node:sqlite`.
 
@@ -375,6 +422,16 @@ can read it while VS Code runs:
   no file is open.
 - `PLG038E` Show Data Flow of the Variable: the cursor is on no variable the
   graph knows, or no PL/I file is open.
+- `PLG039W` Format Document: the PL/I parser can't read the line named, so
+  nothing is changed.
+- `PLG040E` Format Document failed with an exception; the log has it.
+- `PLG041E` Format Document would have changed what the code means, so
+  nothing is changed. A bug in the formatter. For PL/I the result is parsed
+  again and must have the same words as the source but for blanks, case,
+  quotes, abbreviations, `¬`/`^`, `|`/`!` and END's names; for the other
+  languages the same text but for blanks and case.
+- `PLG042E` Format Document: the grammars did not load (see `PLG014E`).
+- `PLG043E` Format Document: the PL/I parser gave no tree.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
