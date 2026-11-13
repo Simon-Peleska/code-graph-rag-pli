@@ -150,6 +150,12 @@ test("a variable's data flow shows where it, its structure or a field of it is s
   ]);
 });
 
+test("a data flow has no lane for an include whose code does nothing to the variable", () => {
+  const flow = /** @type {NonNullable<ReturnType<Graph["pageDataFlow"]>>} */ (graph.pageDataFlow("COPY/FLOWDCL:RC:1"));
+  assert.deepEqual(flow.lanes.map((l) => l.name), ["FLOWMAIN"]);
+  assert.deepEqual(outline(flow).slice(0, 2), ["FLOWMAIN: if IF RC > 0 {compare}", "  [true]"]);
+});
+
 test("a variable's data flow marks where it is compared and what that leads to, and a name that is no variable has none", () => {
   const flow = /** @type {NonNullable<ReturnType<Graph["pageDataFlow"]>>} */ (graph.pageDataFlow(/** @type {string} */ (graph.variableAt("SRC/KDSET", 19, "X"))));
   assert.deepEqual(outline(flow), [

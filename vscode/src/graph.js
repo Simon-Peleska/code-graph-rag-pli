@@ -2463,7 +2463,6 @@ export class Graph {
      * @returns {FlowStep[]}
      */
     const stepsOf = (owner, at, level, stack) => {
-      // By file first: statements have no index on caller.
       const [where, ...keys] = "caller" in owner ? ["file = (SELECT file FROM symbols WHERE id = ?) AND {}.caller = ?", owner.caller, owner.caller] : ["file = ? AND {}.caller IS NULL", owner.file];
       const rows = /** @type {FlowRow[]} */ (
         this.all(`SELECT s.id, s.parent, s.kind, s.branch, s.detail, s.line, s.end_line, f.path FROM statements s JOIN files f ON f.id = s.file WHERE s.${where.replace("{}", "s")} ORDER BY s.line, s.id`, ...keys)
@@ -2552,7 +2551,25 @@ export class Graph {
       const at = lane(key, () => ("caller" in owner ? procedureLane(owner.caller) : includeLane(owner.file)));
       return stepsOf(owner, at, 0, new Set([key]));
     });
-    return { lanes, tops, truncated };
+    if (!keep) return { lanes, tops, truncated };
+
+    // A data flow drops what does nothing to the variable, which can leave
+    // an include's or a procedure's lane without a step.
+    /** @type {FlowStep[]} */
+    const all = [];
+    /** @param {FlowStep[]} steps */
+    const collect = (steps) => {
+      for (const step of steps) {
+        all.push(step);
+        for (const branch of step.branches ?? []) collect(branch.steps);
+        collect(step.steps ?? []);
+      }
+    };
+    for (const steps of tops) collect(steps);
+    const used = [...new Set(all.map((step) => step.lane))].sort((a, b) => a - b);
+    const moved = new Map(used.map((old, now) => [old, now]));
+    for (const step of all) step.lane = moved.get(step.lane) ?? 0;
+    return { lanes: used.map((old) => lanes[old]), tops: tops.filter((steps) => steps.length), truncated };
   }
 
   /**

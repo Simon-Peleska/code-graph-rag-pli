@@ -578,6 +578,7 @@ CREATE TABLE IF NOT EXISTS statements (
 );
 CREATE INDEX IF NOT EXISTS statements_file ON statements(file);
 CREATE INDEX IF NOT EXISTS statements_parent ON statements(parent);
+CREATE INDEX IF NOT EXISTS statements_caller ON statements(file, caller);
 -- The fields a statement reads and writes, by name as written.
 CREATE TABLE IF NOT EXISTS accesses (
   id INTEGER PRIMARY KEY,
