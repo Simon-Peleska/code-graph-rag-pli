@@ -118,6 +118,14 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 .rules .in { cursor: pointer; white-space: nowrap; }
 .rules .outcome + .outcome, .rules .when + .when { margin-top: 6px; }
 .rules .when { white-space: pre-wrap; }
+.rules .focused { outline: 2px solid var(--vscode-focusBorder, var(--accent)); outline-offset: 1px; }
+.crud h3 { margin: 14px 0 6px; font-size: 1em; cursor: pointer; }
+.crud h3:hover { color: var(--accent); }
+.crud section:first-child h3 { margin-top: 0; }
+.crud pre + pre { margin-top: 4px; }
+.crud table { table-layout: fixed; }
+.crud th:first-child { width: 70px; }
+.crud th:nth-child(2) { width: 18%; }
 .rules td:first-child { width: 30%; }
 #flow .lane-odd { fill: var(--panel); }
 #flow .lane-line { stroke: var(--line); }
@@ -224,7 +232,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
-const flowPage = ["flow", "data", "model"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
+const flowPage = ["flow", "data", "model", "crud", "use", "dead"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -1477,10 +1485,155 @@ async function renderData() {
   }
 }
 
-// The diagram tab shows a procedure's flow, a variable's data flow, or a DDL file's data model.
+// ---- transactions and data use ------------------------------------------
+// What IMS transactions (v=crud) or a procedure (v=use) do to the data: a
+// CRUD matrix of the messages, segments, tables and files they insert, read,
+// update or delete.
+let crudName = "", crudView = "crud";
+function showCrud(name) {
+  crudName = name || "";
+  crudView = route().view;
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderCrud();
+}
+async function renderCrud() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const use = crudView === "use";
+  const what = use ? `the data use of ${crudName}` : `the transactions of ${crudName || "the graph"}`;
+  let transactions;
+  try {
+    transactions = use ? [await ask("dataUse", crudName)] : await ask("transactions", crudName);
+  } catch (cause) {
+    if (mine === flowAsked) fail(use ? "VIZ-122" : "VIZ-119", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (use && !transactions[0]) return fail("VIZ-123", `the procedure ${crudName} is not in the graph`);
+  if (!transactions.length) return fail("VIZ-120", crudName ? `no transaction has the code, PSB or program ${crudName}` : "the IMS system definition defines no transactions");
+  try {
+    const read = performance.now();
+    targets = [];
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const operations = ["insert", "read", "update", "delete"];
+    let row = 0;
+    const sections = transactions.map(t => {
+      const callees = use && t.procedures.slice(1).map(p => p.name);
+      const head = el("h3", { class: "in", title: `${t.path}:${t.line}`, onclick: open(t) }, use
+        ? `${t.name} · ${callees.length ? `calls ${callees.join(", ")}` : "calls nothing"}`
+        : `${t.code} · PSB ${t.psb}${t.defined ? "" : " (no PSB gen)"} · ${t.programs.map(p => p.member).join(", ") || "no program"}`);
+      target(head, t, 0, row++);
+      const rows = t.resources.map(r => {
+        const y = row++;
+        return el("tr", {},
+          el("td", { class: "guard" }, r.kind),
+          el("td", {}, el("pre", {}, `${r.owner ? `${r.owner}.` : ""}${r.name}`)),
+          ...operations.map((operation, x) => el("td", {}, r.uses.filter(u => u.operation === operation).map((u, i) => {
+            const cell = el("pre", { title: `${u.program}: ${u.path}:${u.line}`, onclick: open(u) }, u.how);
+            target(cell, u, x + 1, y + i / 10);
+            return cell;
+          }))));
+      });
+      return el("section", {}, head, rows.length
+        ? el("table", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Name"), ...operations.map(o => el("th", {}, o[0].toUpperCase() + o.slice(1)))), rows)
+        : el("div", { class: "guard" }, "touches no segment, message, table or file"));
+    });
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud" }, sections));
+    status.textContent = "";
+    const title = use ? `Data Use: ${transactions[0].name}` : `Transactions: ${crudName || "all"}`;
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${transactions.length} matrices, ${row - transactions.length} rows, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail(use ? "VIZ-124" : "VIZ-121", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
+// ---- dead code ------------------------------------------------------------
+// What can go when the system is replaced (v=dead): branches under conditions
+// that never change, procedures nothing live reaches, variables nothing reads,
+// of one file (the id) or the whole workspace.
+let deadPath = "";
+function showDead(path) {
+  deadPath = path || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderDead();
+}
+async function renderDead() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the dead code of ${deadPath || "the workspace"}`;
+  let dead;
+  try {
+    dead = await ask("deadCode", deadPath);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-125", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  try {
+    const read = performance.now();
+    targets = [];
+    let row = 0;
+    const section = (title, empty, head, items, cells) => {
+      const rows = items.map(item => {
+        const tr = el("tr", { title: `${item.path}:${item.line}`, onclick: () => host.postMessage({ type: "open", path: item.path, line: item.line }) },
+          el("td", {}, el("pre", {}, `${item.path}:${item.line}`)), ...cells(item).map(c => el("td", {}, c)));
+        target(tr, item, 0, row++);
+        return tr;
+      });
+      return el("section", {}, el("h3", {}, `${title} (${items.length})`), rows.length
+        ? el("table", {}, el("tr", {}, el("th", {}, "Where"), ...head.map(h => el("th", {}, h))), rows)
+        : el("div", { class: "guard" }, empty));
+    };
+    const sections = [
+      section("Conditions that never change", "no condition tests only constants", ["Condition", "Why", "Never runs"], dead.conditions,
+        c => [el("pre", {}, `${c.kind.toUpperCase()} ${c.condition}`), `always ${c.always}: ${c.why}`, `${c.branch === "body" ? "the body" : `${c.branch.toUpperCase()}`}, lines ${c.from}-${c.to}`]),
+      section("Procedures nothing reaches", "every procedure is reached", ["Procedure", "Callers"], dead.procedures,
+        p => [el("pre", {}, p.name), p.callers.length ? `only from code that never runs, in ${p.callers.join(", ")}` : "never called"]),
+      section("Variables nothing reads", "every variable is read", ["Variable", "In", "Use"], dead.variables,
+        v => [el("pre", {}, v.name), v.procedure ?? "the file", v.written ? "written, never read" : "never used"]),
+    ];
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud dead" }, sections));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Dead Code: ${deadPath ? deadPath.split("/").pop() : "all"}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${dead.conditions.length} conditions, ${dead.procedures.length} procedures, ${dead.variables.length} variables, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-126", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
+// The diagram tab shows a procedure's flow, a variable's data flow, a DDL
+// file's data model, what transactions or a procedure do to the data, or the
+// dead code.
 const isModel = () => route().view === "model";
-const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : showFlow(route().id);
-const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : renderFlow();
+const isCrud = () => ["crud", "use"].includes(route().view);
+const isDead = () => route().view === "dead";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : renderFlow();
 document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------

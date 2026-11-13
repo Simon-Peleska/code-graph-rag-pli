@@ -170,6 +170,24 @@
         "icon": "$(table)"
       },
       {
+        "command": "pliGraph.transactions",
+        "title": "Show Transaction Data Use",
+        "category": "PL/I Graph",
+        "icon": "$(symbol-event)"
+      },
+      {
+        "command": "pliGraph.dataUse",
+        "title": "Show Data Use of the Procedure",
+        "category": "PL/I Graph",
+        "icon": "$(database)"
+      },
+      {
+        "command": "pliGraph.deadCode",
+        "title": "Show Dead Code",
+        "category": "PL/I Graph",
+        "icon": "$(trash)"
+      },
+      {
         "command": "pliGraph.showScreen",
         "title": "Show 3270 Screen",
         "category": "PL/I Graph",

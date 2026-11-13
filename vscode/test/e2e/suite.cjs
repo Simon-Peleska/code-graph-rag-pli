@@ -187,6 +187,12 @@ exports.run = async () => {
   const declared = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", helper, new vscode.Range(0, 2, 0, 2));
   assert.ok(declared.some((a) => a.title === "Show Flow Diagram of HELPER"), JSON.stringify(declared.map((a) => a.title)));
   console.log("The flow code action is offered on a declaration");
+  // Next to it, the procedure's data use.
+  const useAction = actions.find((a) => a.title === "Show Data Use of HELPER");
+  assert.ok(useAction, JSON.stringify(actions.map((a) => a.title)));
+  await vscode.commands.executeCommand(useAction.command.command, ...useAction.command.arguments);
+  await webviewTab("Data Use: HELPER");
+  console.log("The data use code action opens");
 
   // ABTCUST1 creates the table PROD.CUSTOMER.
   const ddl = vscode.Uri.joinPath(folder, "ABTCUST1");
@@ -214,6 +220,16 @@ exports.run = async () => {
   await vscode.commands.executeCommand(dataAction.command.command, ...dataAction.command.arguments);
   await webviewTab("PL/I Data Flow: M");
   console.log("The data flow code action opens");
+
+  // The sample has no IMS system definition, so the page says there are no transactions.
+  await vscode.commands.executeCommand("pliGraph.transactions");
+  await webviewTab("Transactions: all");
+  console.log("Show Transaction Data Use opens");
+
+  // With the page in front there is no active file, so it is the workspace's.
+  await vscode.commands.executeCommand("pliGraph.deadCode");
+  await webviewTab("Dead Code: all");
+  console.log("Show Dead Code opens");
 
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");

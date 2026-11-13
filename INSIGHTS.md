@@ -67,7 +67,12 @@ segment and function → `segments`/`segment_fields`.
   or deletes. That's a CRUD matrix per transaction.
 - The same works for Db2 with `sql_columns` and the operation in it.
 
-Status: the `psb` and `dli` MCP tools give the pieces; no matrix.
+Status: built. The `transaction` MCP tool and *Show Transaction Data Use*
+give the matrix per transaction code, over the program named like the PSB
+and every program it calls; `data_use` and *Show Data Use of the Procedure*
+give it per procedure, record files included. Limits: SQL statements of one kind on one table
+in one procedure merge into one use, and programs called through a variable
+name are not followed.
 
 ## 6. Batch chains
 
@@ -88,7 +93,21 @@ chain across jobs.
 - These are the safe things to drop when you replace the system.
 - They also tell you which code you don't need to understand at all.
 
-Status: not started.
+Status: built. The `dead_code` MCP tool and *Show Dead Code* (the active
+file's, else the workspace's) list:
+- IF, WHEN and DO WHILE conditions that are always false or true because they
+  compare constants (literals, or a `STATIC INIT` nothing writes, passes or
+  overlays), with the branch that never runs;
+- procedures that no main or fetchable program, transaction, job or live
+  caller reaches, calls from dead branches not counting;
+- variables nothing live reads, those that are only written marked so.
+
+Its limits: a call through an unresolved dynamic name and a program run
+only from outside PL/I (a REXX exec, a scheduler) look dead, so check a
+procedure before dropping it. Conditions joined with `|` or negated
+parentheses are not decided. On the sample it finds 423 dead branches (all
+"RC is always 0") and 4,270 variables, mostly the generator's unused
+`OUTMSG`, in about 2 s for the whole workspace, once per graph version.
 
 ## 8. Hotspots
 

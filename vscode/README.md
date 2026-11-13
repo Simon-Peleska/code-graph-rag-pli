@@ -156,7 +156,26 @@ extension keeps of each workspace folder:
 - **Show Data Model of NAME** is a code action on a table, view or alias name,
   in a PL/I program's SQL or in DDL; anywhere else in a DDL file it is **Show
   Data Model of FILE**.
-- The flow, data flow and data model diagrams follow the editor's cursor: one
+- **PL/I Graph: Show Transaction Data Use** shows, for each IMS transaction
+  code, what its program and the programs that one calls do to the data: a
+  row per message (the I/O PCB, alternate PCBs), DL/I segment and Db2 table,
+  with what inserts, reads, updates and deletes it. It takes the transaction,
+  PSB or program at the cursor or the active file's, else all transactions.
+  A click opens the call or statement.
+- **PL/I Graph: Show Data Use of the Procedure** is the same table for the
+  procedure at the cursor and every procedure it calls, in its program and
+  in others, with the record files they read and write as well; the PCBs are
+  those of the PSB named like its program. **Show Data Use of NAME** is a
+  code action on a procedure's name, next to its flow diagram.
+- **PL/I Graph: Show Dead Code** lists what can go when the system is
+  replaced, for the active file or, with none, the whole workspace: the
+  branches under IF, WHEN and DO WHILE conditions that compare constants (a
+  literal, or a `STATIC INIT` nothing writes) and so never run, the
+  procedures no main program, transaction, job or live caller reaches, and
+  the variables nothing reads. A click opens the line. A call through a
+  name the graph cannot resolve, or a program run from outside PL/I, is not
+  seen, so check a procedure before dropping it.
+- The flow, data flow, data model, transaction and data use diagrams follow the editor's cursor: one
   opens with the box of the cursor's line in focus (the last one at or before
   it; with the cursor scrolled out of view, the first line in view), and
   moving the cursor moves the focus. The arrow keys move the focus to the
@@ -211,7 +230,12 @@ extension keeps of each workspace folder:
   access and who uses it), `screen` (an MFS format's fields with their
   labels, and where each message field sits in the program's I/O area),
   `dli` (a program's DL/I calls: function, SSA
-  segments, I/O area and the PSB's PCB each call uses), `field` (where a
+  segments, I/O area and the PSB's PCB each call uses), `transaction` (a
+  transaction's CRUD matrix: the messages, segments and tables its programs
+  insert, read, update and delete, and where), `data_use` (the same for a
+  procedure and the procedures it calls, record files included),
+  `dead_code` (branches that never run, procedures nothing reaches and
+  variables nothing reads, of a file or all), `field` (where a
   field is set, passed to a CALL or compared, under which IF, WHEN, DO and
   ON conditions), `lineage` (where a variable's value comes from and goes
   to: assignments, and arguments bound to parameters), `text` (comments
@@ -441,6 +465,7 @@ can read it while VS Code runs:
 - `PLG043E` Format Document: the PL/I parser gave no tree.
 - `PLG044E` A diagram's focus moved to a statement whose file could not
   be shown beside it.
+- `PLG045E` Show Data Use: there is no procedure at the cursor.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
@@ -450,7 +475,12 @@ in the graph, `VIZ-109` it could not be drawn, `VIZ-110` the data model could
 not be read, `VIZ-111` its file creates no tables, views or aliases,
 `VIZ-112` it could not be drawn, `VIZ-113` a variable's data flow could not be read, `VIZ-114` the variable is
 not in the graph, `VIZ-115` the data flow could not be drawn as a diagram,
-`VIZ-116` as the table of tests, `VIZ-118` as the table of sets.
+`VIZ-116` as the table of tests, `VIZ-118` as the table of sets, `VIZ-119`
+the transactions could not be read, `VIZ-120` there are no transactions for
+the name, `VIZ-121` they could not be drawn, `VIZ-122` a procedure's data
+use could not be read, `VIZ-123` the procedure is not in the graph,
+`VIZ-124` its data use could not be drawn, `VIZ-125` the dead code could
+not be read, `VIZ-126` it could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

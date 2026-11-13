@@ -220,6 +220,7 @@ test("IMS gens are read whatever their member is named", () => {
     { path: "IMS/KDDBD01", language: "hlasm" },
     { path: "IMS/KDDRUCK", language: "hlasm" },
     { path: "IMS/KDPSB01", language: "hlasm" },
+    { path: "IMS/KDPSB05", language: "hlasm" },
     { path: "IMS/KDSYSDEF", language: "hlasm" },
   ]);
 });
@@ -231,16 +232,21 @@ test("a PSB gen gives the PSB, its PCBs in order and their sensitive segments", 
       { psb: "KDDRUCK", position: 1, type: "GSAM", name: null, dbd: "KDGSAM1", procopt: "LS" },
       { psb: "KDPSB01", position: 1, type: "TP", name: "ALTPCB", dbd: null, procopt: null },
       { psb: "KDPSB01", position: 2, type: "DB", name: "KDPCB1", dbd: "KDDBD01", procopt: "A" },
+      { psb: "KDP00005", position: 1, type: "TP", name: "ALTPCB", dbd: null, procopt: null },
+      { psb: "KDP00005", position: 2, type: "DB", name: null, dbd: "KDDBD01", procopt: "A" },
     ],
   );
   assert.deepEqual(rows(`SELECT g.name, g.parent, g.procopt, p.name AS pcb FROM sensegs g JOIN pcbs p ON p.id = g.pcb ORDER BY g.id`), [
     { name: "KUNDE", parent: null, procopt: null, pcb: "KDPCB1" },
     { name: "KONTO", parent: "KUNDE", procopt: "G", pcb: "KDPCB1" },
+    { name: "KUNDE", parent: null, procopt: null, pcb: null },
+    { name: "KONTO", parent: "KUNDE", procopt: null, pcb: null },
   ]);
   assert.deepEqual(
     rows(`SELECT r.name, t.kind FROM refs r JOIN symbols c ON c.id = r.caller LEFT JOIN links l ON l.ref = r.id LEFT JOIN symbols t ON t.id = l.target_symbol WHERE r.kind = 'dbd' ORDER BY r.id`),
     [
       { name: "KDGSAM1", kind: null },
+      { name: "KDDBD01", kind: "dbd" },
       { name: "KDDBD01", kind: "dbd" },
     ],
   );
@@ -272,6 +278,8 @@ test("the IMS system definition maps transactions to their PSB and program", () 
       { tran: "KD02", detail: "PSB=KDP00001,PGMTYPE=TP,CODE=(KD02,KD03)", kind: "program", name: "KDP00001", path: "SRC/KDP00001" },
       { tran: "KD03", detail: "PSB=KDP00001,PGMTYPE=TP,CODE=(KD02,KD03)", kind: "psb", name: "KDP00001", path: null },
       { tran: "KD03", detail: "PSB=KDP00001,PGMTYPE=TP,CODE=(KD02,KD03)", kind: "program", name: "KDP00001", path: "SRC/KDP00001" },
+      { tran: "KD05", detail: "PSB=KDP00005,PGMTYPE=TP,CODE=KD05,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "psb", name: "KDP00005", path: "IMS/KDPSB05" },
+      { tran: "KD05", detail: "PSB=KDP00005,PGMTYPE=TP,CODE=KD05,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
     ],
   );
 });
@@ -304,6 +312,7 @@ test("DL/I calls name their function, PCB parameter and SSA segments, also from 
       { entry: "CEETDLI", function: "REPL", pcb: "DBPCB", pcb_parameter: 3, io_area: "SEG", segment: null, path: null, arguments: "'REPL', DBPCB, SEG", line: 35 },
       { entry: "PLITDLI", function: "ISRT", pcb: "ALTPCB", pcb_parameter: 2, io_area: "MSG", segment: null, path: null, arguments: "DREI, ISRT_FUNC, ALTPCB, MSG", line: 36 },
       { entry: "PLITDLI", function: "ISRT", pcb: "IOPCB", pcb_parameter: 1, io_area: "MSG", segment: "KDF001O", path: "KDF001O", arguments: "VIER, ISRT_FUNC, IOPCB, MSG, MODNAME", line: 37 },
+      { entry: "CEETDLI", function: "DLET", pcb: "DBPCB", pcb_parameter: 3, io_area: "SEG", segment: null, path: null, arguments: "'DLET', DBPCB, SEG", line: 38 },
       { entry: "PLITDLI", function: "GU", pcb: "DBPCB", pcb_parameter: 2, io_area: "SEG", segment: "KUNDE", path: "KUNDE", arguments: "VIER, GU_FUNC, DBPCB, SEG, KUNDE_SSA", line: 6 },
     ],
   );
@@ -456,6 +465,7 @@ test("comments describe procedures and declarations, literals are kept with thei
   assert.deepEqual(rows(`SELECT name, comment, line FROM symbols WHERE comment IS NOT NULL ORDER BY id`), [
     { name: "KDP00009", comment: "KDP00009: SPERRPRUEFUNG PRUEFT, OB EIN KUNDE GESPERRT IST", line: 5 },
     { name: "PROTO", comment: "PROTOKOLL", line: 19 },
+    { name: "KDP00010", comment: "KDP00010: MONATSABSCHLUSS MIT ALTLASTEN", line: 2 },
   ]);
   assert.deepEqual(
     rows(`SELECT v.qualified, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE v.comment IS NOT NULL AND f.path IN ('SRC/KDP00009', 'INCLUDE/KDC00001') ORDER BY v.id`),
@@ -491,8 +501,8 @@ test("every relation goes from the name to the name, both ways", () => {
     ["SRC/KDP00004", 8, "KUNDE", ["INCLUDE/KDT00001:1:18-23"], ["SRC/KDP00004:14:64-69", "SRC/KDP00004:7:22-27", "SRC/KDP00004:8:51-56", "SRC/KDP00004:9:24-29"]],
     ["MFS/KDF00001", 19, "KDF001O", ["MFS/KDF00001:19:0-7"], ["MFS/KDF00001:14:50-57", "SRC/KDP00005:28:36-43"]],
     ["MFS/KDF00001", 1, "KDF001", ["MFS/KDF00001:1:0-6"], ["MFS/KDF00001:14:31-37", "MFS/KDF00001:19:32-38"]],
-    ["IMS/KDPSB01", 6, "KUNDE", ["IMS/KDDBD01:3:20-25"], ["IMS/KDPSB01:6:21-26"]],
-    ["IMS/KDPSB01", 4, "KDDBD01", ["IMS/KDDBD01:1:20-27"], ["IMS/KDPSB01:4:31-38"]],
+    ["IMS/KDPSB01", 6, "KUNDE", ["IMS/KDDBD01:3:20-25"], ["IMS/KDPSB01:6:21-26", "IMS/KDPSB05:4:21-26"]],
+    ["IMS/KDPSB01", 4, "KDDBD01", ["IMS/KDDBD01:1:20-27"], ["IMS/KDPSB01:4:31-38", "IMS/KDPSB05:3:31-38"]],
     ["IMS/KDSYSDEF", 4, "KDP00001", ["SRC/KDP00001:1:1-9"], ["IMS/KDSYSDEF:4:21-29", "JCL/KDJOB01:2:39-47", "JCL/KDJOB02:5:29-37"]],
     ["SRC/KDP00004", 17, "C1", ["SRC/KDP00004:13:20-22"], ["SRC/KDP00004:13:20-22", "SRC/KDP00004:16:17-19", "SRC/KDP00004:17:18-20", "SRC/KDP00004:18:18-20"]],
     ["JCL/KDJOB02", 3, "AUSZUG", ["JCL/KDJOB01:5:18-32"], ["JCL/KDJOB01:5:18-32", "JCL/KDJOB02:3:18-32"]],
@@ -505,6 +515,37 @@ test("every relation goes from the name to the name, both ways", () => {
     // From the definition, the same references.
     assert.deepEqual(spans(graph.references(definedIn, definedAt, word, false)), references, `references of ${word} at its definition`);
   }
+});
+
+test("dead code: branches under constant conditions, procedures nothing live calls, variables nothing reads", () => {
+  /** @param {number} line @param {string} kind @param {string} condition @param {string} why @param {string} branch @param {number} to */
+  const never = (line, kind, condition, why, branch, to) => ({ path: "SRC/KDP00010", line, procedure: "KDP00010", kind, condition, always: false, why, branch, from: line, to });
+  assert.deepEqual(graph.deadCode("SRC/KDP00010"), {
+    conditions: [
+      never(12, "if", "TESTMODUS", "TESTMODUS is always '0'B", "then", 12),
+      never(13, "if", "VERSION = 'V1'", "VERSION is always 'V2'", "then", 16),
+      never(19, "when", "'V0', 'V1'", "VERSION is always 'V2'", "body", 19),
+      never(23, "if", "1 = 0", "it compares constants", "then", 23),
+    ],
+    // ALTDRUCK is called only in a branch that never runs, HILFE only by a dead procedure.
+    procedures: [
+      { name: "TESTDRUCK", path: "SRC/KDP00010", line: 24, end: 26, callers: ["KDP00010"] },
+      { name: "ALTDRUCK", path: "SRC/KDP00010", line: 27, end: 29, callers: ["KDP00010"] },
+      { name: "HILFE", path: "SRC/KDP00010", line: 30, end: 32, callers: ["TESTDRUCK"] },
+    ],
+    // I is the loop's control, which the loop tests.
+    variables: [
+      { name: "ALTFELD", path: "SRC/KDP00010", line: 5, procedure: "KDP00010", written: false },
+      { name: "ZAEHLER", path: "SRC/KDP00010", line: 6, procedure: "KDP00010", written: true },
+      { name: "PUFFER", path: "SRC/KDP00010", line: 8, procedure: "KDP00010", written: false },
+    ],
+  });
+  const all = graph.deadCode("");
+  // Programs no job, transaction or caller runs.
+  assert.deepEqual(
+    all.procedures.map((p) => p.name),
+    ["KDP00003", "KDP00006", "PROTO", "TESTDRUCK", "ALTDRUCK", "HILFE"],
+  );
 });
 
 test("a ß before a name does not shift its column", async () => {

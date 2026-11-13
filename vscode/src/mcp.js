@@ -94,6 +94,27 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { program: { type: "string" } }, required: ["program"] },
   },
   {
+    name: "transaction",
+    description:
+      "What IMS transactions do to the data, a CRUD matrix drawn from the code: for the program a transaction runs and the programs it calls, each IMS segment its DL/I calls insert, read, replace or delete, each message it receives or sends, each Db2 table its SQL inserts, reads, updates or deletes, with the columns, and each record file it writes, reads, rewrites or deletes. Each line shows the operations as C R U D, then where each happens.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string", description: "a transaction code, or a PSB or program for its transactions; empty for all" } },
+    },
+  },
+  {
+    name: "data_use",
+    description:
+      "What a PL/I procedure does to the data, a CRUD matrix drawn from the code: for the procedure and every procedure it calls, in its program and others, each IMS segment and message its DL/I calls insert, read, replace or delete, each Db2 table its SQL inserts, reads, updates or deletes with the columns, and each record file it writes, reads, rewrites or deletes. Each line shows the operations as C R U D, then where each happens.",
+    inputSchema: { type: "object", properties: { procedure: { type: "string", description: "a procedure name; each procedure of that name answers" } }, required: ["procedure"] },
+  },
+  {
+    name: "dead_code",
+    description:
+      "Code that never runs and fields that are never used, drawn from the code: IF, WHEN and DO WHILE conditions on constants (a STATIC INIT never assigned) that are always false or true and the branches that never run, procedures no main program, transaction, job or live caller reaches, and variables nothing reads (written ones are set but never read). Unresolved dynamic calls and callers outside PL/I are not seen, so check a procedure before dropping it.",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "a file's path in the workspace; empty for all" } } },
+  },
+  {
     name: "field",
     description:
       "A PL/I field's business rules: every statement that sets it (with the literal it gets), passes it to a CALL or compares it, each with the IF, WHEN, DO and ON conditions it happens under, outermost first. Matches the field however it is qualified.",
@@ -146,6 +167,17 @@ function defined(name) {
      WHERE s.name = ? ORDER BY f.path, s.line`,
     name.toUpperCase(),
   );
+}
+
+// A CRUD matrix's rows: the operations as C R U D, then where each happens.
+/** @param {{ kind: string, owner: string | null, name: string, uses: { operation: string, how: string, path: string, line: number }[] }[]} resources */
+function crudLines(resources) {
+  if (resources.length === 0) return ["  touches no segment, message, table or file"];
+  return resources.map((r) => {
+    const crud = ["insert", "read", "update", "delete"].map((op, i) => (r.uses.some((u) => u.operation === op) ? "CRUD"[i] : "-")).join("");
+    const where = r.uses.map((u) => `${u.operation} ${u.how} at ${u.path}:${u.line}`).join("; ");
+    return `  ${crud} ${r.kind} ${r.owner ? `${r.owner}.` : ""}${r.name}: ${where}`;
+  });
 }
 
 /** @param {string} name @param {Record<string, string>} args @returns {string} */
@@ -283,6 +315,48 @@ function call(name, args) {
         }),
       ])
       .join("\n");
+  }
+  if (name === "transaction") {
+    const transactions = open().transactionCrud((args.name ?? "").toUpperCase());
+    if (transactions.length === 0) return args.name ? `No transaction has the code, PSB or program ${args.name}.` : "The IMS system definition defines no transactions.";
+    return transactions
+      .flatMap((t) => [
+        `${t.code} PSB ${t.psb}${t.defined ? "" : " (no PSB gen)"}, ${t.programs.length ? `programs ${t.programs.map((p) => p.member).join(", ")}` : "no program"}: ${t.path}:${t.line}`,
+        ...crudLines(t.resources),
+      ])
+      .join("\n");
+  }
+  if (name === "data_use") {
+    const graph = open();
+    const procedures = /** @type {{ path: string, name: string, line: number }[]} */ (
+      graph.all(
+        `SELECT f.path, s.name, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'procedure' AND upper(s.name) = ? ORDER BY f.path, s.line`,
+        args.procedure.toUpperCase(),
+      )
+    );
+    if (procedures.length === 0) return `There is no procedure ${args.procedure}.`;
+    return procedures
+      .flatMap(({ path, name, line }) => {
+        const use = graph.procedureCrud(`${path}:${name}:${line}`);
+        if (!use) return [];
+        const callees = use.procedures.slice(1).map((p) => p.name);
+        return [`${use.name} at ${use.path}:${use.line}${callees.length ? `, calling ${callees.join(", ")}` : ""}`, ...crudLines(use.resources)];
+      })
+      .join("\n");
+  }
+  if (name === "dead_code") {
+    const dead = open().deadCode(args.path ?? "");
+    /** @param {string} title @param {string[]} lines */
+    const section = (title, lines) => (lines.length === 0 ? [] : [`${title} (${lines.length}):`, ...lines.slice(0, 200), ...(lines.length > 200 ? [`and ${lines.length - 200} more`] : [])]);
+    const text = [
+      ...section(
+        "Conditions that never change",
+        dead.conditions.map((c) => `${c.path}:${c.line} ${c.kind.toUpperCase()} ${c.condition} is always ${c.always}, as ${c.why}: ${c.branch === "body" ? "its body" : `the ${c.branch.toUpperCase()} branch`}, lines ${c.from}-${c.to}, never runs`),
+      ),
+      ...section("Procedures nothing reaches", dead.procedures.map((p) => `${p.path}:${p.line} ${p.name}${p.callers.length ? `, called only from code that never runs, in ${p.callers.join(", ")}` : ", never called"}`)),
+      ...section("Variables nothing reads", dead.variables.map((v) => `${v.path}:${v.line} ${v.name}${v.procedure ? ` in ${v.procedure}` : ""}${v.written ? ", written but never read" : ", never used"}`)),
+    ];
+    return text.length ? text.join("\n") : `Found no dead code${args.path ? ` in ${args.path}` : ""}.`;
   }
   if (name === "field") {
     const sites = open().fieldUses(args.name.toUpperCase());

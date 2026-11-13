@@ -195,6 +195,13 @@ class Edges {
   }
 }
 
+/**
+ * @typedef {object} DeadCode
+ * @property {{ path: string, line: number, procedure: string | null, kind: string, condition: string, always: boolean, why: string, branch: string, from: number, to: number }[]} conditions
+ * @property {{ name: string, path: string, line: number, end: number, callers: string[] }[]} procedures
+ * @property {{ name: string, path: string, line: number, procedure: string | null, written: boolean }[]} variables
+ */
+
 export class Graph {
   /**
    * @param {DatabaseSync} db
@@ -202,6 +209,8 @@ export class Graph {
    */
   constructor(db, root) {
     this.db = db;
+    /** @type {{ version: number | undefined, found: DeadCode } | undefined} */
+    this.dead = undefined;
     this.project = basename(root);
     /** Reads a file of the project; the extension hands in the open editors' text. */
     /** @type {(path: string) => string | undefined} */
@@ -853,6 +862,443 @@ export class Graph {
       return { ...psb, defined: gen !== undefined, ioPcb, pcbs };
     });
     return { calls, psbs };
+  }
+
+  /**
+   * What IMS transactions do to the data: for the program a transaction runs
+   * (the one named like its PSB) and the programs that one calls, the
+   * segments its DL/I calls read, insert, replace or delete, the messages it
+   * receives and sends, and the Db2 tables its SQL reads and changes. `name`
+   * is a transaction code, or a PSB or program to get its transactions; empty
+   * for all.
+   * @param {string} name
+   */
+  transactionCrud(name) {
+    const transactions = /** @type {{ code: string, psb: string, path: string, line: number }[]} */ (
+      this.all(
+        `SELECT t.name AS code, r.name AS psb, f.path, t.line
+         FROM symbols t JOIN files f ON f.id = t.file JOIN refs r ON r.caller = t.id AND r.kind = 'psb'
+         WHERE t.kind = 'transaction' AND (? = '' OR ? IN (t.name, r.name)) ORDER BY t.name, f.path`,
+        name,
+        name,
+      )
+    );
+    // The programs a PSB's program calls; transactions often share a PSB.
+    /** @type {Map<string, { id: number, member: string, path: string }[]>} */
+    const reaches = new Map();
+    return transactions.map((transaction) => {
+      if (!reaches.has(transaction.psb)) {
+        const reach = /** @type {{ id: number, member: string, path: string }[]} */ (
+          this.all(
+            `WITH RECURSIVE reach(id) AS (
+               SELECT id FROM files WHERE member = ? AND language = 'pli'
+               UNION
+               SELECT l.target_file FROM reach JOIN refs r ON r.file = reach.id AND r.kind IN ('call', 'fetch')
+               JOIN links l ON l.ref = r.id JOIN files tf ON tf.id = l.target_file AND tf.language = 'pli')
+             SELECT f.id, f.member, f.path FROM reach JOIN files f ON f.id = reach.id ORDER BY f.member <> ?, f.path`,
+            transaction.psb,
+            transaction.psb,
+          )
+        );
+        reaches.set(transaction.psb, reach);
+      }
+      const reached = reaches.get(transaction.psb) ?? [];
+      return {
+        ...transaction,
+        programs: reached.map(({ member, path }) => ({ member, path })),
+        ...this.dataUse("file", reached.map((f) => f.id), transaction.psb),
+      };
+    });
+  }
+
+  /**
+   * What a procedure does to the data: the CRUD matrix of `transactionCrud`
+   * over the procedure and every procedure it calls, in its program and in
+   * others. The PCBs are those of the PSB named like its program, if any.
+   * Null when there is no such procedure.
+   * @param {string} id a procedure's page id
+   */
+  procedureCrud(id) {
+    const focus = this.symbolOf(id);
+    if (focus === undefined) return null;
+    const procedure = /** @type {{ name: string, member: string, path: string, line: number }} */ (
+      this.all(`SELECT s.name, f.member, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.id = ?`, focus)[0]
+    );
+    const reached = new Set([focus]);
+    for (let frontier = [focus]; frontier.length; ) {
+      const callees = /** @type {{ target: number }[]} */ (
+        this.all(
+          `SELECT DISTINCT l.target_symbol AS target FROM refs r JOIN links l ON l.ref = r.id
+           WHERE r.caller IN (SELECT value FROM json_each(?)) AND r.kind IN ('call', 'fetch') AND l.target_symbol IS NOT NULL`,
+          JSON.stringify(frontier),
+        )
+      );
+      frontier = callees.map((c) => c.target).filter((target) => !reached.has(target));
+      for (const target of frontier) reached.add(target);
+    }
+    const procedures = /** @type {{ name: string, path: string, line: number }[]} */ (
+      this.all(
+        `SELECT s.name, f.path, s.line FROM symbols s JOIN files f ON f.id = s.file
+         WHERE s.id IN (SELECT value FROM json_each(?)) ORDER BY s.id <> ?, f.path, s.line`,
+        JSON.stringify([...reached]),
+        focus,
+      )
+    );
+    return { ...procedure, procedures, ...this.dataUse("caller", [...reached], procedure.member) };
+  }
+
+  /**
+   * The CRUD matrix of the DL/I calls, SQL and record I/O in some files or
+   * procedures (`by` says which `ids` are), with the PCBs of the PSB `psb`.
+   * @param {"file" | "caller"} by
+   * @param {number[]} ids
+   * @param {string} psb
+   */
+  dataUse(by, ids, psb) {
+    const inside = JSON.stringify(ids);
+    const gen = /** @type {{ id: number } | undefined} */ (this.all(`SELECT id FROM symbols WHERE kind = 'psb' AND name = ? ORDER BY id LIMIT 1`, psb)[0]);
+    const pcbs = /** @type {{ id: number, position: number, type: string, name: string | null, dbd: string | null }[]} */ (
+      gen ? this.all(`SELECT id, position, type, name, dbd FROM pcbs WHERE psb = ? ORDER BY position`, gen.id) : []
+    );
+    const sensitive = /** @type {{ name: string, dbd: string }[]} */ (
+      gen ? this.all(`SELECT g.name, p.dbd FROM sensegs g JOIN pcbs p ON p.id = g.pcb WHERE p.psb = ? ORDER BY g.id`, gen.id) : []
+    );
+    const calls = /** @type {{ function: string | null, pcb: string | null, pcb_parameter: number | null, segment: string | null, member: string, path: string, line: number }[]} */ (
+      this.all(
+        `SELECT d.function, d.pcb, d.pcb_parameter, d.segment, f.member, f.path, d.line
+         FROM dli_calls d JOIN files f ON f.id = d.file WHERE d.${by} IN (SELECT value FROM json_each(?)) ORDER BY f.path, d.line`,
+        inside,
+      )
+    );
+    const files = /** @type {{ operation: string, name: string, record: string | null, key: string | null, member: string, path: string, line: number }[]} */ (
+      this.all(
+        `SELECT io.operation, io.name, io.record, io.key, f.member, f.path, io.line
+         FROM file_io io JOIN files f ON f.id = io.file WHERE io.${by} IN (SELECT value FROM json_each(?)) ORDER BY f.path, io.line`,
+        inside,
+      )
+    );
+    const sql = /** @type {{ operation: string, cursor: string | null, schema: string | null, table_name: string, columns: string | null, keys: string | null, member: string, path: string, line: number }[]} */ (
+      this.all(
+        `SELECT c.operation, c.cursor, c.schema, c.table_name,
+           group_concat(DISTINCT CASE WHEN c.usage IN ('select', 'set', 'insert') THEN c.column_name END) AS columns,
+           group_concat(DISTINCT CASE WHEN c.usage = 'where' THEN c.column_name END) AS keys,
+           f.member, f.path, min(c.line) AS line
+         FROM sql_columns c JOIN files f ON f.id = c.file
+         WHERE c.${by} IN (SELECT value FROM json_each(?)) AND c.table_name IS NOT NULL AND c.operation IN ('SELECT', 'DECLARE', 'INSERT', 'UPDATE', 'DELETE')
+         GROUP BY c.file, c.caller, c.operation, c.cursor, c.schema, c.table_name ORDER BY f.path, line`,
+        inside,
+      )
+    );
+
+    /** @typedef {"insert" | "read" | "update" | "delete"} Operation */
+    /** @type {Map<string, { kind: "segment" | "table" | "message" | "file", owner: string | null, name: string, uses: { operation: Operation, how: string, program: string, path: string, line: number }[] }>} */
+    const resources = new Map();
+    /** @param {"segment" | "table" | "message" | "file"} kind @param {string | null} owner @param {string} name @param {Operation} operation @param {string} how @param {{ member: string, path: string, line: number }} at */
+    const use = (kind, owner, name, operation, how, at) => {
+      const key = `${kind} ${owner} ${name}`;
+      if (!resources.has(key)) resources.set(key, { kind, owner, name, uses: [] });
+      resources.get(key)?.uses.push({ operation, how, program: at.member, path: at.path, line: at.line });
+    };
+    /** @type {Record<string, Operation>} */
+    const DLI = { GU: "read", GN: "read", GNP: "read", GHU: "read", GHN: "read", GHNP: "read", ISRT: "insert", REPL: "update", DLET: "delete" };
+    // A call without SSA works on the segment the last call on its PCB got.
+    /** @type {Map<string, string>} */
+    const lastSegment = new Map();
+    for (const call of calls) {
+      const operation = DLI[call.function ?? ""];
+      if (!operation) continue;
+      // A PCB parameter counts in the main program only; IMS puts the I/O PCB first.
+      const position = call.member === psb && call.pcb_parameter ? call.pcb_parameter - 1 : undefined;
+      const pcb = pcbs.find((p) => p.position === position);
+      if (position === 0) {
+        use("message", null, "I/O PCB", operation, `${call.function}${call.segment ? ` MOD ${call.segment}` : ""}`, call);
+        continue;
+      }
+      if (pcb?.type === "TP") {
+        use("message", null, pcb.name ?? `PCB ${pcb.position}`, operation, call.function ?? "", call);
+        continue;
+      }
+      const pcbKey = `${call.path} ${call.pcb}`;
+      if (call.segment) lastSegment.set(pcbKey, call.segment);
+      const segment = call.segment ?? lastSegment.get(pcbKey) ?? "?";
+      const dbd = pcb?.dbd ?? sensitive.find((s) => s.name === segment)?.dbd ?? null;
+      use("segment", dbd, segment, operation, call.function ?? "", call);
+    }
+    /** @type {Record<string, Operation>} */
+    const SQL = { SELECT: "read", DECLARE: "read", INSERT: "insert", UPDATE: "update", DELETE: "delete" };
+    for (const row of sql) {
+      const how = [
+        row.operation === "DECLARE" ? `CURSOR ${row.cursor}` : row.operation,
+        row.columns ? `${row.operation === "UPDATE" ? "SET " : ""}${row.columns.replaceAll(",", ", ")}` : "",
+        row.keys ? `WHERE ${row.keys.replaceAll(",", ", ")}` : "",
+      ].filter(Boolean).join(" ");
+      use("table", row.schema, row.table_name, SQL[row.operation], how, row);
+    }
+    // GET and PUT without FILE (SYSIN, SYSPRINT) are not data.
+    /** @type {Record<string, Operation>} */
+    const IO = { READ: "read", GET: "read", WRITE: "insert", LOCATE: "insert", PUT: "insert", REWRITE: "update", DELETE: "delete" };
+    for (const io of files) {
+      if (!IO[io.operation] || ["SYSIN", "SYSPRINT"].includes(io.name)) continue;
+      const how = [io.operation, io.record && `${io.operation === "LOCATE" ? "" : ["READ", "GET"].includes(io.operation) ? "INTO " : "FROM "}${io.record}`, io.key && `KEY ${io.key}`].filter(Boolean).join(" ");
+      use("file", null, io.name, IO[io.operation], how, io);
+    }
+    const kinds = { message: 0, segment: 1, table: 2, file: 3 };
+    const operations = { insert: 0, read: 1, update: 2, delete: 3 };
+    for (const resource of resources.values()) resource.uses.sort((a, b) => operations[a.operation] - operations[b.operation]);
+    return { defined: gen !== undefined, resources: [...resources.values()].sort((a, b) => kinds[a.kind] - kinds[b.kind]) };
+  }
+
+  /**
+   * What can go when the system is replaced: the branches under conditions
+   * that are never true, the procedures nothing live calls, and the
+   * variables nothing live reads. Worked out over the whole workspace, since
+   * callers and readers can be anywhere, once per graph version; `path`
+   * keeps what is in that file, empty for everything.
+   * @param {string} path
+   */
+  deadCode(path) {
+    const version = Graph.version(this.db);
+    const cached = this.dead;
+    const found = cached && cached.version === version ? cached.found : this.findDeadCode();
+    this.dead = { version, found };
+    const { conditions, procedures, variables } = found;
+    /** @param {{ path: string }} item */
+    const inPath = (item) => !path || item.path === path;
+    return { conditions: conditions.filter(inPath), procedures: procedures.filter(inPath), variables: variables.filter(inPath) };
+  }
+
+  /** @returns {DeadCode} */
+  findDeadCode() {
+    // 1. Conditions on constants: literals, and variables with an INIT that
+    // nothing writes, passes as an argument or overlays.
+    const tests = /** @type {{ statement: number, file: number, path: string, procedure: string | null, kind: string, detail: string, line: number, left: string, operator: string, right: string, lv: number | null, rv: number | null }[]} */ (
+      this.all(
+        `WITH tests AS (
+           SELECT s.id, s.parent, c.left, c.operator, c.right FROM comparisons c JOIN statements s ON s.id = c.statement
+           WHERE s.kind IN ('if', 'when', 'do')
+           UNION ALL
+           SELECT s.id, s.parent, ltrim(s.detail, '^¬ '), CASE WHEN substr(s.detail, 1, 1) IN ('^', '¬') THEN 'not' ELSE 'is' END, '' FROM statements s
+           WHERE s.kind = 'if' AND s.detail NOT LIKE '% %' AND s.detail NOT LIKE '%(%')
+         SELECT t.id AS statement, s.file, f.path, p.name AS procedure, s.kind, s.detail, s.line, t.left, t.operator, t.right,
+           (SELECT a.variable FROM accesses a INDEXED BY accesses_statement WHERE a.statement IN (t.id, t.parent) AND a.name = t.left AND a.variable IS NOT NULL LIMIT 1) AS lv,
+           (SELECT a.variable FROM accesses a INDEXED BY accesses_statement WHERE a.statement IN (t.id, t.parent) AND a.name = t.right AND a.variable IS NOT NULL LIMIT 1) AS rv
+         FROM tests t JOIN statements s ON s.id = t.id JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller`,
+      )
+    );
+    const named = /** @type {number[]} */ ([...new Set(tests.flatMap((t) => [t.lv, t.rv]).filter((v) => v !== null))]);
+    // The compared variables and the structures they are in: a variable can
+    // change through any of them.
+    /** @type {Map<number, { id: number, parent: number | null, name: string, init: string | null, dims: string | null, type: string | null, storage: string | null, external: number, parameter: number | null, changed: number }>} */
+    const compared = new Map();
+    for (let wanted = named; wanted.length; ) {
+      const rows = /** @type {typeof compared extends Map<number, infer V> ? V[] : never} */ (
+        this.all(
+          `SELECT v.id, v.parent, v.name, v.init, v.dims, v.type, v.storage, v.external, v.parameter,
+             EXISTS (SELECT 1 FROM accesses x WHERE x.variable = v.id AND x.mode IN ('write', 'arg'))
+             OR EXISTS (SELECT 1 FROM variables d WHERE d.file = v.file AND d.storage = 'DEFINED' AND upper(d.base) = upper(v.name))
+             OR EXISTS (SELECT 1 FROM statements s INDEXED BY statements_file JOIN accesses x INDEXED BY accesses_statement ON x.statement = s.id
+               WHERE s.file = v.file AND x.name = v.name AND x.variable IS NULL AND x.mode IN ('write', 'arg')) AS changed
+           FROM variables v WHERE v.id IN (SELECT value FROM json_each(?))`,
+          JSON.stringify(wanted),
+        )
+      );
+      for (const row of rows) compared.set(row.id, row);
+      wanted = /** @type {number[]} */ ([...new Set(rows.map((r) => r.parent).filter((p) => p !== null && !compared.has(p)))]);
+    }
+    /** @param {number | null} id @returns {boolean} */
+    const fixed = (id) => {
+      const v = id === null ? undefined : compared.get(id);
+      if (!v) return true;
+      return !v.changed && !v.external && v.parameter === null && !["BASED", "DEFINED", "PARAMETER", "CONTROLLED"].includes(v.storage ?? "") && fixed(v.parent);
+    };
+    const constants = new Map(
+      named.flatMap((id) => {
+        const v = compared.get(id);
+        return v?.init && !v.dims && v.type !== "STRUCTURE" && fixed(id) ? [[id, { name: v.name, init: v.init }]] : [];
+      }),
+    );
+    /** @param {string} text @returns {{ kind: "char" | "bit" | "number", value: string | number } | undefined} */
+    const literal = (text) => {
+      const quoted = /^'((?:[^']|'')*)'(B|X)?$/i.exec(text.trim());
+      if (quoted?.[2]?.toUpperCase() === "X") return undefined;
+      if (quoted?.[2]) return { kind: "bit", value: quoted[1].replace(/0+$/, "") };
+      if (quoted) return { kind: "char", value: quoted[1].replaceAll("''", "'").replace(/ +$/, "") };
+      if (/^[-+]?(\d+\.?\d*|\.\d+)$/.test(text.trim())) return { kind: "number", value: Number(text) };
+      return undefined;
+    };
+    /** @param {string} text @param {number | null} variable */
+    const valueOf = (text, variable) => {
+      const constant = variable === null ? undefined : constants.get(variable);
+      return constant ? literal(constant.init) : variable === null ? literal(text) : undefined;
+    };
+    /** @type {Record<string, (order: number) => boolean>} */
+    const OPERATORS = {
+      "=": (o) => o === 0, "^=": (o) => o !== 0, "¬=": (o) => o !== 0, "<>": (o) => o !== 0,
+      "<": (o) => o < 0, ">": (o) => o > 0, "<=": (o) => o <= 0, ">=": (o) => o >= 0,
+      "^<": (o) => o >= 0, "¬<": (o) => o >= 0, "^>": (o) => o <= 0, "¬>": (o) => o <= 0,
+    };
+    // True, false, or undefined when it depends on the run.
+    /** @param {typeof tests[number]} t */
+    const decide = (t) => {
+      const left = valueOf(t.left, t.lv);
+      if (t.operator === "is" || t.operator === "not") return left?.kind === "bit" ? /1/.test(String(left.value)) === (t.operator === "is") : undefined;
+      const right = valueOf(t.right, t.rv);
+      if (!left || !right || left.kind !== right.kind || !OPERATORS[t.operator]) return undefined;
+      // PL/I pads the shorter string: with blanks, bits with zeros.
+      const width = Math.max(String(left.value).length, String(right.value).length);
+      const pad = left.kind === "bit" ? "0" : " ";
+      const order = left.kind === "number"
+        ? Math.sign(Number(left.value) - Number(right.value))
+        : String(left.value).padEnd(width, pad) < String(right.value).padEnd(width, pad) ? -1 : String(left.value).padEnd(width, pad) > String(right.value).padEnd(width, pad) ? 1 : 0;
+      return OPERATORS[t.operator](order);
+    };
+    /** @type {Map<number, typeof tests>} */
+    const byStatement = new Map();
+    for (const t of tests) byStatement.get(t.statement)?.push(t) ?? byStatement.set(t.statement, [t]);
+    /** @type {{ statement: number, always: boolean, why: string, test: typeof tests[number] }[]} */
+    const decided = [];
+    for (const [statement, own] of byStatement) {
+      const first = own[0];
+      const outcomes = own.map(decide);
+      const why = [...new Set(own.flatMap((t) => [t.lv, t.rv]).filter((v) => v !== null && constants.has(v))
+        .map((v) => `${constants.get(/** @type {number} */ (v))?.name} is always ${constants.get(/** @type {number} */ (v))?.init}`))].join(", ") || "it compares constants";
+      // A WHEN's values are alternatives; an IF's or WHILE's comparisons
+      // count when joined by & alone. A loop never run counts, one never left doesn't.
+      if (first.kind === "when") {
+        if (outcomes.every((o) => o === false)) decided.push({ statement, always: false, why, test: first });
+        continue;
+      }
+      if (/[|]|[\^¬]\s*\(/.test(first.detail) || (first.kind === "do" && (!/\bWHILE\b/i.test(first.detail) || /\bUNTIL\b/i.test(first.detail)))) continue;
+      const terms = first.kind === "do" ? 1 : first.detail.split("&").length;
+      if (outcomes.includes(false)) decided.push({ statement, always: false, why, test: first });
+      else if (first.kind === "if" && outcomes.length === terms && outcomes.every((o) => o === true)) decided.push({ statement, always: true, why, test: first });
+    }
+    const branches = /** @type {{ id: number, parent: number, branch: string | null, line: number, end_line: number }[]} */ (
+      this.all(`SELECT id, parent, branch, line, end_line FROM statements WHERE parent IN (SELECT value FROM json_each(?))`, JSON.stringify(decided.map((d) => d.statement)))
+    );
+    const conditions = decided.flatMap((d) => {
+      const dead = branches.filter((b) => b.parent === d.statement && (d.test.kind !== "if" || b.branch === (d.always ? "else" : "then")));
+      if (!dead.length) return [];
+      const t = d.test;
+      return [{
+        path: t.path, file: t.file, line: t.line, procedure: t.procedure, kind: t.kind, condition: t.detail, always: d.always, why: d.why,
+        branch: t.kind === "if" ? (d.always ? "else" : "then") : "body", roots: dead.map((b) => b.id),
+        from: Math.min(...dead.map((b) => b.line)), to: Math.max(...dead.map((b) => b.end_line)),
+      }];
+    });
+    const deadStatements = new Set(
+      /** @type {{ id: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE dead(id) AS (SELECT value FROM json_each(?) UNION SELECT s.id FROM dead JOIN statements s ON s.parent = dead.id) SELECT id FROM dead`,
+          JSON.stringify(conditions.flatMap((c) => c.roots)),
+        )
+      ).map((s) => s.id),
+    );
+
+    // 2. Procedures no live code calls. Live are the main and fetchable
+    // ones, those a job or transaction runs, and what they call outside the
+    // dead branches.
+    const deadCalls = /** @type {{ id: number }[]} */ (
+      this.all(
+        `SELECT r.id FROM json_each(?) d JOIN refs r ON r.file = d.value ->> 'file' AND r.line BETWEEN d.value ->> 'from' AND d.value ->> 'to'
+         WHERE r.kind IN ('call', 'fetch')`,
+        JSON.stringify(conditions.map((c) => ({ file: c.file, from: c.from, to: c.to }))),
+      )
+    ).map((r) => r.id);
+    // A link to a file without a symbol means its outermost procedures.
+    const roots = /** @type {{ id: number }[]} */ (
+      this.all(
+        `SELECT id FROM symbols WHERE kind = 'procedure' AND (detail LIKE '%OPTIONS%MAIN%' OR detail LIKE '%FETCHABLE%')
+         UNION
+         SELECT t.id FROM links l JOIN refs r ON r.id = l.ref LEFT JOIN symbols c ON c.id = r.caller JOIN symbols t ON t.id = l.target_symbol
+         WHERE t.kind = 'procedure' AND (c.id IS NULL OR c.kind <> 'procedure')
+         UNION
+         SELECT t.id FROM links l JOIN refs r ON r.id = l.ref LEFT JOIN symbols c ON c.id = r.caller
+           JOIN symbols t ON t.file = l.target_file AND t.parent IS NULL AND t.kind = 'procedure'
+         WHERE l.target_symbol IS NULL AND r.kind IN ('program', 'procedure') AND (c.id IS NULL OR c.kind <> 'procedure')`,
+      )
+    ).map((r) => r.id);
+    const calls = /** @type {{ ref: number, caller: number, target: number }[]} */ (
+      this.all(
+        `SELECT r.id AS ref, r.caller, l.target_symbol AS target FROM refs r JOIN links l ON l.ref = r.id
+         WHERE r.kind IN ('call', 'fetch') AND r.caller IS NOT NULL AND l.target_symbol IS NOT NULL
+         UNION ALL
+         SELECT r.id, r.caller, t.id FROM refs r JOIN links l ON l.ref = r.id AND l.target_symbol IS NULL
+           JOIN symbols t ON t.file = l.target_file AND t.parent IS NULL AND t.kind = 'procedure'
+         WHERE r.kind IN ('call', 'fetch') AND r.caller IS NOT NULL`,
+      )
+    );
+    const skipped = new Set(deadCalls);
+    /** @type {Map<number, number[]>} */
+    const callees = new Map();
+    for (const call of calls) if (!skipped.has(call.ref)) callees.get(call.caller)?.push(call.target) ?? callees.set(call.caller, [call.target]);
+    const live = new Set(roots);
+    for (let frontier = roots; frontier.length; ) {
+      frontier = frontier.flatMap((id) => callees.get(id) ?? []).filter((id) => !live.has(id));
+      for (const id of frontier) live.add(id);
+    }
+    const allProcedures = /** @type {{ id: number, parent: number | null, name: string, path: string, line: number, end_line: number, callers: string | null }[]} */ (
+      this.all(
+        `SELECT s.id, s.parent, s.name, f.path, s.line, s.end_line,
+           (SELECT group_concat(DISTINCT c.name) FROM links l JOIN refs r ON r.id = l.ref JOIN symbols c ON c.id = r.caller WHERE l.target_symbol = s.id) AS callers
+         FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'procedure' ORDER BY f.path, s.line`,
+      )
+    );
+    const deadProcedures = new Set(allProcedures.filter((p) => !live.has(p.id)).map((p) => p.id));
+    // A dead procedure's nested ones go with it.
+    const procedures = allProcedures
+      .filter((p) => deadProcedures.has(p.id) && !(p.parent !== null && deadProcedures.has(p.parent)))
+      .map(({ name, path, line, end_line, callers }) => ({ name, path, line, end: end_line, callers: callers ? callers.split(",") : [] }));
+
+    // 3. Variables no live statement reads, as a whole, a field, or through
+    // a LIKE copy. Parameters, files, entries and pointers that base another
+    // variable stay; a dead procedure's own variables go with it.
+    const declared = /** @type {{ id: number, parent: number | null, scope: number | null, name: string, type: string | null, storage: string | null, external: number, parameter: number | null, path: string, line: number, procedure: string | null }[]} */ (
+      this.all(
+        `SELECT v.id, v.parent, v.scope, v.name, v.type, v.storage, v.external, v.parameter, f.path, v.line, p.name AS procedure
+         FROM variables v JOIN files f ON f.id = v.file LEFT JOIN symbols p ON p.id = v.scope ORDER BY v.id`,
+      )
+    );
+    const accesses = /** @type {{ variable: number | null, through: number | null, mode: string, statement: number, caller: number | null, kind: string }[]} */ (
+      this.all(`SELECT x.variable, x.through, x.mode, x.statement, s.caller, s.kind FROM accesses x JOIN statements s ON s.id = x.statement`)
+    );
+    const read = new Set(), written = new Set();
+    for (const x of accesses) {
+      if (deadStatements.has(x.statement) || (x.caller !== null && deadProcedures.has(x.caller))) continue;
+      // A loop tests its control variable.
+      const into = x.mode === "write" && x.kind !== "do" ? written : read;
+      if (x.variable !== null) into.add(x.variable);
+      if (x.through !== null) into.add(x.through);
+    }
+    const kept = new Set(
+      /** @type {{ name: string }[]} */ (this.all(`SELECT DISTINCT upper(base) AS name FROM variables WHERE base IS NOT NULL UNION SELECT DISTINCT upper(like) FROM variables WHERE like IS NOT NULL`))
+        .flatMap((b) => b.name.match(/[A-Z_#@$][\w#@$]*/g) ?? []),
+    );
+    // Reading a structure reads its fields; reading a field needs its structure.
+    // Ids grow down a structure, so one pass each way does it.
+    const readAbove = new Set(), readBelow = new Set(), writtenBelow = new Set();
+    for (const v of declared) if (read.has(v.id) || readAbove.has(v.parent)) readAbove.add(v.id);
+    for (const v of [...declared].reverse()) {
+      if (read.has(v.id) || readBelow.has(v.id)) readBelow.add(v.parent);
+      if (written.has(v.id) || writtenBelow.has(v.id)) writtenBelow.add(v.parent);
+    }
+    const isDead = /** @param {typeof declared[number]} v */ (v) =>
+      !readAbove.has(v.id) && !readBelow.has(v.id) && v.parameter === null && v.external === 0 && v.name !== "*"
+      && !["FILE", "ENTRY"].includes(v.type ?? "") && v.storage !== "PARAMETER" && !kept.has(v.name.toUpperCase())
+      && !(v.scope !== null && deadProcedures.has(v.scope));
+    /** @type {Set<number | null>} */
+    const deadVariables = new Set(declared.filter(isDead).map((v) => v.id));
+    const variables = declared
+      .filter((v) => deadVariables.has(v.id) && !deadVariables.has(v.parent))
+      .sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)
+      .map((v) => ({ name: v.name, path: v.path, line: v.line, procedure: v.procedure, written: written.has(v.id) || writtenBelow.has(v.id) }));
+
+    return {
+      conditions: conditions.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line)
+        .map(({ path, line, procedure, kind, condition, always, why, branch, from, to }) => ({ path, line, procedure, kind, condition, always, why, branch, from, to })),
+      procedures,
+      variables,
+    };
   }
 
   /**

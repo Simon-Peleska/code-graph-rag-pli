@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "dli", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -155,6 +155,14 @@ test("dli matches a program's DL/I calls to the PCBs of its PSB", () => {
   assert.equal(
     found.result.content[0].text,
     [
+      "PSB KDP00005 as transaction program",
+      "  GU on IOPCB = I/O PCB I/O area MSG in KDP00005: SRC/KDP00005:31",
+      "  GU KUNDE on DBPCB = PCB 2 DB DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:33",
+      "  GNP KONTO on DBPCB = PCB 2 DB DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:34",
+      "  REPL on DBPCB = PCB 2 DB DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:35",
+      "  ISRT on ALTPCB = PCB 1 TP ALTPCB I/O area MSG in KDP00005: SRC/KDP00005:36",
+      "  ISRT MOD KDF001O on IOPCB = I/O PCB I/O area MSG in KDP00005: SRC/KDP00005:37",
+      "  DLET on DBPCB = PCB 2 DB DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:38",
       "PSB KDPSB01 as KDJOB03 step AUSK",
       "  GU on IOPCB = I/O PCB I/O area MSG in KDP00005: SRC/KDP00005:31",
       "  GU KUNDE on DBPCB = PCB 2 DB KDPCB1 DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:33",
@@ -162,9 +170,89 @@ test("dli matches a program's DL/I calls to the PCBs of its PSB", () => {
       "  REPL on DBPCB = PCB 2 DB KDPCB1 DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:35",
       "  ISRT on ALTPCB = PCB 1 TP ALTPCB I/O area MSG in KDP00005: SRC/KDP00005:36",
       "  ISRT MOD KDF001O on IOPCB = I/O PCB I/O area MSG in KDP00005: SRC/KDP00005:37",
+      "  DLET on DBPCB = PCB 2 DB KDPCB1 DBD KDDBD01 PROCOPT=A I/O area SEG in KDP00005: SRC/KDP00005:38",
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "kdp00001 makes no DL/I calls of its own.");
+});
+
+test("transaction gives a transaction's CRUD matrix over segments, messages and tables", () => {
+  const [kd05, byProgram, none] = serve([tool("transaction", { name: "kd05" }), tool("transaction", { name: "KDP00001" }), tool("transaction", { name: "NIX" })], facts);
+  assert.equal(
+    kd05.result.content[0].text,
+    [
+      "KD05 PSB KDP00005, programs KDP00005, KDP00004: IMS/KDSYSDEF:9",
+      "  CR-- message I/O PCB: insert ISRT MOD KDF001O at SRC/KDP00005:37; read GU at SRC/KDP00005:31",
+      "  C--- message ALTPCB: insert ISRT at SRC/KDP00005:36",
+      "  -R-- segment KDDBD01.KUNDE: read GU at SRC/KDP00005:33",
+      // REPL and DLET have no SSA: they work on KONTO, which the GNP before them got.
+      "  -RUD segment KDDBD01.KONTO: read GNP at SRC/KDP00005:34; update REPL at SRC/KDP00005:35; delete DLET at SRC/KDP00005:38",
+      // KDP00004's SQL, as the program KDP00005 calls.
+      "  -RU- table PROD.KUNDE: read SELECT NAME, SALDO WHERE KDNR, TYP at SRC/KDP00004:6; read CURSOR C1 WHERE KDNR, TYP at SRC/KDP00004:15; update UPDATE SET SALDO WHERE KDNR at SRC/KDP00004:9",
+      "  CR-- table PROD.BUCHUNG: insert INSERT BUCHNR, KDNR, BETRAG at SRC/KDP00004:11; read CURSOR C1 BUCHNR, BETRAG WHERE KDNR at SRC/KDP00004:14",
+    ].join("\n"),
+  );
+  assert.equal(
+    byProgram.result.content[0].text,
+    [
+      "KD01 PSB KDP00001 (no PSB gen), programs KDP00001: IMS/KDSYSDEF:5",
+      "  touches no segment, message, table or file",
+      "KD02 PSB KDP00001 (no PSB gen), programs KDP00001: IMS/KDSYSDEF:6",
+      "  touches no segment, message, table or file",
+      "KD03 PSB KDP00001 (no PSB gen), programs KDP00001: IMS/KDSYSDEF:6",
+      "  touches no segment, message, table or file",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No transaction has the code, PSB or program NIX.");
+});
+
+test("data_use gives a procedure's CRUD matrix over what it and its callees touch", () => {
+  const [main, files, none] = serve([tool("data_use", { procedure: "kdp00005" }), tool("data_use", { procedure: "KDP00003" }), tool("data_use", { procedure: "NIX" })], facts);
+  assert.equal(
+    main.result.content[0].text,
+    [
+      "KDP00005 at SRC/KDP00005:1, calling KDP00004",
+      "  CR-- message I/O PCB: insert ISRT MOD KDF001O at SRC/KDP00005:37; read GU at SRC/KDP00005:31",
+      "  C--- message ALTPCB: insert ISRT at SRC/KDP00005:36",
+      "  -R-- segment KDDBD01.KUNDE: read GU at SRC/KDP00005:33",
+      "  -RUD segment KDDBD01.KONTO: read GNP at SRC/KDP00005:34; update REPL at SRC/KDP00005:35; delete DLET at SRC/KDP00005:38",
+      "  -RU- table PROD.KUNDE: read SELECT NAME, SALDO WHERE KDNR, TYP at SRC/KDP00004:6; read CURSOR C1 WHERE KDNR, TYP at SRC/KDP00004:15; update UPDATE SET SALDO WHERE KDNR at SRC/KDP00004:9",
+      "  CR-- table PROD.BUCHUNG: insert INSERT BUCHNR, KDNR, BETRAG at SRC/KDP00004:11; read CURSOR C1 BUCHNR, BETRAG WHERE KDNR at SRC/KDP00004:14",
+    ].join("\n"),
+  );
+  // PUT SKIP LIST goes to SYSPRINT, which is not data.
+  assert.equal(
+    files.result.content[0].text,
+    [
+      "KDP00003 at SRC/KDP00003:1",
+      "  --UD file KUNDEN: update REWRITE FROM K KEY K.KDNR at SRC/KDP00003:6; delete DELETE KEY K.KDNR at SRC/KDP00003:9",
+      "  C--- file AUSG: insert LOCATE A_SATZ at SRC/KDP00003:7",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "There is no procedure NIX.");
+});
+
+test("dead_code lists the branches, procedures and variables that can go", () => {
+  const [file, none] = serve([tool("dead_code", { path: "SRC/KDP00010" }), tool("dead_code", { path: "NIX" })], facts);
+  assert.equal(
+    file.result.content[0].text,
+    [
+      "Conditions that never change (4):",
+      "SRC/KDP00010:12 IF TESTMODUS is always false, as TESTMODUS is always '0'B: the THEN branch, lines 12-12, never runs",
+      "SRC/KDP00010:13 IF VERSION = 'V1' is always false, as VERSION is always 'V2': the THEN branch, lines 13-16, never runs",
+      "SRC/KDP00010:19 WHEN 'V0', 'V1' is always false, as VERSION is always 'V2': its body, lines 19-19, never runs",
+      "SRC/KDP00010:23 IF 1 = 0 is always false, as it compares constants: the THEN branch, lines 23-23, never runs",
+      "Procedures nothing reaches (3):",
+      "SRC/KDP00010:24 TESTDRUCK, called only from code that never runs, in KDP00010",
+      "SRC/KDP00010:27 ALTDRUCK, called only from code that never runs, in KDP00010",
+      "SRC/KDP00010:30 HILFE, called only from code that never runs, in TESTDRUCK",
+      "Variables nothing reads (3):",
+      "SRC/KDP00010:5 ALTFELD in KDP00010, never used",
+      "SRC/KDP00010:6 ZAEHLER in KDP00010, written but never read",
+      "SRC/KDP00010:8 PUFFER in KDP00010, never used",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "Found no dead code in NIX.");
 });
 
 test("field shows where a field is set, passed and compared, and under which conditions", () => {

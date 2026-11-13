@@ -142,6 +142,9 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.flowOf", (/** @type {string | undefined} */ name) => showFlowOf(context, name)),
     vscode.commands.registerCommand("pliGraph.dataFlow", (/** @type {string | undefined} */ id) => showDataFlow(context, id)),
     vscode.commands.registerCommand("pliGraph.dataModel", (/** @type {vscode.Uri | undefined} */ uri) => showDataModel(context, uri)),
+    vscode.commands.registerCommand("pliGraph.transactions", () => showTransactions(context)),
+    vscode.commands.registerCommand("pliGraph.dataUse", (/** @type {string | undefined} */ id) => showDataUse(context, id)),
+    vscode.commands.registerCommand("pliGraph.deadCode", () => showDeadCode(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     vscode.commands.registerCommand("pliGraph.tab", pliTab),
@@ -695,7 +698,9 @@ function provideCodeActions(document, range) {
   if (procedure) {
     const action = new vscode.CodeAction(`Show Flow Diagram of ${word}`);
     action.command = { title: action.title, command: "pliGraph.flowOf", arguments: [procedure] };
-    return [action];
+    const use = new vscode.CodeAction(`Show Data Use of ${word}`);
+    use.command = { title: use.title, command: "pliGraph.dataUse", arguments: [procedure] };
+    return [action, use];
   }
   const variable = graph.variableAt(where.path, range.start.line + 1, word);
   if (!variable) return [];
@@ -1094,6 +1099,55 @@ function showDataModel(context, uri) {
   }
   log.info(`data model of ${where.path}`);
   openPage(context, where.workspace, "flow", `v=model&id=${encodeURIComponent(where.path)}`, `Data Model: ${where.path.split("/").pop()}`, true);
+}
+
+// The CRUD matrix of the transactions of the word at the cursor (a code, PSB
+// or program), else of the active file's program, else of all.
+/** @param {vscode.ExtensionContext} context */
+function showTransactions(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const word = shown.editor && shown.editor.document.getWordRangeAtPosition(shown.editor.selection.active, /[A-Za-z0-9_@#$]+/);
+  const candidates = [word && shown.editor?.document.getText(word).toUpperCase(), shown.where?.path.split("/").pop()?.replace(/\.[^.]*$/, "").toUpperCase()];
+  const name =
+    candidates.find(
+      (c) =>
+        c &&
+        shown.graph.all(
+          `SELECT 1 FROM symbols t JOIN refs r ON r.caller = t.id AND r.kind = 'psb' WHERE t.kind = 'transaction' AND ? IN (t.name, r.name) LIMIT 1`,
+          c,
+        ).length,
+    ) ?? "";
+  log.info(`transaction data use of ${name || "every transaction"}`);
+  openPage(context, shown.workspace, "flow", `v=crud&id=${encodeURIComponent(name)}`, `Transactions: ${name || "all"}`, true);
+}
+
+// The CRUD matrix of a procedure and its callees: `id` when the code action
+// passes the procedure's page id, else the procedure at the cursor.
+/** @param {vscode.ExtensionContext} context @param {string} [id] */
+function showDataUse(context, id) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const procedure = id ?? (shown.where && shown.graph.flowProcedure(shown.where.path, (shown.editor?.selection.active.line ?? 0) + 1));
+  if (!procedure) {
+    const message = `[PLG045E] There is no procedure to show the data use of${shown.where ? ` in ${shown.where.path}` : ": no PL/I file is open"}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  log.info(`data use of ${procedure}`);
+  const name = procedure.replace(/^.*:(.*):\d+$/, "$1");
+  openPage(context, shown.workspace, "flow", `v=use&id=${encodeURIComponent(procedure)}`, `Data Use: ${name}`, true);
+}
+
+// The dead code of the active file of the graph, else of the workspace.
+/** @param {vscode.ExtensionContext} context */
+function showDeadCode(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
+  log.info(`dead code of ${path || "the workspace"}`);
+  openPage(context, shown.workspace, "flow", `v=dead&id=${encodeURIComponent(path)}`, `Dead Code: ${path ? path.split("/").pop() : "all"}`, true);
 }
 
 // Both pages ask for what they draw. A worker of its own with its own
