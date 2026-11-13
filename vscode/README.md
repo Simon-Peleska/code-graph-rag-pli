@@ -152,7 +152,16 @@ extension keeps of each workspace folder:
   calls on the way), and what happens when it holds and when not, with the
   conditions in between. *Sets* shows every statement that sets it, or what
   it goes on to, with the same conditions: where a message text or return
-  code comes from. A click opens the statement.
+  code comes from. *By value* is its decision table: one row per value it
+  is compared to, in every program that uses it (a field of an include is
+  one variable for all of them), with what follows when it has the value
+  and when not, how many places do it, and where it is tested. Programs
+  that disagree on a value show two outcomes, a value only some programs
+  know shows in fewer places. A `STATIC INIT` constant compared to shows as
+  its value, with its name and comment; `^=` counts as the Else of `=`; a
+  `SELECT`'s `OTHERWISE` is a row of its own; and for a condition that
+  tests more than the field only what follows when it is true is listed,
+  under the condition. A click opens the statement.
 - **Show Data Model of NAME** is a code action on a table, view or alias name,
   in a PL/I program's SQL or in DDL; anywhere else in a DDL file it is **Show
   Data Model of FILE**.
@@ -262,7 +271,8 @@ extension keeps of each workspace folder:
   `dead_code` (branches that never run, procedures nothing reaches and
   variables nothing reads, of a file or all), `messages` (the messages
   and codes set or passed on, each with the conditions it is produced
-  under, of a file or all), `field` (where a
+  under, of a file or all), `decision_table` (each value a code field is
+  compared to, in every program, with what follows), `field` (where a
   field is set, passed to a CALL or compared, under which IF, WHEN, DO and
   ON conditions), `lineage` (where a variable's value comes from and goes
   to: assignments, and arguments bound to parameters), `text` (comments
@@ -521,7 +531,8 @@ format, `VIZ-129` they could not be drawn, `VIZ-130` a column's path could
 not be read, `VIZ-131` no DDL defines the column and no SQL uses it,
 `VIZ-132` its path could not be drawn, `VIZ-133` the messages and codes
 could not be read, `VIZ-134` none are set or passed on, `VIZ-135` they
-could not be drawn.
+could not be drawn, `VIZ-136` the data flow could not be drawn as a
+decision table.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

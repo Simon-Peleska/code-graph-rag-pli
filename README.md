@@ -97,7 +97,8 @@ and goes, from screen field to batch output (`column_path`), which PCB of the PS
 (`dli`), what each transaction inserts, reads, updates and deletes
 (`transaction`) and each procedure with its callees (`data_use`), which
 branches, procedures and variables are dead (`dead_code`), which messages
-and codes are produced under which conditions (`messages`), where a field is set, passed or compared and under which
+and codes are produced under which conditions (`messages`), what follows
+from each value of a code field across the programs (`decision_table`), where a field is set, passed or compared and under which
 conditions (`field`), where its value comes from and goes, one step each
 way (`lineage`), and which comments and literals contain a text (`text`).
 

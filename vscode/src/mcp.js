@@ -137,6 +137,19 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { path: { type: "string", description: "a file's path in the workspace; empty for all" } } },
   },
   {
+    name: "decision_table",
+    description:
+      "A code field's decision table: every value it is compared to, in every program that uses it (a field of an include is one variable), with what follows when it has the value and when not, each with the IFs and WHENs around it and how many places do it. Programs that disagree on a value show as two outcomes; a value only some programs test shows in fewer places. A STATIC INIT constant compared to shows as its value with its name and comment. ^= is the Else of =; for a condition that tests more than the field, only what follows when it is true is listed, under the condition.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "the file declaring the field, an include member for a shared field" },
+        name: { type: "string", description: "the field, qualified as far as wanted: KDTYP or KUNDE_SEG.KDTYP" },
+      },
+      required: ["path", "name"],
+    },
+  },
+  {
     name: "field",
     description:
       "A PL/I field's business rules: every statement that sets it (with the literal it gets), passes it to a CALL or compares it, each with the IF, WHEN, DO and ON conditions it happens under, outermost first. Matches the field however it is qualified.",
@@ -444,6 +457,23 @@ function call(name, args) {
       ];
     });
     return [...lines, ...(truncated ? ["Only the 1000 rules found in most places are shown."] : [])].join("\n");
+  }
+  if (name === "decision_table") {
+    const table = open().decisionTable(args.path, args.name);
+    if (!table) return `No variable ${args.name} is declared in ${args.path}.`;
+    const v = table.variable;
+    const head = `${v.qualified} ${[v.type, v.size && `(${v.size})`].filter(Boolean).join("")}: ${v.path}:${v.line}${v.comment ? ` /* ${v.comment} */` : ""}`;
+    if (table.rows.length === 0) return `${head}\nNothing compares it to a value.`;
+    /** @param {string} label @param {{ text: string, guards: string[], count: number, places: { procedure: string, path: string, line: number }[] }[]} list */
+    const outcomes = (label, list) =>
+      list.map((o) => `  ${label} ${[...o.guards, o.text].join(" → ")}${o.count > 1 ? `, in ${o.count} places` : ""} at ${o.places.slice(0, 5).map((p) => `${p.path}:${p.line} in ${p.procedure}`).join(", ")}${o.count > 5 ? ` and ${o.count - 5} more` : ""}`);
+    const lines = table.rows.flatMap((r) => [
+      `${r.operator ? `${r.operator} ${r.value}` : r.value}${r.constant ? ` (${r.constant.name}${r.constant.comment ? `: ${r.constant.comment}` : ""})` : ""}, tested in ${r.places.length} place${r.places.length > 1 ? "s" : ""}:`,
+      ...outcomes("then", r.then),
+      ...outcomes("else", r.else),
+      ...(r.then.length || r.else.length ? [] : ["  nothing follows"]),
+    ]);
+    return [head, ...lines, ...(table.truncated ? ["Cut off: not every comparison or outcome is shown."] : [])].join("\n");
   }
   if (name === "field") {
     const sites = open().fieldUses(args.name.toUpperCase());

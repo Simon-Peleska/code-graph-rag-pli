@@ -218,7 +218,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
     <h2 id="flow-title"></h2>
     <label id="flow-depth-label">Calls deep 
       <input type="range" id="flow-depth" min="0" max="11" value="1"><output id="flow-depth-value">1</output></label>
-    <span class="data-as" id="data-as" hidden><button class="icon" data-icon="git-merge" data-as="diagram" aria-pressed="true" title="Diagram"></button><button class="icon" data-icon="table" data-as="table" aria-pressed="false" title="Tests"></button><button class="icon" data-icon="list-flat" data-as="sets" aria-pressed="false" title="Sets"></button></span>
+    <span class="data-as" id="data-as" hidden><button class="icon" data-icon="git-merge" data-as="diagram" aria-pressed="true" title="Diagram"></button><button class="icon" data-icon="table" data-as="table" aria-pressed="false" title="Tests"></button><button class="icon" data-icon="list-flat" data-as="sets" aria-pressed="false" title="Sets"></button><button class="icon" data-icon="symbol-enum" data-as="values" aria-pressed="false" title="By value"></button></span>
     <span class="sub" id="flow-status"></span>
   </div>
   <div id="flow-error" hidden></div>
@@ -1415,7 +1415,8 @@ async function renderModel() {
 // or the parameter it is passed as, cut out of their procedures' flows, and
 // what its comparisons lead to. As a diagram, as a table of its rules: every
 // condition and SQL WHERE that tests it, or as a table of every statement that
-// sets it, each with the conditions it is under.
+// sets it, each with the conditions it is under, or as a decision table: each
+// value it is compared to, in every program, with what follows.
 let dataId = null, dataFlow = null, dataAs = "diagram";
 function showData(id) {
   dataId = id;
@@ -1466,6 +1467,24 @@ async function renderData() {
         el("td", { class: "in", title: `${s.path}:${s.line}`, onclick: open(s) }, `${s.procedure}:${s.line}`)));
       document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
         rows.length ? table(["When", "Sets", "In"], rows) : null));
+    } else if (dataAs === "values") {
+      // One row per value compared to, across every program using the field.
+      const outcomes = (list) => list.map(o => el("div", { class: "outcome" },
+        o.guards.length ? el("div", { class: "guard" }, o.guards.join(" → ")) : null,
+        el("pre", { title: o.places.map(p => `${p.path}:${p.line}`).join("\n"), onclick: open(o.places[0]) }, o.text + (o.count > 1 ? `   (${o.count}×)` : ""))));
+      const places = (list) => [
+        ...list.slice(0, 20).map(p => el("div", { class: "in", title: `${p.path}:${p.line}\n${p.condition}`, onclick: open(p) }, `${p.procedure}:${p.line}`)),
+        list.length > 20 ? el("div", {}, `and ${list.length - 20} more`) : null,
+      ];
+      const rows = data.values.map(r => el("tr", {},
+        el("td", {}, el("pre", {}, r.operator ? `${r.operator} ${r.value}` : r.value),
+          r.constant ? el("div", { class: "guard" }, r.constant.name + (r.constant.comment ? `: ${r.constant.comment}` : "")) : null),
+        el("td", {}, outcomes(r.then)),
+        el("td", {}, outcomes(r.else)),
+        el("td", {}, places(r.places))));
+      document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
+        data.comment ? el("p", {}, data.comment) : null,
+        rows.length ? table(["Value", "Then", "Else", "Tested in"], rows) : el("p", {}, `Nothing compares ${data.variable} to a value.`)));
     } else if (dataAs === "table") {
       const outcomes = (list) => list.map(o => el("div", { class: "outcome" },
         o.guards.length ? el("div", { class: "guard" }, o.guards.join(" → ")) : null,
@@ -1489,7 +1508,7 @@ async function renderData() {
     host.postMessage({ type: "route", hash: location.hash.slice(1), title: `PL/I Data Flow: ${data.variable}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
     console.info(`[graph] data flow of ${dataId} as ${dataAs}: ${data.lanes.length} lanes, ${data.rules.length} rules, ${data.sets.length} sets, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
   } catch (cause) {
-    fail({ table: "VIZ-116", sets: "VIZ-118" }[dataAs] ?? "VIZ-115", `could not draw the data flow of ${dataId} as a ${dataAs}: ${cause.message}`, cause);
+    fail({ table: "VIZ-116", sets: "VIZ-118", values: "VIZ-136" }[dataAs] ?? "VIZ-115", `could not draw the data flow of ${dataId} as a ${dataAs}: ${cause.message}`, cause);
   }
 }
 

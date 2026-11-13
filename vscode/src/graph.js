@@ -2001,6 +2001,100 @@ export class Graph {
   }
 
   /**
+   * A code field's decision table: every value it is compared to, in every
+   * program that uses it (a field of an include is one variable), with what
+   * follows when it has the value and when not. A named constant shows as
+   * its value, with its name and comment. `^= 'P'` is the row of `= 'P'`
+   * with Then and Else swapped. For a condition that tests more than the
+   * value only what follows when it is true is listed, under the condition.
+   * Null when there is no such variable.
+   * @param {string} path the file declaring it
+   * @param {string} name qualified as far as wanted: KDTYP or KUNDE_SEG.KDTYP
+   * @param {number} [line] the declaration's line, when the name is not enough
+   */
+  decisionTable(path, name, line) {
+    const variable = /** @type {{ id: number, qualified: string, type: string | null, size: string | null, comment: string | null, path: string, line: number } | undefined} */ (
+      this.all(
+        `SELECT v.id, v.qualified, v.type, v.size, v.comment, f.path, v.line FROM files f JOIN variables v ON v.file = f.id
+         WHERE f.path = ? AND (upper(v.qualified) = upper(?) OR upper(v.qualified) LIKE '%.' || upper(?)) AND (? = 0 OR v.line = ?)
+         ORDER BY upper(v.qualified) = upper(?) DESC, v.line LIMIT 1`,
+        path, name, name, line ?? 0, line ?? 0, name,
+      )[0]
+    );
+    if (!variable) return null;
+    const { rules, truncated } = this.variableRules(variable.id);
+    return { variable, rows: this.byValue(rules), truncated };
+  }
+
+  /**
+   * A variable's rules (`variableRules`) as a decision table, one row per
+   * value; see `decisionTable`.
+   * @param {ReturnType<Graph["variableRules"]>["rules"]} rules
+   */
+  byValue(rules) {
+    // The named constants the comparisons read: a STATIC INIT nothing changes.
+    const constants = /** @type {{ statement: number, name: string, qualified: string, init: string, comment: string | null }[]} */ (
+      this.all(
+        `SELECT a.statement, c.name, c.qualified, c.init, c.comment FROM accesses a JOIN variables c ON c.id = a.variable
+         WHERE a.statement IN (SELECT value FROM json_each(?)) AND a.mode = 'read' AND c.init IS NOT NULL AND c.dims IS NULL
+           AND NOT EXISTS (SELECT 1 FROM accesses x WHERE x.variable = c.id AND x.mode IN ('write', 'arg'))`,
+        JSON.stringify(rules.map((r) => r.statement)),
+      )
+    );
+    const constantOf = (/** @type {number} */ statement, /** @type {string} */ value) =>
+      constants.find((c) => c.statement === statement && [c.name, c.qualified].some((n) => n.toUpperCase() === value.toUpperCase()));
+
+    /** @typedef {{ procedure: string, path: string, line: number }} Place */
+    /** @typedef {{ text: string, guards: string[], count: number, places: Place[] }} Outcome */
+    /** @type {Map<string, { operator: string, value: string, constant: { name: string, comment: string | null } | null, places: (Place & { condition: string })[], then: Outcome[], else: Outcome[] }>} */
+    const rows = new Map();
+    const add = (/** @type {Outcome[]} */ list, /** @type {string[]} */ guards, /** @type {{ text: string, path: string, line: number }} */ o, /** @type {string} */ procedure) => {
+      const text = o.text.replace(/\s+/g, " ").trim();
+      const same = list.find((x) => x.text === text && x.guards.join("\n") === guards.join("\n"));
+      const outcome = same ?? list[list.push({ text, guards, count: 0, places: [] }) - 1];
+      outcome.count++;
+      if (outcome.places.length < 10) outcome.places.push({ procedure, path: o.path, line: o.line });
+    };
+    const negated = new Set(["^=", "¬=", "<>"]);
+    // What a SELECT does for none of its WHENs, once per SELECT: its WHENs
+    // share the OTHERWISE, so its first statement tells the SELECT.
+    /** @type {Set<number>} */
+    const selects = new Set();
+    for (const rule of rules) {
+      const first = rule.else[0];
+      if (!rule.condition.startsWith("WHEN (") || !first || selects.has(first.statement)) continue;
+      selects.add(first.statement);
+      const row = rows.get("OTHERWISE") ?? rows.set("OTHERWISE", { operator: "", value: "OTHERWISE", constant: null, places: [], then: [], else: [] }).get("OTHERWISE");
+      if (!row) continue;
+      row.places.push({ procedure: rule.procedure, path: first.path, line: first.line, condition: "OTHERWISE" });
+      for (const o of rule.else) add(row.then, o.guards, o, rule.procedure);
+    }
+    for (const rule of rules) {
+      if (!rule.operator) continue;
+      // A condition that tests more than this field: AND, OR, or a second comparison.
+      const compound = /[&|]/.test(rule.condition.replace(/'[^']*'/g, ""));
+      const not = negated.has(rule.operator);
+      const operator = not ? "=" : rule.operator;
+      for (const written of rule.values) {
+        const constant = constantOf(rule.statement, written);
+        const value = constant ? constant.init : written;
+        const key = `${operator} ${value}`;
+        const row = rows.get(key) ?? rows.set(key, { operator, value, constant: null, places: [], then: [], else: [] }).get(key);
+        if (!row) continue;
+        if (constant && !row.constant) row.constant = { name: constant.name, comment: constant.comment };
+        row.places.push({ procedure: rule.procedure, path: rule.path, line: rule.line, condition: rule.condition });
+        const [when, otherwise] = not ? [row.else, row.then] : [row.then, row.else];
+        for (const o of rule.then) add(when, compound ? [rule.condition, ...o.guards] : o.guards, o, rule.procedure);
+        if (!compound && !rule.condition.startsWith("WHEN (")) for (const o of rule.else) add(otherwise, o.guards, o, rule.procedure);
+      }
+    }
+    const byCount = (/** @type {Outcome} */ a, /** @type {Outcome} */ b) => b.count - a.count || a.text.localeCompare(b.text);
+    return [...rows.values()]
+      .map((row) => ({ ...row, then: row.then.sort(byCount), else: row.else.sort(byCount) }))
+      .sort((a, b) => Number(!a.operator) - Number(!b.operator) || b.places.length - a.places.length || a.operator.localeCompare(b.operator) || a.value.localeCompare(b.value));
+  }
+
+  /**
    * The comments of procedures and declarations, and the string literals of
    * statements, that contain the text, ignoring case: where a business term,
    * message or error code shows up.
@@ -2372,8 +2466,8 @@ export class Graph {
    */
   pageDataFlow(id) {
     const parts = /^(.*):([^:]*):(\d+)$/.exec(id);
-    const variable = parts && /** @type {{ id: number } | undefined} */ (
-      this.all(`SELECT v.id FROM variables v JOIN files f ON f.id = v.file WHERE f.path = ? AND v.qualified = ? AND v.line = ?`, parts[1], parts[2], Number(parts[3]))[0]
+    const variable = parts && /** @type {{ id: number, comment: string | null } | undefined} */ (
+      this.all(`SELECT v.id, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE f.path = ? AND v.qualified = ? AND v.line = ?`, parts[1], parts[2], Number(parts[3]))[0]
     );
     if (!parts || !variable) return null;
     const { passed, touched, tests, rules, sets, truncated } = this.variableRules(variable.id);
@@ -2411,7 +2505,7 @@ export class Graph {
     const steps = flow.tops.length === 1 ? flow.tops[0]
       : flow.tops.length ? [{ kind: "select", text: `Data flow of ${parts[2]}`, ...where, branches: flow.tops.map((steps, i) => ({ guard: flow.lanes[steps[0]?.lane ?? i].name, steps })) }]
       : [];
-    return { variable: parts[2], lanes: flow.lanes, steps, truncated: truncated || flow.truncated, rules, sets };
+    return { variable: parts[2], comment: variable.comment, lanes: flow.lanes, steps, truncated: truncated || flow.truncated, rules, sets, values: this.byValue(rules) };
   }
 
   /**

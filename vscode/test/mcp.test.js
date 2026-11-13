@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "messages", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "messages", "decision_table", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -359,6 +359,30 @@ test("messages lists each message and code with the conditions it is produced un
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "No message or code is set or passed on in SRC/KDP00005.");
+});
+
+test("decision_table lists each value of a code field with what follows, across the programs", () => {
+  const [kdtyp, none] = serve([tool("decision_table", { path: "INCLUDE/KDC00001", name: "kdtyp" }), tool("decision_table", { path: "SRC/KDP00006", name: "NIX" })], facts);
+  assert.equal(
+    kdtyp.result.content[0].text,
+    [
+      "KUNDE_SEG.KDTYP CHAR(1): INCLUDE/KDC00001:4 /* KUNDENTYP: P ODER G */",
+      "= 'G' (KDTYP_GEWERBE: GEWERBEKUNDE), tested in 2 places:",
+      "  then STUFE = 0; at SRC/KDP00015:9 in KDP00015",
+      "  then STUFE = 4; at SRC/KDP00016:8 in KDP00016",
+      "  else IF KDTYP = KDTYP_PRIVAT [true] → IF KREDIT > 10000 [true] → MELDUNG = 'KD301 KREDIT ZU HOCH'; at SRC/KDP00015:11 in KDP00015",
+      "  else IF KDTYP = KDTYP_PRIVAT [false] → STUFE = 8; at SRC/KDP00015:13 in KDP00015",
+      "= 'P' (KDTYP_PRIVAT: PRIVATKUNDE), tested in 2 places:",
+      "  then IF KREDIT > 10000 [true] → MELDUNG = 'KD301 KREDIT ZU HOCH'; at SRC/KDP00015:11 in KDP00015",
+      "  then STUFE = 0; at SRC/KDP00016:9 in KDP00016",
+      "  else STUFE = 8; at SRC/KDP00015:13 in KDP00015",
+      "= 'X', tested in 1 place:",
+      "  then STUFE = 0; at SRC/KDP00016:9 in KDP00016",
+      "OTHERWISE, tested in 1 place:",
+      "  then STUFE = 8; at SRC/KDP00016:10 in KDP00016",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No variable NIX is declared in SRC/KDP00006.");
 });
 
 test("lineage follows a field through moves and calls", () => {

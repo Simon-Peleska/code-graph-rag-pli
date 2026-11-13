@@ -59,8 +59,16 @@ rows up by the column.
   Joined with the comments on the declaration, it's close to a glossary entry
   for that code.
 
-Status: the *Tests* tab of *Show Data Flow* lists one variable's tests with
-their outcomes; no table across the codebase per code field, no comments.
+Status: built. The *By value* tab of *Show Data Flow* and the
+`decision_table` MCP tool give one row per value a field is compared to,
+in every program that uses it (a field of an include is one variable for
+all of them), with what follows when it has the value and when not, and
+where: `= 'G'` then `STUFE = 0` in KDP00015, `STUFE = 4` in KDP00016. A
+`STATIC INIT` constant counts as its value and shows its name and comment;
+`^=` is the Else of `=`; a `SELECT`'s `OTHERWISE` is a row of its own. On
+the sample a field takes 3–11 ms. Limits: for a condition that tests more
+than the field (`&`, `|`), only what follows when it is true is listed,
+under the condition.
 
 ## 4. Error codes and messages
 

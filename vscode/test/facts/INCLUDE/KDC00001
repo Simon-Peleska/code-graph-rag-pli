@@ -1,7 +1,7 @@
  /* KUNDENSATZ: das Segment KUNDE der Datenbank KDDB */
  DCL 1 KUNDE_SEG BASED(KUNDE_PTR),
        2 KDNR      CHAR(8),
-       2 KDTYP     CHAR(1),
+       2 KDTYP     CHAR(1),     /* KUNDENTYP: P ODER G */
        2 ADRESSE,
          3 ORT     CHAR(30),
          3 PLZ     PIC'99999',

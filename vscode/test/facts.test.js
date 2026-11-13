@@ -480,11 +480,14 @@ test("comments describe procedures and declarations, literals are kept with thei
     { name: "KDP00011", comment: "KDP00011: KUNDE ANLEGEN", line: 2 },
     { name: "KDP00013", comment: "KDP00013: SALDO BUCHEN", line: 2 },
     { name: "KDP00014", comment: "KDP00014: SALDENLISTE", line: 2 },
+    { name: "KDP00015", comment: "KDP00015: KREDITRAHMEN PRUEFEN", line: 2 },
+    { name: "KDP00016", comment: "KDP00016: KUNDENTYP EINSTUFEN", line: 2 },
   ]);
   assert.deepEqual(
     rows(`SELECT v.qualified, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE v.comment IS NOT NULL AND f.path IN ('SRC/KDP00009', 'INCLUDE/KDC00001') ORDER BY v.id`),
     [
       { qualified: "KUNDE_SEG", comment: "KUNDENSATZ: das Segment KUNDE der Datenbank KDDB" },
+      { qualified: "KUNDE_SEG.KDTYP", comment: "KUNDENTYP: P ODER G" },
       { qualified: "KDNR", comment: "KUNDENNUMMER" },
       { qualified: "SPERRE", comment: "SPERRVERMERK DES KUNDEN" },
       { qualified: "SPERRE.KZ", comment: "S = GESPERRT, F = FREI" },
@@ -644,9 +647,45 @@ test("messages and codes: each value set or passed on, with the conditions it is
   // a rule found in more places comes first.
   const all = graph.messages("");
   assert.equal(all.truncated, false);
-  assert.deepEqual(all.rules.slice(0, 2).map((r) => `${r.target} ${r.value} ${r.count}`), ["PUT 'ALT' 2", "AUSGABE.MELDUNG 'GEBUCHT' 1"]);
+  assert.deepEqual(all.rules.slice(0, 2).map((r) => `${r.target} ${r.value} ${r.count}`), ["PUT 'ALT' 2", "STUFE 0 2"]);
   assert.ok(all.rules.some((r) => r.target === "AUSGABE.MELDUNG" && r.value === "'KD104 KUNDENNR NICHT NUMERISCH'"));
   assert.ok(!all.rules.some((r) => r.target.startsWith("CALL CEETDLI")));
+});
+
+test("decision table: every value a code field is compared to, in every program, with what follows", () => {
+  const graph = new Graph(db, root);
+  const said = (/** @type {{ text: string, guards: string[], count: number }[]} */ list) => list.map((o) => [...o.guards, o.text].join(" > ") + (o.count > 1 ? ` x${o.count}` : ""));
+  const table = (/** @type {string} */ path, /** @type {string} */ name) =>
+    graph.decisionTable(path, name)?.rows.map((r) => ({
+      value: `${r.operator} ${r.value}${r.constant ? ` (${r.constant.name}: ${r.constant.comment})` : ""}`.trim(),
+      at: r.places.map((p) => `${p.path}:${p.line}`),
+      then: said(r.then),
+      else: said(r.else),
+    }));
+  // A field of an include is tested in each program that includes it; the
+  // programs disagree on 'G', only one knows 'X', and constants count as their value.
+  assert.deepEqual(graph.decisionTable("INCLUDE/KDC00001", "KDTYP")?.variable.comment, "KUNDENTYP: P ODER G");
+  assert.deepEqual(table("INCLUDE/KDC00001", "KDTYP"), [
+    {
+      value: "= 'G' (KDTYP_GEWERBE: GEWERBEKUNDE)",
+      at: ["SRC/KDP00015:9", "SRC/KDP00016:8"],
+      then: ["STUFE = 0;", "STUFE = 4;"],
+      else: ["IF KDTYP = KDTYP_PRIVAT [true] > IF KREDIT > 10000 [true] > MELDUNG = 'KD301 KREDIT ZU HOCH';", "IF KDTYP = KDTYP_PRIVAT [false] > STUFE = 8;"],
+    },
+    { value: "= 'P' (KDTYP_PRIVAT: PRIVATKUNDE)", at: ["SRC/KDP00015:10", "SRC/KDP00016:9"], then: ["IF KREDIT > 10000 [true] > MELDUNG = 'KD301 KREDIT ZU HOCH';", "STUFE = 0;"], else: ["STUFE = 8;"] },
+    { value: "= 'X'", at: ["SRC/KDP00016:9"], then: ["STUFE = 0;"], else: [] },
+    { value: "OTHERWISE", at: ["SRC/KDP00016:10"], then: ["STUFE = 8;"], else: [] },
+  ]);
+  // ^= 'P' is the Else of = 'P'; a condition testing more than the field gives what follows when it is true, under it.
+  assert.deepEqual(table("SRC/KDP00006", "KD.TYP"), [
+    { value: "= 'A'", at: ["SRC/KDP00006:17"], then: ["RC = 1;"], else: [] },
+    { value: "= 'B'", at: ["SRC/KDP00006:17"], then: ["RC = 1;"], else: [] },
+    { value: "= 'C'", at: ["SRC/KDP00006:18"], then: ["CALL PRUEFEN(KD, RC);", "RC = 2;"], else: [] },
+    { value: "= 'G'", at: ["SRC/KDP00006:10"], then: ["MELDUNG = 'GESCHAEFTSKUNDE';"], else: ["MELDUNG = 'PRIVATKUNDE';", "IF SALDO > LIMIT & TYP ^= 'P' [true] > RC = 4;"] },
+    { value: "= 'P'", at: ["SRC/KDP00006:13"], then: [], else: ["IF SALDO > LIMIT & TYP ^= 'P' > RC = 4;"] },
+    { value: "OTHERWISE", at: ["SRC/KDP00006:22"], then: ["SIGNAL ERROR;"], else: [] },
+  ]);
+  assert.equal(graph.decisionTable("SRC/KDP00006", "NIX"), null);
 });
 
 test("a ß before a name does not shift its column", async () => {
