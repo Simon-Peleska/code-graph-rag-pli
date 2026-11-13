@@ -232,7 +232,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
-const flowPage = ["flow", "data", "model", "crud", "use", "dead", "input"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
+const flowPage = ["flow", "data", "model", "crud", "use", "dead", "messages", "input", "column"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -1785,16 +1785,93 @@ async function renderColumn() {
   }
 }
 
+// ---- messages and codes ---------------------------------------------------
+// The messages and codes of one file (the id) or the workspace (v=messages):
+// each value set or passed on, with the conditions it is produced under.
+let messagesPath = "";
+function showMessages(path) {
+  messagesPath = path || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderMessages();
+}
+async function renderMessages() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the messages and codes of ${messagesPath || "the workspace"}`;
+  let messages;
+  try {
+    messages = await ask("messages", messagesPath);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-133", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!messages.rules.length) return fail("VIZ-134", `no message or code is set or passed on in ${messagesPath || "the workspace"}`);
+  try {
+    const read = performance.now();
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const filter = el("input", { type: "search", placeholder: "filter by field, value or condition", class: "filter" });
+    const list = el("div", {});
+    // The filter redraws the table, so the keyboard moves over the shown rows only.
+    const draw = () => {
+      const wanted = filter.value.trim().toUpperCase();
+      targets = [];
+      let row = 0;
+      const rows = messages.rules.flatMap(r => {
+        const named = r.how === "set" ? `${r.target} =` : r.target;
+        const ways = r.ways.filter(w => !wanted || `${named} ${r.value} ${r.constant ?? ""} ${w.conditions.join(" ")}`.toUpperCase().includes(wanted));
+        const shown = r.ways.reduce((n, w) => n + w.places.length, 0);
+        return ways.map((w, i) => {
+          const y = row++;
+          const places = w.places.slice(0, 20).map((p, j) => {
+            const node = el("pre", { title: `${p.path}:${p.line}`, onclick: open(p) }, `${p.path}:${p.line}${p.procedure ? ` in ${p.procedure}` : ""}`);
+            target(node, p, 1, y + j / 100);
+            return node;
+          });
+          const more = w.places.length - places.length + (i === ways.length - 1 ? r.count - shown : 0);
+          return el("tr", {},
+            el("td", {}, i === 0 ? el("pre", {}, `${named} ${r.value}`) : "", i === 0 && r.constant ? el("div", { class: "guard" }, `from ${r.constant}`) : "", i === 0 && r.count > 1 ? el("div", { class: "guard" }, `${r.count} places`) : ""),
+            el("td", {}, w.conditions.length ? el("pre", {}, w.conditions.join("\n› ")) : el("div", { class: "guard" }, "always")),
+            el("td", {}, places, more > 0 ? el("div", { class: "guard" }, `and ${more} more`) : ""));
+        });
+      });
+      list.replaceChildren(rows.length ? table(["Set or passed on", "When", "Where"], rows) : el("div", { class: "guard" }, "nothing matches the filter"));
+    };
+    filter.addEventListener("input", draw);
+    draw();
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud" }, filter, list,
+      messages.truncated ? el("div", { class: "guard" }, "only the 1000 rules found in most places are shown") : ""));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Messages: ${messagesPath ? messagesPath.split("/").pop() : "all"}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${messages.rules.length} rules, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-135", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
 // The diagram tab shows a procedure's flow, a variable's data flow, a DDL
 // file's data model, what transactions or a procedure do to the data, the
-// dead code, a screen's input rules or a column's path.
+// dead code, the messages and codes, a screen's input rules or a column's path.
 const isModel = () => route().view === "model";
 const isCrud = () => ["crud", "use"].includes(route().view);
 const isDead = () => route().view === "dead";
 const isInput = () => route().view === "input";
 const isColumn = () => route().view === "column";
-const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isInput() ? showInput(route().id) : isColumn() ? showColumn(route().id) : showFlow(route().id);
-const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isInput() ? renderInput() : isColumn() ? renderColumn() : renderFlow();
+const isMessages = () => route().view === "messages";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isMessages() ? showMessages(route().id) : isInput() ? showInput(route().id) : isColumn() ? showColumn(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isMessages() ? renderMessages() : isInput() ? renderInput() : isColumn() ? renderColumn() : renderFlow();
 document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------

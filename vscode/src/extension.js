@@ -177,6 +177,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.transactions", () => showTransactions(context)),
     vscode.commands.registerCommand("pliGraph.dataUse", (/** @type {string | undefined} */ id) => showDataUse(context, id)),
     vscode.commands.registerCommand("pliGraph.deadCode", () => showDeadCode(context)),
+    vscode.commands.registerCommand("pliGraph.messages", () => showMessages(context)),
     vscode.commands.registerCommand("pliGraph.screenInput", () => showScreenInput(context)),
     vscode.commands.registerCommand("pliGraph.columnPath", () => showColumnPath(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
@@ -1191,6 +1192,19 @@ function showDeadCode(context) {
   const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
   log.info(`dead code of ${path || "the workspace"}`);
   openPage(context, shown.workspace, "flow", `v=dead&id=${encodeURIComponent(path)}`, `Dead Code: ${path ? path.split("/").pop() : "all"}`, true);
+}
+
+/**
+ * The messages and codes of the active file, else of the workspace, with
+ * the conditions each is produced under.
+ * @param {vscode.ExtensionContext} context
+ */
+function showMessages(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
+  log.info(`messages of ${path || "the workspace"}`);
+  openPage(context, shown.workspace, "flow", `v=messages&id=${encodeURIComponent(path)}`, `Messages: ${path ? path.split("/").pop() : "all"}`, true);
 }
 
 // The input rules of the screen at the cursor: the format or message named

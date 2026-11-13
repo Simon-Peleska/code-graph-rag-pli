@@ -175,6 +175,14 @@ extension keeps of each workspace folder:
   the variables nothing reads. A click opens the line. A call through a
   name the graph cannot resolve, or a program run from outside PL/I, is not
   seen, so check a procedure before dropping it.
+- **PL/I Graph: Show Messages and Codes** lists, for the active file or,
+  with none, the whole workspace, each message and code the code produces
+  and the IF, WHEN, DO and ON conditions it is produced under: a literal
+  assigned to a field (or a `STATIC INIT` nothing changes), or literals
+  passed to a CALL, PUT, DISPLAY, SIGNAL or RETURN. The workspace keeps the
+  fields set to two values or more, the rules found in most places first,
+  with the conditions of up to 50 places each. A box filters by field,
+  value or condition; a click opens the line.
 - **PL/I Graph: Show Input Rules of the Screen** takes the MFS format or
   message at the cursor (or the active file's) and lists, per field the user
   types, the variable of the program's I/O area it lands in, the conditions
@@ -252,7 +260,9 @@ extension keeps of each workspace folder:
   insert, read, update and delete, and where), `data_use` (the same for a
   procedure and the procedures it calls, record files included),
   `dead_code` (branches that never run, procedures nothing reaches and
-  variables nothing reads, of a file or all), `field` (where a
+  variables nothing reads, of a file or all), `messages` (the messages
+  and codes set or passed on, each with the conditions it is produced
+  under, of a file or all), `field` (where a
   field is set, passed to a CALL or compared, under which IF, WHEN, DO and
   ON conditions), `lineage` (where a variable's value comes from and goes
   to: assignments, and arguments bound to parameters), `text` (comments
@@ -509,7 +519,9 @@ not be read, `VIZ-126` it could not be drawn, `VIZ-127` a screen's input
 rules could not be read, `VIZ-128` no input message is mapped through the
 format, `VIZ-129` they could not be drawn, `VIZ-130` a column's path could
 not be read, `VIZ-131` no DDL defines the column and no SQL uses it,
-`VIZ-132` its path could not be drawn.
+`VIZ-132` its path could not be drawn, `VIZ-133` the messages and codes
+could not be read, `VIZ-134` none are set or passed on, `VIZ-135` they
+could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

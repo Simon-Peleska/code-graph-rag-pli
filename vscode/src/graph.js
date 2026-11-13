@@ -1641,25 +1641,7 @@ export class Graph {
       const to = place(read);
       return from.owner !== to.owner || from.line < to.line || [...from.loops].some((loop) => to.loops.has(loop));
     };
-    const guards = (/** @type {number | null} */ statement) =>
-      statement === null ? [] : /** @type {{ kind: string, detail: string | null, via: string | null }[]} */ (
-        this.all(
-          `WITH RECURSIVE up(id, via, depth) AS (
-             SELECT parent, branch, 0 FROM statements WHERE id = ?
-             UNION ALL
-             SELECT s.parent, s.branch, up.depth + 1 FROM up JOIN statements s ON s.id = up.id WHERE s.parent IS NOT NULL
-           )
-           SELECT s.kind, s.detail, up.via FROM up JOIN statements s ON s.id = up.id ORDER BY up.depth DESC`,
-          statement,
-        )
-      ).flatMap((g) =>
-        g.kind === "if" ? [`IF ${g.detail} [${g.via === "else" ? "false" : "true"}]`]
-        : g.kind === "when" ? [`WHEN (${g.detail})`]
-        : g.kind === "otherwise" ? ["OTHERWISE"]
-        : g.kind === "do" && g.detail ? [`DO ${g.detail}`]
-        : g.kind === "on" ? [`ON ${g.detail}`]
-        : [],
-      );
+    const guards = (/** @type {number | null} */ statement) => (statement === null ? [] : this.conditions(statement));
     const named = (/** @type {number[]} */ ids) => {
       const rows = /** @type {{ id: number, qualified: string }[]} */ (this.all(`SELECT id, qualified FROM variables WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)));
       return ids.map((id) => rows.find((r) => r.id === id)?.qualified ?? "?");
@@ -1910,6 +1892,112 @@ export class Graph {
     const reads = uses.filter((u) => u.usage === "select" && u.variable !== null && u.statement !== null).map((u) => ({ ...site(u), to: destinations(/** @type {number} */ (u.variable), /** @type {number} */ (u.statement)) }));
     const keys = uses.filter((u) => u.usage === "where").map(site);
     return { table: bare, column, defined: defined ? { ...defined } : null, writes, reads, keys, truncated };
+  }
+
+  /**
+   * The conditions a statement runs under, outermost first, as they read:
+   * `KZ = 'S'`, `NOT (BUCHUNG > 0)`, `TYP = 'A', 'B'` for a WHEN of SELECT
+   * (TYP), `OTHERWISE`, `DO WHILE (^ENDE)`, `ON ENDFILE(KUNDIN)`.
+   * @param {number} statement
+   * @returns {string[]}
+   */
+  conditions(statement) {
+    const guards = /** @type {{ kind: string, detail: string | null, via: string | null, subject: string | null }[]} */ (
+      this.all(
+        `WITH RECURSIVE up(id, via, depth) AS (
+           SELECT parent, branch, 0 FROM statements WHERE id = ?
+           UNION ALL
+           SELECT s.parent, s.branch, up.depth + 1 FROM up JOIN statements s ON s.id = up.id WHERE s.parent IS NOT NULL
+         )
+         SELECT s.kind, s.detail, up.via, p.detail AS subject FROM up JOIN statements s ON s.id = up.id
+         LEFT JOIN statements p ON p.id = s.parent ORDER BY up.depth DESC`,
+        statement,
+      )
+    );
+    return guards.flatMap((g) => {
+      if (g.kind === "if") return [g.via === "else" ? `NOT (${g.detail})` : `${g.detail}`];
+      if (g.kind === "when") return [g.subject ? `${g.subject} = ${g.detail}` : `${g.detail}`];
+      if (g.kind === "otherwise") return [g.subject ? `OTHERWISE of SELECT (${g.subject})` : "OTHERWISE"];
+      if (g.kind === "do" && g.detail) return [`DO ${g.detail}`];
+      if (g.kind === "on") return [`ON ${g.detail}`];
+      return [];
+    });
+  }
+
+  /**
+   * The messages and codes the code produces, each with the conditions it is
+   * produced under: literals assigned to a field (directly, or through a
+   * constant, a STATIC INIT nothing changes), and literals passed to a CALL,
+   * printed or displayed. That reads as the rules: "KD201 BETRAG FEHLT when
+   * NOT (BUCHUNG > 0)".
+   * @param {string} path every outcome in this file; empty for the
+   * workspace's fields set to two values or more and every literal passed on
+   */
+  messages(path) {
+    // Every value set or said, without its conditions: on 5M lines a few
+    // hundred thousand rows, so the conditions are read for the kept ones only.
+    const inFile = (/** @type {string} */ column) => (path ? `AND ${column} IN (SELECT id FROM chosen)` : "");
+    const all = /** @type {{ statement: number, target: string, how: string, value: string, constant: string | null, procedure: string | null, path: string, line: number }[]} */ (
+      this.all(
+        `WITH chosen AS (SELECT s.id FROM files f JOIN statements s ON s.file = f.id WHERE f.path = ?),
+         outcomes AS (
+           SELECT a.statement, coalesce(v.qualified, a.name) AS target, 'set' AS how, a.value, NULL AS constant
+           FROM accesses a LEFT JOIN variables v ON v.id = a.variable
+           WHERE a.mode = 'write' AND a.value IS NOT NULL ${inFile("a.statement")}
+           UNION ALL
+           SELECT a.statement, coalesce(v.qualified, a.name), 'set', c.init, c.qualified
+           FROM accesses a JOIN accesses r ON r.statement = a.statement AND r.mode = 'read'
+           JOIN variables c ON c.id = r.variable AND c.init IS NOT NULL AND c.dims IS NULL
+           LEFT JOIN variables v ON v.id = a.variable
+           WHERE a.mode = 'write' AND a.value IS NULL ${inFile("a.statement")}
+             AND NOT EXISTS (SELECT 1 FROM accesses o WHERE o.statement = a.statement AND o.mode = 'read' AND o.id <> r.id)
+             AND NOT EXISTS (SELECT 1 FROM accesses x WHERE x.variable = c.id AND x.mode IN ('write', 'arg'))
+           UNION ALL
+           SELECT l.statement, CASE WHEN s.kind = 'call' THEN 'CALL ' || s.detail ELSE upper(s.kind) END, 'say',
+             group_concat('''' || replace(l.text, '''', '''''') || '''', ', '), NULL
+           FROM literals l JOIN statements s ON s.id = l.statement
+           WHERE (s.kind IN ('put', 'display', 'signal', 'return')
+             OR (s.kind = 'call' AND s.detail NOT IN ('PLITDLI', 'CEETDLI', 'AIBTDLI', 'CBLTDLI'))) ${inFile("l.statement")}
+           GROUP BY l.statement
+         )
+         SELECT o.statement, o.target, o.how, o.value, o.constant, p.name AS procedure, f.path, s.line
+         FROM outcomes o JOIN statements s ON s.id = o.statement JOIN files f ON f.id = s.file LEFT JOIN symbols p ON p.id = s.caller
+         /* full scan */ ORDER BY f.path, s.line`,
+        path,
+      )
+    );
+    /** @type {Map<string, Set<string>>} */
+    const values = new Map();
+    for (const o of all) values.set(o.target, (values.get(o.target) ?? new Set()).add(o.value));
+    const kept = path ? all : all.filter((o) => o.how === "say" || (values.get(o.target)?.size ?? 0) >= 2);
+
+    // Generated or copied code repeats one rule in thousands of programs, so
+    // a rule is a target and value, with the places it is produced under each
+    // set of conditions, the most frequent first; the workspace reads the
+    // conditions of the first 50 places of each.
+    /** @type {Map<string, typeof kept>} */
+    const groups = new Map();
+    for (const o of kept) {
+      const key = `${o.how}\n${o.target}\n${o.value}`;
+      const group = groups.get(key);
+      if (group) group.push(o);
+      else groups.set(key, [o]);
+    }
+    const ranked = [...groups.values()].sort((a, b) => b.length - a.length || a[0].target.localeCompare(b[0].target) || a[0].value.localeCompare(b[0].value));
+    const rules = ranked.slice(0, 1000).map((places) => {
+      /** @type {{ conditions: string[], places: { procedure: string | null, path: string, line: number }[] }[]} */
+      const ways = [];
+      for (const o of path ? places : places.slice(0, 50)) {
+        const conditions = this.conditions(o.statement);
+        const same = conditions.join("\n");
+        let way = ways.find((w) => w.conditions.join("\n") === same);
+        if (!way) ways.push((way = { conditions, places: [] }));
+        way.places.push({ procedure: o.procedure, path: o.path, line: o.line });
+      }
+      const { target, how, value, constant } = places[0];
+      return { target, how, value, constant, count: places.length, ways };
+    });
+    return { rules, truncated: ranked.length > 1000 };
   }
 
   /**

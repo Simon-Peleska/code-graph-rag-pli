@@ -71,8 +71,18 @@ conditions from the statement tree.
 - That's the most direct way to read business rules: "this is rejected
   when…".
 
-Status: the *Sets* tab of *Show Data Flow* on a message field shows the
-conditions per assignment; it can't be started from the literal.
+Status: built. The `messages` MCP tool and *Show Messages and Codes* (the
+active file's, else the workspace's) list each literal assigned to a field,
+directly or through a `STATIC INIT` nothing changes, and the literals
+passed to a CALL, PUT, DISPLAY, SIGNAL or RETURN (DL/I calls aside), each
+with the IF, WHEN, DO and ON conditions it is produced under, outermost
+first: `AUSGABE.MELDUNG = 'KD201 BETRAG FEHLT'` when `NOT (BUCHUNG > 0)`.
+A rule is a target and value with its places grouped by conditions. The
+workspace keeps the fields set to two values or more, the rules found in
+most places first, up to 1,000, with the conditions of 50 places each; on
+the sample that is `RC = 0/4/8` in 10,157 places, in 0.5 s. Limits: a
+message built by concatenation shows its literal parts only, and a value
+moved through another variable first is not followed.
 
 ## 5. A transaction end to end
 

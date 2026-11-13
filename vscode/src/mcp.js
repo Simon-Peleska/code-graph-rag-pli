@@ -131,6 +131,12 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { path: { type: "string", description: "a file's path in the workspace; empty for all" } } },
   },
   {
+    name: "messages",
+    description:
+      "The messages and codes PL/I code produces, each with the IF, WHEN, DO and ON conditions it is produced under, outermost first: \"this is rejected when…\". A message or code is a literal assigned to a field (directly, or through a STATIC INIT constant nothing changes), or literals passed to a CALL, PUT, DISPLAY, SIGNAL or RETURN; DL/I calls do not count. For a file it lists all of them; for the workspace the fields set to two values or more and everything passed on, the rules found in most places first, with the conditions of up to 50 places each.",
+    inputSchema: { type: "object", properties: { path: { type: "string", description: "a file's path in the workspace; empty for all" } } },
+  },
+  {
     name: "field",
     description:
       "A PL/I field's business rules: every statement that sets it (with the literal it gets), passes it to a CALL or compares it, each with the IF, WHEN, DO and ON conditions it happens under, outermost first. Matches the field however it is qualified.",
@@ -422,6 +428,22 @@ function call(name, args) {
       ...section("Variables nothing reads", dead.variables.map((v) => `${v.path}:${v.line} ${v.name}${v.procedure ? ` in ${v.procedure}` : ""}${v.written ? ", written but never read" : ", never used"}`)),
     ];
     return text.length ? text.join("\n") : `Found no dead code${args.path ? ` in ${args.path}` : ""}.`;
+  }
+  if (name === "messages") {
+    const { rules, truncated } = open().messages(args.path ?? "");
+    if (rules.length === 0) return `No message or code is set or passed on${args.path ? ` in ${args.path}` : ""}.`;
+    const lines = rules.flatMap((r) => {
+      const shown = r.ways.reduce((n, w) => n + w.places.length, 0);
+      return [
+        `${r.how === "set" ? `${r.target} = ${r.value}` : `${r.target} ${r.value}`}${r.constant ? ` (from ${r.constant})` : ""}${r.count > 1 ? `, in ${r.count} places` : ""}:`,
+        ...r.ways.map((w) => {
+          const places = w.places.slice(0, 5).map((p) => `${p.path}:${p.line}${p.procedure ? ` in ${p.procedure}` : ""}`);
+          return `  when ${w.conditions.join("; ") || "always"}: ${places.join(", ")}${w.places.length > 5 ? ` and ${w.places.length - 5} more` : ""}`;
+        }),
+        ...(shown < r.count ? [`  and ${r.count - shown} more places, conditions not read`] : []),
+      ];
+    });
+    return [...lines, ...(truncated ? ["Only the 1000 rules found in most places are shown."] : [])].join("\n");
   }
   if (name === "field") {
     const sites = open().fieldUses(args.name.toUpperCase());

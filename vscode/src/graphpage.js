@@ -9,7 +9,7 @@ import { Graph } from "./graph.js";
 /**
  * @typedef {object} PageQuestion
  * @property {number} id
- * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "dataFlow" | "dataModel" | "transactions" | "dataUse" | "deadCode" | "screenInput" | "columnPath" | "details" | "search" | "list" | "coverage"} what
+ * @property {"summary" | "overview" | "module" | "procedure" | "dependencies" | "dependencyList" | "flow" | "dataFlow" | "dataModel" | "transactions" | "dataUse" | "deadCode" | "messages" | "screenInput" | "columnPath" | "details" | "search" | "list" | "coverage"} what
  * @property {any[]} args
  */
 /** @typedef {{ id: number, result: unknown, ms: number } | { id: number, error: string }} PageAnswer */
@@ -33,6 +33,7 @@ const answers = {
   transactions: (name) => graph.transactionCrud(name),
   dataUse: (id) => graph.procedureCrud(id),
   deadCode: (path) => graph.deadCode(path),
+  messages: (path) => graph.messages(path),
   screenInput: (name) => graph.screenInput(name),
   columnPath: (/** @type {string} */ id) => graph.columnPath(id.slice(0, id.lastIndexOf(".")), id.slice(id.lastIndexOf(".") + 1)),
   details: (id) => graph.pageDetails(id),

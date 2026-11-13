@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "messages", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -333,18 +333,32 @@ test("column_path follows a column from the screen into the database and out to 
       "KUNDE.SALDO DECIMAL(11,2): INCLUDE/KDT00001:4",
       "writes: UPDATE :KD.SALDO in KDP00004: SRC/KDP00004:9",
       "  from SELECT KUNDE.SALDO: SRC/KDP00004:6 via KD.SALDO",
-      "writes: UPDATE :BUCHUNG in KDP00013: SRC/KDP00013:30 when IF BUCHUNG > 0 [true]",
+      "writes: UPDATE :BUCHUNG in KDP00013: SRC/KDP00013:30 when BUCHUNG > 0",
       "  from KDF003I field BETRAG 'BETRAG:': MFS/KDF00003:18 via EINGABE.BETRAG > BUCHUNG",
       "reads: SELECT :KD.SALDO in KDP00004: SRC/KDP00004:6",
       "  to UPDATE KUNDE.SALDO: SRC/KDP00004:9 via KD.SALDO",
       "  to INSERT BUCHUNG.BETRAG: SRC/KDP00004:11 via KD.SALDO",
-      "reads: SELECT :NEU in KDP00013: SRC/KDP00013:31 when IF BUCHUNG > 0 [true]",
+      "reads: SELECT :NEU in KDP00013: SRC/KDP00013:31 when BUCHUNG > 0",
       "  to ISRT of AUSGABE to the I/O PCB: the reply to the screen: SRC/KDP00013:36 via NEU > AUSGABE.SALDO",
       "reads: FETCH :BETRAG in KDP00014: SRC/KDP00014:14 when DO WHILE (^ENDE)",
       "  to WRITE FILE(LISTE) FROM(ZEILE) to PROD.KD.SALDEN: SRC/KDP00014:19 via BETRAG > ZEILE.SALDO",
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "No DDL defines KUNDE.NIX and no SQL uses it.");
+});
+
+test("messages lists each message and code with the conditions it is produced under", () => {
+  const [one, none] = serve([tool("messages", { path: "SRC/KDP00013" }), tool("messages", { path: "SRC/KDP00005" })], facts);
+  assert.equal(
+    one.result.content[0].text,
+    [
+      "AUSGABE.MELDUNG = 'GEBUCHT':",
+      "  when BUCHUNG > 0: SRC/KDP00013:33 in KDP00013",
+      "AUSGABE.MELDUNG = 'KD201 BETRAG FEHLT' (from KD201):",
+      "  when NOT (BUCHUNG > 0): SRC/KDP00013:35 in KDP00013",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No message or code is set or passed on in SRC/KDP00005.");
 });
 
 test("lineage follows a field through moves and calls", () => {

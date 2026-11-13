@@ -235,6 +235,9 @@ exports.run = async () => {
   await vscode.commands.executeCommand("pliGraph.deadCode");
   await webviewTab("Dead Code: all");
   console.log("Show Dead Code opens");
+  await vscode.commands.executeCommand("pliGraph.messages");
+  await webviewTab("Messages: all");
+  console.log("Show Messages and Codes opens");
 
   // Rejects if the packaged worker or the grammars' highlights queries are missing.
   await vscode.commands.executeCommand("pliGraph.coverage");

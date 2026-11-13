@@ -1,6 +1,7 @@
 // The flow page: a procedure's statements in order, with
 // the calls it makes expanded into the callee's lane as deep as asked.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Graph } from "../src/graph.js";
@@ -341,4 +342,15 @@ test("a copy splits the flow: what it is copied to counts from the copy on, unti
   };
   visit(flow.steps);
   assert.deepEqual(marked, ["6 KEY,CNT", "7 CNT", "7 CNT,Y", "8 Y", "9 Y", "11 KEY"]);
+});
+
+test("every view the diagram tab draws opens the page as the diagram tab", () => {
+  // The column path's view was left out, so its page drew the graph instead.
+  const page = readFileSync(join(import.meta.dirname, "../../viz/graph.template.html"), "utf8");
+  const listed = JSON.parse(/const flowPage = (\[[^\]]*\])/.exec(page)?.[1] ?? "[]");
+  const diagram = page.split("\n").filter((line) => /^const (is\w+|showDiagram) = /.test(line)).join("\n");
+  const routed = [...diagram.matchAll(/route\(\)\.view === "(\w+)"/g), ...diagram.matchAll(/\[([^\]]*)\]\.includes\(route\(\)\.view\)/g)]
+    .flatMap((m) => (m[1].includes('"') ? JSON.parse(`[${m[1]}]`) : [m[1]]));
+  assert.ok(routed.length > 5);
+  assert.deepEqual(routed.filter((view) => !listed.includes(view)), []);
 });

@@ -188,6 +188,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "pliGraph.messages",
+        "title": "Show Messages and Codes",
+        "category": "PL/I Graph",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "pliGraph.screenInput",
         "title": "Show Input Rules of the Screen",
         "category": "PL/I Graph",

@@ -575,7 +575,7 @@ test("a column's path: from the screen field into the column, and on to the repl
         at: "SRC/KDP00013:30",
         operation: "UPDATE",
         host: "BUCHUNG",
-        guards: ["IF BUCHUNG > 0 [true]"],
+        guards: ["BUCHUNG > 0"],
         from: ["screen KDF003I field BETRAG 'BETRAG:' @MFS/KDF00003:18 via EINGABE.BETRAG > BUCHUNG"],
       },
     ],
@@ -594,7 +594,7 @@ test("a column's path: from the screen field into the column, and on to the repl
         at: "SRC/KDP00013:31",
         operation: "SELECT",
         host: "NEU",
-        guards: ["IF BUCHUNG > 0 [true]"],
+        guards: ["BUCHUNG > 0"],
         to: ["screen ISRT of AUSGABE to the I/O PCB: the reply to the screen @SRC/KDP00013:36 via NEU > AUSGABE.SALDO"],
       },
       {
@@ -612,6 +612,41 @@ test("a column's path: from the screen field into the column, and on to the repl
     ["SRC/KDP00004:7 SELECT KD_NR", "SRC/KDP00004:10 UPDATE KD_NR", "SRC/KDP00004:15 DECLARE null", "SRC/KDP00013:30 UPDATE KD_NR", "SRC/KDP00013:31 SELECT KD_NR"],
   );
   assert.equal(path.truncated, false);
+});
+
+test("messages and codes: each value set or passed on, with the conditions it is produced under", () => {
+  const rules = (/** @type {string} */ path) =>
+    graph.messages(path).rules.flatMap((r) =>
+      r.ways.map((w) => `${r.target} ${r.value}${r.constant ? ` (${r.constant})` : ""} when ${w.conditions.join("; ") || "always"} @${w.places.map((p) => `${p.path}:${p.line}`).join(", ")}`),
+    );
+  assert.deepEqual(rules("SRC/KDP00013"), [
+    "AUSGABE.MELDUNG 'GEBUCHT' when BUCHUNG > 0 @SRC/KDP00013:33",
+    // A message from a STATIC INIT nothing changes counts as its text.
+    "AUSGABE.MELDUNG 'KD201 BETRAG FEHLT' (KD201) when NOT (BUCHUNG > 0) @SRC/KDP00013:35",
+  ]);
+  assert.deepEqual(rules("SRC/KDP00006"), [
+    "MELDUNG 'GESCHAEFTSKUNDE' when KD.TYP = 'G' @SRC/KDP00006:11",
+    "MELDUNG 'PRIVATKUNDE' when NOT (KD.TYP = 'G') @SRC/KDP00006:14",
+    "RC 1 when TYP = 'A', 'B' @SRC/KDP00006:17",
+    "RC 2 when TYP = 'C' @SRC/KDP00006:19",
+    "RC 4 when NOT (KD.TYP = 'G'); SALDO > LIMIT & TYP ^= 'P' @SRC/KDP00006:13",
+    "RC 8 when ON ENDFILE(KUNDIN) @SRC/KDP00006:9",
+  ]);
+  // What is passed to a CALL, printed or displayed; DL/I calls are no messages.
+  assert.deepEqual(rules("SRC/KDP00009"), [
+    "CALL KDFEHL 'KDE001', 'GESPERRT:' when KZ = 'S' @SRC/KDP00009:15",
+    "DISPLAY 'KDP00009 ENDE' when always @SRC/KDP00009:20",
+    "MELDUNG 'KDE001 KUNDE IST GESPERRT' when KZ = 'S' @SRC/KDP00009:14",
+    "PUT 'KUNDE ''FREI''' when NOT (KZ = 'S') @SRC/KDP00009:17",
+  ]);
+  assert.deepEqual(rules("SRC/KDP00005"), []);
+  // The workspace keeps the fields set to two values or more, and what is passed on;
+  // a rule found in more places comes first.
+  const all = graph.messages("");
+  assert.equal(all.truncated, false);
+  assert.deepEqual(all.rules.slice(0, 2).map((r) => `${r.target} ${r.value} ${r.count}`), ["PUT 'ALT' 2", "AUSGABE.MELDUNG 'GEBUCHT' 1"]);
+  assert.ok(all.rules.some((r) => r.target === "AUSGABE.MELDUNG" && r.value === "'KD104 KUNDENNR NICHT NUMERISCH'"));
+  assert.ok(!all.rules.some((r) => r.target.startsWith("CALL CEETDLI")));
 });
 
 test("a ß before a name does not shift its column", async () => {
