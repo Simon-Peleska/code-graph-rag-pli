@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "column_path", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -318,9 +318,33 @@ test("field shows where a field is set, passed and compared, and under which con
       "sets KD.SALDO by EXEC in KDP00004: SRC/KDP00004:17",
       "compares SALDO > LIMIT in KDP00006: SRC/KDP00006:13 when NOT (KD.TYP = 'G')",
       "sets SALDO by an assignment in KDP00006: SRC/KDP00006:25 when DO I = 1 TO 10 WHILE (RC = 0)",
+      "sets AUSGABE.SALDO by an assignment in KDP00013: SRC/KDP00013:32 when BUCHUNG > 0",
+      "sets ZEILE.SALDO by an assignment in KDP00014: SRC/KDP00014:18 when DO WHILE (^ENDE); NOT (SQLCODE = 100)",
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "No statement sets, passes or compares nix.");
+});
+
+test("column_path follows a column from the screen into the database and out to the reply and the batch list", () => {
+  const [saldo, none] = serve([tool("column_path", { table: "prod.kunde", column: "saldo" }), tool("column_path", { table: "kunde", column: "nix" })], facts);
+  assert.equal(
+    saldo.result.content[0].text,
+    [
+      "KUNDE.SALDO DECIMAL(11,2): INCLUDE/KDT00001:4",
+      "writes: UPDATE :KD.SALDO in KDP00004: SRC/KDP00004:9",
+      "  from SELECT KUNDE.SALDO: SRC/KDP00004:6 via KD.SALDO",
+      "writes: UPDATE :BUCHUNG in KDP00013: SRC/KDP00013:30 when IF BUCHUNG > 0 [true]",
+      "  from KDF003I field BETRAG 'BETRAG:': MFS/KDF00003:18 via EINGABE.BETRAG > BUCHUNG",
+      "reads: SELECT :KD.SALDO in KDP00004: SRC/KDP00004:6",
+      "  to UPDATE KUNDE.SALDO: SRC/KDP00004:9 via KD.SALDO",
+      "  to INSERT BUCHUNG.BETRAG: SRC/KDP00004:11 via KD.SALDO",
+      "reads: SELECT :NEU in KDP00013: SRC/KDP00013:31 when IF BUCHUNG > 0 [true]",
+      "  to ISRT of AUSGABE to the I/O PCB: the reply to the screen: SRC/KDP00013:36 via NEU > AUSGABE.SALDO",
+      "reads: FETCH :BETRAG in KDP00014: SRC/KDP00014:14 when DO WHILE (^ENDE)",
+      "  to WRITE FILE(LISTE) FROM(ZEILE) to PROD.KD.SALDEN: SRC/KDP00014:19 via BETRAG > ZEILE.SALDO",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No DDL defines KUNDE.NIX and no SQL uses it.");
 });
 
 test("lineage follows a field through moves and calls", () => {

@@ -37,9 +37,17 @@ lineage (moves and parameters, `fieldLineage`).
 - That gives you the data lineage from screen to database, and back to batch
   output.
 
-Status: *Show Data Flow* on a host variable follows the value into SQL `INTO`,
-moves and parameters; the `lineage` tool goes one step each way. No view
-starts at a column and runs back to the screen or forward to batch output.
+Status: built. The `column_path` MCP tool and *Show Path of the Column* (on
+a column of a `CREATE TABLE` or an `EXEC SQL`) take a table and column. For
+each `INSERT` or `UPDATE SET` they give the IF, WHEN, DO and ON conditions
+it runs under and where the host variable's value comes from, followed back
+through moves, calls and parameters to an MFS input field (by the program's
+transaction code), another column, a segment, a record read or a literal. A
+write that comes later in the same procedure, outside a loop around both,
+does not count. For each `SELECT` or `FETCH INTO` they give where the value
+goes: other columns, the `ISRT` reply on the I/O PCB, segments, and records
+written with the dataset of their DD. They also list the statements that look
+rows up by the column.
 
 ## 3. Decision tables
 

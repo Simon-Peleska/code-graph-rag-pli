@@ -181,6 +181,13 @@ extension keeps of each workspace folder:
   that test it, and what happens when each holds or fails, such as the
   error message set. The program is the one the message's transaction code
   runs; only the first segment, read by the GU on the I/O PCB, is mapped.
+- **PL/I Graph: Show Path of the Column** takes the Db2 column at the cursor,
+  in a `CREATE TABLE` or an `EXEC SQL`, and lists each `INSERT` and `UPDATE`
+  that writes it, with its conditions and where the value comes from (a
+  screen field, another column, a segment, a record read, a literal), each
+  `SELECT` and `FETCH` that reads it with where the value goes (other
+  columns, the reply to the screen, records written and their dataset), and
+  the statements that look rows up by it.
 - The flow, data flow, data model, transaction and data use diagrams follow the editor's cursor: one
   opens with the box of the cursor's line in focus (the last one at or before
   it; with the cursor scrolled out of view, the first line in view), and
@@ -236,7 +243,10 @@ extension keeps of each workspace folder:
   access and who uses it), `screen` (an MFS format's fields with their
   labels, and where each message field sits in the program's I/O area),
   `screen_input` (per input field: the I/O area variable it lands in, the
-  conditions that test it and their outcomes), `dli` (a program's DL/I calls: function, SSA
+  conditions that test it and their outcomes), `column_path` (a Db2
+  column's writes with their conditions and where the value comes from,
+  back to the screen field; its reads and where the value goes, on to the
+  screen reply or the records written), `dli` (a program's DL/I calls: function, SSA
   segments, I/O area and the PSB's PCB each call uses), `transaction` (a
   transaction's CRUD matrix: the messages, segments and tables its programs
   insert, read, update and delete, and where), `data_use` (the same for a
@@ -479,6 +489,8 @@ can read it while VS Code runs:
   network drive; reading and indexing then block each other.
 - `PLG048W` Watching the extensions folder for an update failed; restart VS
   Code after installing a new version.
+- `PLG049E` Show Path of the Column: there is no Db2 column of a
+  `CREATE TABLE` or an `EXEC SQL` at the cursor.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
@@ -495,7 +507,9 @@ use could not be read, `VIZ-123` the procedure is not in the graph,
 `VIZ-124` its data use could not be drawn, `VIZ-125` the dead code could
 not be read, `VIZ-126` it could not be drawn, `VIZ-127` a screen's input
 rules could not be read, `VIZ-128` no input message is mapped through the
-format, `VIZ-129` they could not be drawn.
+format, `VIZ-129` they could not be drawn, `VIZ-130` a column's path could
+not be read, `VIZ-131` no DDL defines the column and no SQL uses it,
+`VIZ-132` its path could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

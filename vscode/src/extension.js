@@ -178,6 +178,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.dataUse", (/** @type {string | undefined} */ id) => showDataUse(context, id)),
     vscode.commands.registerCommand("pliGraph.deadCode", () => showDeadCode(context)),
     vscode.commands.registerCommand("pliGraph.screenInput", () => showScreenInput(context)),
+    vscode.commands.registerCommand("pliGraph.columnPath", () => showColumnPath(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     vscode.commands.registerCommand("pliGraph.tab", pliTab),
@@ -1222,6 +1223,41 @@ function showScreenInput(context) {
   }
   log.info(`screen input of ${screen.name}`);
   openPage(context, shown.workspace, "flow", `v=input&id=${encodeURIComponent(screen.name)}`, `Screen Input: ${screen.name}`, true);
+}
+
+// The path of the column at the cursor: the DDL column on the line, else the
+// column of the SQL statement there, the word under the cursor first.
+/** @param {vscode.ExtensionContext} context */
+function showColumnPath(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const word = shown.editor && shown.editor.document.getWordRangeAtPosition(shown.editor.selection.active, /[A-Za-z0-9_@#$]+/);
+  const named = word ? shown.editor?.document.getText(word).toUpperCase() ?? "" : "";
+  const line = (shown.editor?.selection.active.line ?? 0) + 1;
+  const column = /** @type {{ table_name: string, name: string } | undefined} */ (
+    shown.graph.all(
+      `SELECT table_name, name FROM (
+         SELECT c.table_name, c.name, 0 AS rank FROM columns c JOIN files f ON f.id = c.file WHERE f.path = ? AND c.line = ?
+         UNION ALL SELECT c.table_name, c.column_name, CASE WHEN c.column_name = ? THEN 1 ELSE 2 END FROM sql_columns c JOIN files f ON f.id = c.file
+           JOIN statements s ON s.file = f.id AND s.kind = 'exec' AND ? BETWEEN s.line AND s.end_line
+           WHERE f.path = ? AND c.line BETWEEN s.line AND s.end_line AND c.table_name IS NOT NULL AND c.column_name IS NOT NULL)
+       ORDER BY rank LIMIT 1`,
+      shown.where?.path ?? "",
+      line,
+      named,
+      line,
+      shown.where?.path ?? "",
+    )[0]
+  );
+  if (!column) {
+    const message = `[PLG049E] There is no Db2 column to show the path of${shown.where ? ` at the cursor in ${shown.where.path}: put it on a column of a CREATE TABLE or an EXEC SQL` : ": no file is open"}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  const id = `${column.table_name}.${column.name}`;
+  log.info(`column path of ${id}`);
+  openPage(context, shown.workspace, "flow", `v=column&id=${encodeURIComponent(id)}`, `Column Path: ${id}`, true);
 }
 
 // Both pages ask for what they draw. A worker of its own with its own

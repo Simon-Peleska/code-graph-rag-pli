@@ -94,6 +94,16 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { name: { type: "string", description: "a format or message name" } }, required: ["name"] },
   },
   {
+    name: "column_path",
+    description:
+      "A Db2 column's path through the code, from screen to database to batch output: each INSERT or UPDATE that writes it, with the IF, WHEN, DO and ON conditions it happens under and where the value comes from, followed back through moves, calls and parameters to a screen field of an IMS input message, another column, a segment, a record read or a literal; each SELECT or FETCH that reads it, with where the value goes: other columns, the reply to the screen, segments and records written with their dataset; and the statements that look rows up by it.",
+    inputSchema: {
+      type: "object",
+      properties: { table: { type: "string", description: "the table, with or without its schema" }, column: { type: "string" } },
+      required: ["table", "column"],
+    },
+  },
+  {
     name: "dli",
     description:
       "A program's IMS DL/I calls: the function, the segments its SSAs name, the PCB and I/O area, each PCB matched to the PCB it is in the PSBs the program runs under.",
@@ -327,6 +337,25 @@ function call(name, args) {
       }),
     ]);
     if (truncated) lines.push("(Some rules were cut off; ask the field tool for the rest.)");
+    return lines.join("\n");
+  }
+  if (name === "column_path") {
+    const path = open().columnPath(args.table.toUpperCase(), args.column.toUpperCase());
+    const named = `${path.table}.${path.column}`;
+    if (!path.defined && !path.writes.length && !path.reads.length && !path.keys.length) return `No DDL defines ${named} and no SQL uses it.`;
+    /** @param {{ operation: string, procedure: string | null, path: string, line: number, host: string | null, guards: string[] }} s */
+    const site = (s) => `${s.operation}${s.host ? ` :${s.host}` : ""} in ${s.procedure ?? "?"}: ${s.path}:${s.line}${s.guards.length ? ` when ${s.guards.join("; ")}` : ""}`;
+    /** @param {{ text: string, path: string, line: number, via: string[] }} e */
+    const end = (e) => `${e.text}: ${e.path}:${e.line}${e.via.length ? ` via ${e.via.join(" > ")}` : ""}`;
+    const lines = [
+      path.defined ? `${named} ${path.defined.type}: ${path.defined.path}:${path.defined.line}` : `${named} has no DDL in the workspace.`,
+      ...(path.writes.length ? [] : ["No SQL writes it."]),
+      ...path.writes.flatMap((w) => [`writes: ${site(w)}`, ...w.from.map((f) => `  from ${end(f)}`)]),
+      ...(path.reads.length ? [] : ["No SQL reads it into a host variable."]),
+      ...path.reads.flatMap((r) => [`reads: ${site(r)}`, ...(r.to.length ? r.to.map((t) => `  to ${end(t)}`) : ["  goes nowhere the graph sees"])]),
+      ...path.keys.map((k) => `looks up by it: ${site(k)}`),
+    ];
+    if (path.truncated) lines.push("(The paths were cut off; ask the lineage tool for the rest.)");
     return lines.join("\n");
   }
   if (name === "dli") {

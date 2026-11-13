@@ -200,6 +200,11 @@ exports.run = async () => {
   await vscode.commands.executeCommand("pliGraph.dataModel");
   await webviewTab("Data Model: ABTCUST1");
   console.log("Show Data Model opens");
+  // The cursor is on the line of the column ID.
+  await shownAs(ddl, "db2");
+  await vscode.commands.executeCommand("pliGraph.columnPath");
+  await webviewTab("Column Path: CUSTOMER.ID");
+  console.log("Show Path of the Column opens");
   // On `prod.customer` in ABSHOW01's SQL the lightbulb offers its data model, not on the column `id`.
   const titles = async (uri, line, character) =>
     (await vscode.commands.executeCommand("vscode.executeCodeActionProvider", uri, new vscode.Range(line, character, line, character))).map((a) => a.title);

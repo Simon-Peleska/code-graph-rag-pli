@@ -84,6 +84,7 @@ test("JCL steps run programs under a PSB", () => {
     { job: "KDJOB02", name: "BATCH", program: "KDP00001", procedure: "DLIBATCH", psb: "KDPSB02", parm: null },
     { job: "KDJOB03", name: "AUSK", program: "KDP00005", procedure: null, psb: "KDPSB01", parm: "BMP,KDP00005,KDPSB01" },
     { job: "KDJOB04", name: "DB2", program: "IKJEFT01", procedure: null, psb: null, parm: null },
+    { job: "KDJOB05", name: "LISTE", program: "KDP00014", procedure: null, psb: null, parm: null },
   ]);
   assert.deepEqual(rows(`SELECT r.name, l.target_symbol IS NOT NULL AS linked FROM refs r JOIN files f ON f.id = r.file LEFT JOIN links l ON l.ref = r.id WHERE r.kind = 'program' AND f.language = 'jcl' ORDER BY r.id`), [
     { name: "KDP00001", linked: 1 },
@@ -92,6 +93,7 @@ test("JCL steps run programs under a PSB", () => {
     { name: "KDP00005", linked: 1 },
     { name: "IKJEFT01", linked: 0 },
     { name: "KDP00005", linked: 1 },
+    { name: "KDP00014", linked: 1 },
   ]);
   assert.deepEqual(rows(`SELECT r.name FROM refs r JOIN files f ON f.id = r.file WHERE r.kind = 'psb' AND f.language = 'jcl' ORDER BY r.id`), [
     { name: "KDPSB01" },
@@ -282,6 +284,8 @@ test("the IMS system definition maps transactions to their PSB and program", () 
       { tran: "KD05", detail: "PSB=KDP00005,PGMTYPE=TP,CODE=KD05,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
       { tran: "KD06", detail: "PSB=KDP00011,PGMTYPE=TP,CODE=KD06,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "psb", name: "KDP00011", path: null },
       { tran: "KD06", detail: "PSB=KDP00011,PGMTYPE=TP,CODE=KD06,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00011", path: "SRC/KDP00011" },
+      { tran: "KD07", detail: "PSB=KDP00013,PGMTYPE=TP,CODE=KD07,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "psb", name: "KDP00013", path: null },
+      { tran: "KD07", detail: "PSB=KDP00013,PGMTYPE=TP,CODE=KD07,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00013", path: "SRC/KDP00013" },
     ],
   );
 });
@@ -300,6 +304,7 @@ test("a program named like a PSB gen links to the program, a PSB to the gen", ()
       { kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
       { kind: "psb", name: "KDPSB01", path: "IMS/KDPSB01" },
       { kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
+      { kind: "program", name: "KDP00014", path: "SRC/KDP00014" },
     ],
   );
 });
@@ -318,6 +323,8 @@ test("DL/I calls name their function, PCB parameter and SSA segments, also from 
       { entry: "PLITDLI", function: "GU", pcb: "DBPCB", pcb_parameter: 2, io_area: "SEG", segment: "KUNDE", path: "KUNDE", arguments: "VIER, GU_FUNC, DBPCB, SEG, KUNDE_SSA", line: 6 },
       { entry: "PLITDLI", function: "GU", pcb: "IOPCB", pcb_parameter: 1, io_area: "EINGABE", segment: null, path: null, arguments: "DREI, GU_FUNC, IOPCB, EINGABE", line: 25 },
       { entry: "PLITDLI", function: "ISRT", pcb: "IOPCB", pcb_parameter: 1, io_area: "AUSGABE", segment: null, path: null, arguments: "DREI, ISRT_FUNC, IOPCB, AUSGABE", line: 38 },
+      { entry: "PLITDLI", function: "GU", pcb: "IOPCB", pcb_parameter: 1, io_area: "EINGABE", segment: null, path: null, arguments: "DREI, GU_FUNC, IOPCB, EINGABE", line: 26 },
+      { entry: "PLITDLI", function: "ISRT", pcb: "IOPCB", pcb_parameter: 1, io_area: "AUSGABE", segment: null, path: null, arguments: "DREI, ISRT_FUNC, IOPCB, AUSGABE", line: 36 },
     ],
   );
 });
@@ -471,6 +478,8 @@ test("comments describe procedures and declarations, literals are kept with thei
     { name: "PROTO", comment: "PROTOKOLL", line: 19 },
     { name: "KDP00010", comment: "KDP00010: MONATSABSCHLUSS MIT ALTLASTEN", line: 2 },
     { name: "KDP00011", comment: "KDP00011: KUNDE ANLEGEN", line: 2 },
+    { name: "KDP00013", comment: "KDP00013: SALDO BUCHEN", line: 2 },
+    { name: "KDP00014", comment: "KDP00014: SALDENLISTE", line: 2 },
   ]);
   assert.deepEqual(
     rows(`SELECT v.qualified, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE v.comment IS NOT NULL AND f.path IN ('SRC/KDP00009', 'INCLUDE/KDC00001') ORDER BY v.id`),
@@ -503,7 +512,7 @@ test("every relation goes from the name to the name, both ways", () => {
   /** @type {[string, number, string, string[], string[]][]} where, the name, its definitions, its references */
   const cases = [
     ["SRC/KDP00001", 14, "PRUEFEN", ["SRC/KDP00001:15:1-8"], ["SRC/KDP00001:14:8-15"]],
-    ["SRC/KDP00004", 8, "KUNDE", ["INCLUDE/KDT00001:1:18-23"], ["SRC/KDP00004:14:64-69", "SRC/KDP00004:7:22-27", "SRC/KDP00004:8:51-56", "SRC/KDP00004:9:24-29"]],
+    ["SRC/KDP00004", 8, "KUNDE", ["INCLUDE/KDT00001:1:18-23"], ["SRC/KDP00004:14:64-69", "SRC/KDP00004:7:22-27", "SRC/KDP00004:8:51-56", "SRC/KDP00004:9:24-29", "SRC/KDP00013:30:26-31", "SRC/KDP00013:31:47-52", "SRC/KDP00014:10:63-68"]],
     ["MFS/KDF00001", 19, "KDF001O", ["MFS/KDF00001:19:0-7"], ["MFS/KDF00001:14:50-57", "SRC/KDP00005:28:36-43"]],
     ["MFS/KDF00001", 1, "KDF001", ["MFS/KDF00001:1:0-6"], ["MFS/KDF00001:14:31-37", "MFS/KDF00001:19:32-38"]],
     ["IMS/KDPSB01", 6, "KUNDE", ["IMS/KDDBD01:3:20-25"], ["IMS/KDPSB01:6:21-26", "IMS/KDPSB05:4:21-26"]],
@@ -551,6 +560,58 @@ test("dead code: branches under constant conditions, procedures nothing live cal
     all.procedures.map((p) => p.name),
     ["KDP00003", "KDP00006", "PROTO", "TESTDRUCK", "ALTDRUCK", "HILFE"],
   );
+});
+
+test("a column's path: from the screen field into the column, and on to the reply and the batch list", () => {
+  const path = graph.columnPath("PROD.KUNDE", "SALDO");
+  assert.deepEqual(path.defined, { type: "DECIMAL(11,2)", path: "INCLUDE/KDT00001", line: 4 });
+  const ends = (/** @type {{ kind: string, text: string, path: string, line: number, via: string[] }[]} */ list) => list.map((e) => `${e.kind} ${e.text} @${e.path}:${e.line} via ${e.via.join(" > ")}`);
+  assert.deepEqual(
+    path.writes.map((w) => ({ at: `${w.path}:${w.line}`, operation: w.operation, host: w.host, guards: w.guards, from: ends(w.from) })),
+    [
+      // The FETCH into KD.SALDO comes after the UPDATE, so it is not where the value comes from.
+      { at: "SRC/KDP00004:9", operation: "UPDATE", host: "KD.SALDO", guards: [], from: ["column SELECT KUNDE.SALDO @SRC/KDP00004:6 via KD.SALDO"] },
+      {
+        at: "SRC/KDP00013:30",
+        operation: "UPDATE",
+        host: "BUCHUNG",
+        guards: ["IF BUCHUNG > 0 [true]"],
+        from: ["screen KDF003I field BETRAG 'BETRAG:' @MFS/KDF00003:18 via EINGABE.BETRAG > BUCHUNG"],
+      },
+    ],
+  );
+  assert.deepEqual(
+    path.reads.map((r) => ({ at: `${r.path}:${r.line}`, operation: r.operation, host: r.host, guards: r.guards, to: ends(r.to) })),
+    [
+      {
+        at: "SRC/KDP00004:6",
+        operation: "SELECT",
+        host: "KD.SALDO",
+        guards: [],
+        to: ["column UPDATE KUNDE.SALDO @SRC/KDP00004:9 via KD.SALDO", "column INSERT BUCHUNG.BETRAG @SRC/KDP00004:11 via KD.SALDO"],
+      },
+      {
+        at: "SRC/KDP00013:31",
+        operation: "SELECT",
+        host: "NEU",
+        guards: ["IF BUCHUNG > 0 [true]"],
+        to: ["screen ISRT of AUSGABE to the I/O PCB: the reply to the screen @SRC/KDP00013:36 via NEU > AUSGABE.SALDO"],
+      },
+      {
+        at: "SRC/KDP00014:14",
+        operation: "FETCH",
+        host: "BETRAG",
+        guards: ["DO WHILE (^ENDE)"],
+        to: ["file WRITE FILE(LISTE) FROM(ZEILE) to PROD.KD.SALDEN @SRC/KDP00014:19 via BETRAG > ZEILE.SALDO"],
+      },
+    ],
+  );
+  assert.deepEqual(path.keys, []);
+  assert.deepEqual(
+    graph.columnPath("KUNDE", "KDNR").keys.map((k) => `${k.path}:${k.line} ${k.operation} ${k.host}`),
+    ["SRC/KDP00004:7 SELECT KD_NR", "SRC/KDP00004:10 UPDATE KD_NR", "SRC/KDP00004:15 DECLARE null", "SRC/KDP00013:30 UPDATE KD_NR", "SRC/KDP00013:31 SELECT KD_NR"],
+  );
+  assert.equal(path.truncated, false);
 });
 
 test("a ß before a name does not shift its column", async () => {

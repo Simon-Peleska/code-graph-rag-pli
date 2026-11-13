@@ -1721,15 +1721,80 @@ async function renderInput() {
   }
 }
 
+// A Db2 column's path: each write with its conditions and where the value
+// comes from, each read with where the value goes, and the lookups by it.
+let columnId = "";
+function showColumn(id) {
+  columnId = id || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderColumn();
+}
+async function renderColumn() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the path of the column ${columnId}`;
+  let path;
+  try {
+    path = await ask("columnPath", columnId);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-130", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  const named = `${path.table}.${path.column}`;
+  if (!path.defined && !path.writes.length && !path.reads.length && !path.keys.length) return fail("VIZ-131", `no DDL defines ${named} and no SQL uses it`);
+  try {
+    const read = performance.now();
+    targets = [];
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    let row = 0;
+    const cell = (text, where, x, y) => {
+      const node = el("pre", { title: `${where.path}:${where.line}`, onclick: open(where) }, text);
+      target(node, where, x, y);
+      return node;
+    };
+    const site = (s, y) => el("td", {}, cell(`${s.operation}${s.host ? ` :${s.host}` : ""} in ${s.procedure ?? "?"}`, s, 0, y), s.guards.length ? el("div", { class: "guard" }, s.guards.join(" › ")) : "");
+    const ends = (list, y) => el("td", {}, list.length ? list.map((e, i) => cell(`${e.text}${e.via.length ? `\n  via ${e.via.join(" › ")}` : ""}`, e, 1, y + i / 10)) : el("div", { class: "guard" }, "nowhere the graph sees"));
+    const section = (title, heads, rows) => rows.length ? el("section", {}, el("h3", { class: "in" }, title), table(heads, rows)) : "";
+    const head = el("h3", { class: "in", ...(path.defined ? { title: `${path.defined.path}:${path.defined.line}`, onclick: open(path.defined) } : {}) },
+      `${named}${path.defined ? ` · ${path.defined.type}` : " · no DDL in the workspace"}`);
+    if (path.defined) target(head, path.defined, 0, row++);
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud" },
+      head,
+      section("Writes", ["Statement", "Value from"], path.writes.map(w => { const y = row++; return el("tr", {}, site(w, y), ends(w.from, y)); })),
+      section("Reads", ["Statement", "Value goes to"], path.reads.map(r => { const y = row++; return el("tr", {}, site(r, y), ends(r.to, y)); })),
+      section("Looked up by", ["Statement"], path.keys.map(k => el("tr", {}, site(k, row++)))),
+      path.truncated ? el("div", { class: "guard" }, "some paths were cut off") : ""));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Column Path: ${named}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${path.writes.length} writes, ${path.reads.length} reads, ${path.keys.length} lookups, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-132", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
 // The diagram tab shows a procedure's flow, a variable's data flow, a DDL
 // file's data model, what transactions or a procedure do to the data, the
-// dead code, or a screen's input rules.
+// dead code, a screen's input rules or a column's path.
 const isModel = () => route().view === "model";
 const isCrud = () => ["crud", "use"].includes(route().view);
 const isDead = () => route().view === "dead";
 const isInput = () => route().view === "input";
-const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isInput() ? showInput(route().id) : showFlow(route().id);
-const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isInput() ? renderInput() : renderFlow();
+const isColumn = () => route().view === "column";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isInput() ? showInput(route().id) : isColumn() ? showColumn(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isInput() ? renderInput() : isColumn() ? renderColumn() : renderFlow();
 document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------

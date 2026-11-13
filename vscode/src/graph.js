@@ -1312,7 +1312,7 @@ export class Graph {
       this.db
         .prepare(
           `SELECT r.name FROM symbols m JOIN refs r ON r.caller = m.id AND r.kind = 'screen'
-           WHERE m.kind = 'message' AND m.name = ? AND r.name IN (SELECT name FROM symbols WHERE kind = 'format')`,
+           WHERE m.kind = 'message' AND m.name = ? AND EXISTS (SELECT 1 FROM symbols f WHERE f.name = r.name AND f.kind = 'format')`,
         )
         .get(name)
     );
@@ -1580,6 +1580,336 @@ export class Graph {
         v.parameter ? receives(v.id) : []
       ),
     }));
+  }
+
+  /**
+   * A database column's path through the code. Its writes (INSERT, UPDATE
+   * SET), each with the conditions it happens under and where the value
+   * comes from: followed back through moves, parameters and arguments to a
+   * screen field, another column, a segment, a record read, a literal or
+   * something the code does not show. Its reads (SELECT and FETCH INTO), each
+   * with where the value goes: other columns, the reply to the screen,
+   * segments, records written. And the statements that look rows up by it.
+   * @param {string} table the table, with or without its schema
+   * @param {string} column
+   */
+  columnPath(table, column) {
+    const bare = table.split(".").pop() ?? table;
+    const defined = /** @type {{ type: string, path: string, line: number } | undefined} */ (
+      this.all(`SELECT c.type, f.path, c.line FROM columns c JOIN files f ON f.id = c.file WHERE c.table_name = ? AND c.name = ? LIMIT 1`, bare, column)[0]
+    );
+    const uses = /** @type {{ operation: string, cursor: string | null, usage: string, host: string | null, expression: string | null, procedure: string | null, path: string, line: number, statement: number | null, variable: number | null }[]} */ (
+      this.all(
+        `SELECT c.operation, c.cursor, c.usage, c.host, c.expression, p.name AS procedure, f.path, c.line, s.id AS statement,
+           (SELECT a.variable FROM accesses a WHERE a.statement = s.id AND a.name = c.host AND a.variable IS NOT NULL LIMIT 1) AS variable
+         FROM sql_columns c JOIN files f ON f.id = c.file LEFT JOIN symbols p ON p.id = c.caller
+         LEFT JOIN statements s ON s.file = c.file AND s.kind = 'exec' AND c.line BETWEEN s.line AND s.end_line
+         WHERE c.table_name = ? AND c.column_name = ? AND c.usage IN ('set', 'insert', 'select', 'where')
+         ORDER BY f.path, c.line LIMIT 500`,
+        bare,
+        column,
+      )
+    );
+    let truncated = uses.length >= 500;
+    /** @typedef {{ kind: string, text: string, path: string, line: number, via: string[] }} End */
+
+    // Where a statement is: its procedure, its line, and the loops around it,
+    // to tell whether a write can reach a later read.
+    /** @type {Map<number, { owner: string, line: number, loops: Set<number> }>} */
+    const places = new Map();
+    const place = (/** @type {number} */ statement) => {
+      const known = places.get(statement);
+      if (known) return known;
+      const chain = /** @type {{ id: number, kind: string, detail: string | null, line: number, caller: number | null, file: number }[]} */ (
+        this.all(
+          `WITH RECURSIVE up(id, depth) AS (SELECT ?, 0 UNION SELECT s.parent, up.depth + 1 FROM statements s JOIN up ON s.id = up.id WHERE s.parent IS NOT NULL)
+           SELECT s.id, s.kind, s.detail, s.line, s.caller, s.file FROM up JOIN statements s ON s.id = up.id ORDER BY up.depth`,
+          statement,
+        )
+      );
+      const found = {
+        owner: chain[0] ? (chain[0].caller ? `s${chain[0].caller}` : `f${chain[0].file}`) : "",
+        line: chain[0]?.line ?? 0,
+        loops: new Set(chain.slice(1).filter((s) => s.kind === "do" && s.detail).map((s) => s.id)),
+      };
+      places.set(statement, found);
+      return found;
+    };
+    const reaches = (/** @type {number} */ write, /** @type {number | null} */ read) => {
+      if (read === null) return true;
+      const from = place(write);
+      const to = place(read);
+      return from.owner !== to.owner || from.line < to.line || [...from.loops].some((loop) => to.loops.has(loop));
+    };
+    const guards = (/** @type {number | null} */ statement) =>
+      statement === null ? [] : /** @type {{ kind: string, detail: string | null, via: string | null }[]} */ (
+        this.all(
+          `WITH RECURSIVE up(id, via, depth) AS (
+             SELECT parent, branch, 0 FROM statements WHERE id = ?
+             UNION ALL
+             SELECT s.parent, s.branch, up.depth + 1 FROM up JOIN statements s ON s.id = up.id WHERE s.parent IS NOT NULL
+           )
+           SELECT s.kind, s.detail, up.via FROM up JOIN statements s ON s.id = up.id ORDER BY up.depth DESC`,
+          statement,
+        )
+      ).flatMap((g) =>
+        g.kind === "if" ? [`IF ${g.detail} [${g.via === "else" ? "false" : "true"}]`]
+        : g.kind === "when" ? [`WHEN (${g.detail})`]
+        : g.kind === "otherwise" ? ["OTHERWISE"]
+        : g.kind === "do" && g.detail ? [`DO ${g.detail}`]
+        : g.kind === "on" ? [`ON ${g.detail}`]
+        : [],
+      );
+    const named = (/** @type {number[]} */ ids) => {
+      const rows = /** @type {{ id: number, qualified: string }[]} */ (this.all(`SELECT id, qualified FROM variables WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)));
+      return ids.map((id) => rows.find((r) => r.id === id)?.qualified ?? "?");
+    };
+
+    // The screen fields that land in a variable of a program's input message.
+    /** @type {Map<string, { message: string, name: string | null, label: string | null, path: string, line: number, variables: { qualified: string, path: string, line: number }[] }[]>} */
+    const screens = new Map();
+    const screenFieldsOf = (/** @type {string} */ path) => {
+      const known = screens.get(path);
+      if (known) return known;
+      const names = /** @type {{ name: string }[]} */ (
+        this.all(
+          `SELECT DISTINCT m.name FROM files p JOIN refs r ON r.kind = 'program' AND r.name = p.member JOIN symbols t ON t.id = r.caller AND t.kind = 'transaction'
+           JOIN mfs_fields mf ON mf.kind = 'MFLD' AND mf.offset = 0 AND mf.literal LIKE t.name || '%' JOIN symbols m ON m.id = mf.screen AND m.kind = 'message'
+           WHERE p.path = ? /* full scan */
+           UNION SELECT r.name FROM files p JOIN refs r ON r.file = p.id AND r.kind = 'screen' WHERE p.path = ?`,
+          path,
+          path,
+        )
+      );
+      const found = names.flatMap(({ name }) =>
+        this.screenInput(name).messages.flatMap((m) => m.fields.map((f) => ({ message: m.name, name: f.name, label: f.label, path: m.path, line: f.line, variables: f.variables }))),
+      );
+      screens.set(path, found);
+      return found;
+    };
+
+    /**
+     * Where the value a variable holds at a statement comes from: the ends
+     * of the chains of writes back from it, each with the variables on the
+     * way, nearest the column last.
+     * @param {number} start
+     * @param {number | null} at the statement that reads it, null for anywhere
+     * @returns {End[]}
+     */
+    const origins = (start, at) => {
+      /** @type {End[]} */
+      const ends = [];
+      const seen = new Set();
+      /** @type {{ variable: number, at: number | null, via: number[] }[]} */
+      const queue = [{ variable: start, at, via: [start] }];
+      const end = (/** @type {Omit<End, "via">} */ found, /** @type {number[]} */ via) => {
+        if (!ends.some((e) => e.kind === found.kind && e.text === found.text && e.path === found.path && e.line === found.line)) ends.push({ ...found, via: named(via) });
+      };
+      while (queue.length) {
+        const item = /** @type {{ variable: number, at: number | null, via: number[] }} */ (queue.shift());
+        const key = `${item.variable} ${item.at}`;
+        if (seen.has(key)) continue;
+        if (seen.size >= 200) {
+          truncated = true;
+          break;
+        }
+        seen.add(key);
+        const variable = /** @type {{ qualified: string, parameter: number | null, init: string | null } | undefined} */ (
+          this.all(`SELECT qualified, parameter, init FROM variables WHERE id = ?`, item.variable)[0]
+        );
+        // What writes it, or a structure around it.
+        const writes = /** @type {{ statement: number, mode: string, name: string, value: string | null, position: number | null, kind: string, detail: string | null, file: number, line: number, path: string }[]} */ (
+          this.all(
+            `WITH RECURSIVE up(id) AS (SELECT ? UNION SELECT v.parent FROM variables v JOIN up ON v.id = up.id WHERE v.parent IS NOT NULL)
+             SELECT DISTINCT w.statement, w.mode, w.name, w.value, w.position, s.kind, s.detail, s.file, s.line, f.path
+             FROM up JOIN accesses w ON w.variable = up.id AND w.through IS NULL JOIN statements s ON s.id = w.statement JOIN files f ON f.id = s.file
+             WHERE w.mode IN ('write', 'arg')
+             UNION
+             SELECT DISTINCT w.statement, w.mode, w.name, w.value, w.position, s.kind, s.detail, s.file, s.line, f.path
+             FROM up JOIN accesses w ON w.through = up.id JOIN statements s ON s.id = w.statement JOIN files f ON f.id = s.file
+             WHERE w.mode IN ('write', 'arg')
+             ORDER BY 10, 9`,
+            item.variable,
+          )
+        ).filter((w) => reaches(w.statement, item.at));
+        for (const w of writes) {
+          const where = { path: w.path, line: w.line };
+          if (w.kind === "call") {
+            const dli = /** @type {{ function: string | null, pcb_parameter: number | null, segment: string | null } | undefined} */ (
+              this.all(`SELECT function, pcb_parameter, segment FROM dli_calls WHERE file = ? AND line = ? AND io_area = ?`, w.file, w.line, w.name)[0]
+            );
+            if (dli && dli.pcb_parameter === 1 && dli.function?.startsWith("G")) {
+              const mine = named([item.variable])[0];
+              const fields = screenFieldsOf(w.path).filter((f) => f.variables.some((v) => v.qualified === mine));
+              for (const f of fields) end({ kind: "screen", text: `${f.message} field ${f.name ?? "?"}${f.label ? ` '${f.label}'` : ""}`, path: f.path, line: f.line }, item.via);
+              if (!fields.length) end({ kind: "screen", text: `the message the ${dli.function} on the I/O PCB reads into ${w.name}`, ...where }, item.via);
+              continue;
+            }
+            if (dli) {
+              end({ kind: "segment", text: `${dli.function ?? "a DL/I call"} of ${dli.segment ?? "a segment"} into ${w.name}`, ...where }, item.via);
+              continue;
+            }
+            // A procedure it is passed to sets the parameter in the same place.
+            const parameters = /** @type {{ id: number }[]} */ (
+              this.all(
+                `SELECT pv.id FROM refs r JOIN links l ON l.ref = r.id JOIN variables pv ON pv.scope = l.target_symbol AND pv.parameter = ? AND pv.level = 1
+                 WHERE r.file = ? AND r.line = ? AND r.kind = 'call' AND r.name = ?`,
+                w.position,
+                w.file,
+                w.line,
+                w.detail,
+              )
+            );
+            if (!parameters.length) end({ kind: "call", text: `CALL ${w.detail} may set ${w.name}`, ...where }, item.via);
+            for (const p of parameters) {
+              const passed = /** @type {{ id: number } | undefined} */ (
+                this.all(`SELECT variable AS id FROM accesses WHERE statement = ? AND name = ? AND mode = 'arg'`, w.statement, w.name)[0]
+              );
+              const field = this.sameField(item.variable, passed?.id ?? null, p.id);
+              queue.push({ variable: field, at: null, via: [field, ...item.via] });
+            }
+            continue;
+          }
+          if (w.kind === "exec") {
+            const columns = /** @type {{ operation: string, table_name: string | null, column_name: string | null, expression: string | null }[]} */ (
+              this.all(
+                `SELECT c.operation, c.table_name, c.column_name, c.expression FROM statements s JOIN sql_columns c ON c.file = s.file AND c.line BETWEEN s.line AND s.end_line
+                 WHERE s.id = ? AND c.host = ? AND c.usage = 'select'`,
+                w.statement,
+                w.name,
+              )
+            );
+            for (const c of columns) end({ kind: "column", text: `${c.operation} ${c.table_name ?? "?"}.${c.column_name ?? c.expression ?? "?"}`, ...where }, item.via);
+            if (!columns.length) end({ kind: "sql", text: `EXEC SQL sets ${w.name}`, ...where }, item.via);
+            continue;
+          }
+          if (w.kind === "read") {
+            const io = /** @type {{ name: string } | undefined} */ (this.all(`SELECT name FROM file_io WHERE file = ? AND line = ? AND operation = 'READ'`, w.file, w.line)[0]);
+            end({ kind: "file", text: `READ FILE(${io?.name ?? "?"}) INTO(${w.name})`, ...where }, item.via);
+            continue;
+          }
+          if (w.kind !== "assignment") {
+            end({ kind: "statement", text: `${w.kind.toUpperCase()} sets ${w.name}`, ...where }, item.via);
+            continue;
+          }
+          if (w.value !== null) {
+            end({ kind: "literal", text: `${w.name} = ${w.value}`, ...where }, item.via);
+            continue;
+          }
+          const sources = /** @type {{ variable: number }[]} */ (
+            this.all(`SELECT DISTINCT coalesce(through, variable) AS variable FROM accesses WHERE statement = ? AND mode = 'read' AND variable IS NOT NULL`, w.statement)
+          );
+          if (!sources.length) end({ kind: "statement", text: `${w.name} is computed`, ...where }, item.via);
+          for (const s of sources) queue.push({ variable: s.variable, at: w.statement, via: [s.variable, ...item.via] });
+        }
+        // A parameter holds what its callers pass.
+        const callers = variable?.parameter
+          ? /** @type {{ variable: number | null, statement: number }[]} */ (
+              this.all(
+                `SELECT a.variable, s.id AS statement
+                 FROM variables p JOIN links l ON l.target_symbol = p.scope JOIN refs r ON r.id = l.ref AND r.kind = 'call'
+                 JOIN statements s ON s.file = r.file AND s.line = r.line AND s.kind = 'call' AND s.detail = r.name
+                 JOIN accesses a ON a.statement = s.id AND a.mode = 'arg' AND a.position = p.parameter
+                 WHERE p.id = ?`,
+                item.variable,
+              )
+            )
+          : [];
+        for (const c of callers) if (c.variable !== null) queue.push({ variable: c.variable, at: c.statement, via: [c.variable, ...item.via] });
+        if (writes.length || callers.length) continue;
+        const declared = /** @type {{ path: string, line: number }} */ (
+          this.all(`SELECT f.path, v.line FROM variables v JOIN files f ON f.id = v.file WHERE v.id = ?`, item.variable)[0]
+        );
+        if (variable?.init) end({ kind: "literal", text: `INIT(${variable.init})`, ...declared }, item.via);
+        else if (variable?.parameter) end({ kind: "outside", text: `${variable.qualified}, a parameter no caller in the graph passes`, ...declared }, item.via);
+        else end({ kind: "outside", text: `nothing in the code sets ${variable?.qualified ?? "it"}`, ...declared }, item.via);
+      }
+      return ends;
+    };
+
+    /**
+     * Where the value read into a variable goes: other columns, the reply
+     * to the screen, segments and records written; each with the variables
+     * on the way, from the column on.
+     * @param {number} start
+     * @param {number} statement the SELECT or FETCH
+     * @returns {End[]}
+     */
+    const destinations = (start, statement) => {
+      const passed = this.passedOn(start);
+      truncated ||= passed.truncated;
+      /** @type {End[]} */
+      const ends = [];
+      const via = (/** @type {number} */ variable) => {
+        const chain = [variable];
+        while (chain[0] !== start && chain.length < 100) {
+          const from = passed.via.get(chain[0])?.[0]?.from;
+          if (from === undefined) break;
+          chain.unshift(from);
+        }
+        return named(chain);
+      };
+      const touched = /** @type {{ root: number, statement: number, mode: string, name: string, kind: string, file: number, line: number, end_line: number, path: string }[]} */ (
+        this.all(
+          `WITH RECURSIVE ${FAMILIES}
+           SELECT DISTINCT touching.root, a.statement, a.mode, a.name, s.kind, s.file, s.line, s.end_line, f.path
+           FROM touching CROSS JOIN accesses a ON a.id = touching.access JOIN statements s ON s.id = a.statement JOIN files f ON f.id = s.file
+           WHERE (s.kind = 'exec' AND a.mode = 'read') OR (s.kind = 'call' AND a.mode = 'arg') OR (s.kind IN ('write', 'rewrite') AND a.mode = 'read')
+           ORDER BY f.path, s.line`,
+          JSON.stringify(passed.reached),
+        )
+      ).filter((t) => t.statement !== statement && passed.live(t.root, t.statement) && reaches(statement, t.statement));
+      for (const t of touched) {
+        const where = { path: t.path, line: t.line };
+        if (t.kind === "exec") {
+          const columns = /** @type {{ operation: string, usage: string, table_name: string | null, column_name: string | null }[]} */ (
+            this.all(
+              `SELECT operation, usage, table_name, column_name FROM sql_columns WHERE file = ? AND line BETWEEN ? AND ? AND host = ? AND usage IN ('set', 'insert', 'where')`,
+              t.file,
+              t.line,
+              t.end_line,
+              t.name,
+            )
+          );
+          for (const c of columns) {
+            const text = `${c.usage === "where" ? `${c.operation} looks up` : c.operation} ${c.table_name ?? "?"}.${c.column_name ?? "?"}`;
+            if (!ends.some((e) => e.text === text && e.path === t.path && e.line === t.line)) ends.push({ kind: c.usage === "where" ? "key" : "column", text, ...where, via: via(t.root) });
+          }
+          continue;
+        }
+        if (t.kind === "call") {
+          const dli = /** @type {{ function: string | null, pcb_parameter: number | null, segment: string | null } | undefined} */ (
+            this.all(`SELECT function, pcb_parameter, segment FROM dli_calls WHERE file = ? AND line = ? AND io_area = ?`, t.file, t.line, t.name)[0]
+          );
+          if (!dli || !["ISRT", "REPL", "CHNG", "PURG"].includes(dli.function ?? "")) continue;
+          const text = dli.pcb_parameter === 1 ? `${dli.function} of ${t.name} to the I/O PCB: the reply to the screen` : `${dli.function} of ${dli.segment ?? "a segment"} from ${t.name}`;
+          ends.push({ kind: dli.pcb_parameter === 1 ? "screen" : "segment", text, ...where, via: via(t.root) });
+          continue;
+        }
+        const io = /** @type {{ operation: string, name: string, path: string } | undefined} */ (
+          this.all(`SELECT io.operation, io.name, f.path FROM file_io io JOIN files f ON f.id = io.file WHERE io.file = ? AND io.line = ? AND io.record = ?`, t.file, t.line, t.name)[0]
+        );
+        if (!io) continue;
+        // The dataset: the DD of that name in the steps that run the program.
+        const datasets = /** @type {{ dsn: string }[]} */ (
+          this.all(
+            `SELECT DISTINCT d.dsn FROM files p JOIN steps st ON st.program = p.member JOIN dds d ON d.step = st.id AND d.name = ? WHERE p.path = ? AND d.dsn IS NOT NULL`,
+            io.name,
+            io.path,
+          )
+        );
+        ends.push({ kind: "file", text: `${io.operation} FILE(${io.name}) FROM(${t.name})${datasets.length ? ` to ${datasets.map((d) => d.dsn).join(", ")}` : ""}`, ...where, via: via(t.root) });
+      }
+      return ends;
+    };
+
+    const site = (/** @type {typeof uses[number]} */ u) => ({ operation: u.operation, cursor: u.cursor, procedure: u.procedure, path: u.path, line: u.line, host: u.host, expression: u.expression, guards: guards(u.statement) });
+    const writes = uses
+      .filter((u) => u.usage === "set" || u.usage === "insert")
+      .map((u) => ({ ...site(u), from: u.variable !== null ? origins(u.variable, u.statement) : [{ kind: "literal", text: u.expression ?? "?", path: u.path, line: u.line, via: [] }] }));
+    const reads = uses.filter((u) => u.usage === "select" && u.variable !== null && u.statement !== null).map((u) => ({ ...site(u), to: destinations(/** @type {number} */ (u.variable), /** @type {number} */ (u.statement)) }));
+    const keys = uses.filter((u) => u.usage === "where").map(site);
+    return { table: bare, column, defined: defined ? { ...defined } : null, writes, reads, keys, truncated };
   }
 
   /**

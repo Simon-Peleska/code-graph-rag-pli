@@ -194,6 +194,12 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "pliGraph.columnPath",
+        "title": "Show Path of the Column",
+        "category": "PL/I Graph",
+        "icon": "$(arrow-swap)"
+      },
+      {
         "command": "pliGraph.showScreen",
         "title": "Show 3270 Screen",
         "category": "PL/I Graph",
