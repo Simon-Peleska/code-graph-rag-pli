@@ -477,6 +477,8 @@ can read it while VS Code runs:
   message at the cursor or in the active file.
 - `PLG047W` The graph is not in WAL mode, usually because its folder is on a
   network drive; reading and indexing then block each other.
+- `PLG048W` Watching the extensions folder for an update failed; restart VS
+  Code after installing a new version.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

@@ -3,9 +3,9 @@
 // sync with the files; the extension only reads it.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch as watchFolder } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import * as vscode from "vscode";
 import { Graph } from "./graph.js";
@@ -90,6 +90,38 @@ export function activate(context) {
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const name = createHash("sha256").update(folder.uri.toString()).digest("hex").slice(0, 16);
     workspaces.set(folder.uri.toString(), { folder, graphFile: join(storage, `${name}.sqlite`), changes: new Set(), running: 0 });
+  }
+
+  // VS Code runs the old code after an install until the extension host restarts,
+  // so a new graph format would not reindex until then. Every install rewrites
+  // extensions.json next to the extension's folder.
+  if (context.extensionMode === vscode.ExtensionMode.Production) {
+    const installed = dirname(context.extensionPath);
+    const prefix = `${context.extension.id.toLowerCase()}-`;
+    const bundleTime = (/** @type {string} */ folder) => {
+      try {
+        return statSync(join(installed, folder, "out", "extension.cjs")).mtimeMs;
+      } catch {
+        return 0;
+      }
+    };
+    const running = bundleTime(basename(context.extensionPath));
+    /** @type {NodeJS.Timeout | undefined} */
+    let settle;
+    try {
+      const watcher = watchFolder(installed, () => {
+        clearTimeout(settle);
+        settle = setTimeout(() => {
+          const newer = readdirSync(installed).find((folder) => folder.toLowerCase().startsWith(prefix) && bundleTime(folder) > running);
+          if (!newer) return;
+          log.info(`${newer} was installed; restarting the extensions to run it`);
+          vscode.commands.executeCommand("workbench.action.restartExtensionHost");
+        }, 2000);
+      });
+      context.subscriptions.push({ dispose: () => (watcher.close(), clearTimeout(settle)) });
+    } catch (error) {
+      log.warn(`[PLG048W] Watching ${installed} for updates of the extension failed; restart VS Code after an update.`, error);
+    }
   }
 
   const grammars = createHighlighter(join(context.extensionPath, "out")).catch((error) => {
