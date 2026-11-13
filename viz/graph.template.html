@@ -148,6 +148,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 #flow .entity.view rect, #flow .entity.alias rect { stroke-dasharray: 5 3; }
 #flow .entity:hover rect { stroke: var(--accent); stroke-width: 2; }
 #flow .entity .divider { stroke: var(--node-border); }
+#flow .focused > rect { stroke: var(--vscode-focusBorder, var(--accent)); stroke-width: 3; stroke-dasharray: none; }
 #flow .entity .stereo { fill: var(--muted); font-size: 11px; }
 #flow .entity .name { fill: var(--text); font-weight: 600; }
 #flow .entity .column { fill: var(--text); font-family: var(--code-font); }
@@ -246,6 +247,7 @@ window.addEventListener("message", event => {
   if (message?.type === "changed" && flowPage) { dataFlow = null; renderDiagram(); }
   else if (message?.type === "changed") document.getElementById("reload-tool").hidden = false;
   if (message?.type === "go") location.hash = message.hash;
+  if (message?.type === "cursor") focusAt(message.path, message.line);
 });
 
 const isProc = n => n && (n.kind === "function" || n.kind === "method");
@@ -1014,7 +1016,67 @@ function bolded(text, names) {
   return parts;
 }
 
+// ---- keyboard and editor sync ---------------------------------------------
+// The diagram's boxes, each with where its statement or table is in the
+// source. The arrow keys move the focus to the nearest box that way and tell
+// VS Code, which moves the editor's cursor there; the editor's cursor moving
+// moves the focus to the last box at or before its line.
+let targets = [], focused = null;
+function target(node, where, x, y) {
+  const t = { node, path: where.path, line: where.line, x, y };
+  targets.push(t);
+  node.addEventListener("click", () => setFocus(t, false));
+}
+const liveTargets = () => targets.filter(t => t.node.isConnected);
+function firstInView(live) {
+  const top = document.getElementById("flow-body").getBoundingClientRect().top;
+  return [...live].sort((a, b) => a.y - b.y || a.x - b.x).find(t => t.node.getBoundingClientRect().bottom > top) ?? live[0];
+}
+function setFocus(t, tell) {
+  focused?.node.classList.remove("focused");
+  focused = t;
+  if (!t) return;
+  t.node.classList.add("focused");
+  t.node.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (tell) host.postMessage({ type: "cursor", path: t.path, line: t.line });
+}
+function focusAt(path, line) {
+  const live = liveTargets();
+  if (focused?.node.isConnected && focused.path === path && focused.line === line) return;
+  const before = live.filter(t => t.path === path && t.line <= line);
+  const best = before.length ? before.reduce((a, b) => b.line > a.line ? b : a) : focused?.node.isConnected ? focused : firstInView(live);
+  console.info(`[graph] cursor at ${path}:${line}: focus on ${best ? `${best.path}:${best.line}` : "nothing"}`);
+  setFocus(best, false);
+}
+// The nearest box in the direction (dx, dy), off-axis distance counting double.
+function moveFocus(dx, dy) {
+  const live = liveTargets();
+  if (!focused?.node.isConnected) return setFocus(firstInView(live), true);
+  let best = null, score = Infinity;
+  for (const t of live) {
+    const along = (t.x - focused.x) * dx + (t.y - focused.y) * dy;
+    if (along <= 0) continue;
+    const s = along + 2 * Math.abs((t.x - focused.x) * dy + (t.y - focused.y) * dx);
+    if (s < score) { best = t; score = s; }
+  }
+  if (best) setFocus(best, true);
+}
+const ARROWS = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+document.addEventListener("keydown", event => {
+  if (!flowPage || event.altKey || event.ctrlKey || event.metaKey || ["INPUT", "VSCODE-TEXTFIELD"].includes(document.activeElement?.tagName)) return;
+  const live = liveTargets();
+  if (!live.length) return;
+  const byPlace = () => [...live].sort((a, b) => a.y - b.y || a.x - b.x);
+  if (ARROWS[event.key]) moveFocus(...ARROWS[event.key]);
+  else if (event.key === "Home") setFocus(byPlace()[0], true);
+  else if (event.key === "End") setFocus(byPlace().at(-1), true);
+  else if ((event.key === "Enter" || event.key === " ") && focused?.node.isConnected) focused.node.dispatchEvent(new MouseEvent("click"));
+  else return;
+  event.preventDefault();
+});
+
 function drawFlow(flow, layout) {
+  targets = [];
   const { nodes, edges, laneX, width, height } = layout;
   const lanes = el("div", { class: "flow-lanes", style: `width: ${width}px` });
   flow.lanes.forEach((lane, i) => {
@@ -1069,6 +1131,7 @@ function drawFlow(flow, layout) {
           n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}, null, n.step.names) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }, null, n.step.names),
           titled(where));
         box.addEventListener("click", goTo(n.step));
+        target(box, n.step, n.x, n.top);
         root.append(box, svg("line", { x1: n.x, y1: n.top + n.boxH, x2: n.x, y2: n.y - 12, class: "edge" }));
       }
       const diamond = svg("polygon", { points: `${n.x},${n.y - 12} ${n.x + 12},${n.y} ${n.x},${n.y + 12} ${n.x - 12},${n.y}`, class: `diamond ${n.step.access ? `access-${n.step.access}` : ""}` }, titled(where));
@@ -1082,6 +1145,7 @@ function drawFlow(flow, layout) {
         n.lines.length > 1 ? lines(n.lines, n.x - FLOW.box / 2 + 8, n.top + 17, FLOW.line, {}, null, step.names) : lines(n.lines, n.x, n.top + 17, FLOW.line, { "text-anchor": "middle" }, null, step.names),
         titled(`${step.text}${step.call && step.call !== "expanded" ? ` (${step.call === "cut" ? "deeper than the slider" : step.call})` : ""} · ${step.path}:${step.line}`));
       box.addEventListener("click", goTo(step));
+      target(box, step, n.x, n.top);
       root.append(box);
       // Below the action: a flow final, or an activity final for STOP.
       const y = n.top + n.h + 12;
@@ -1240,6 +1304,7 @@ function layoutModel(model) {
 }
 
 function drawModel(model, layout, path) {
+  targets = [];
   const { boxes, edges, width, height } = layout;
   const root = svg("svg", { width, height, viewBox: `0 0 ${width} ${height}` },
     svg("defs", null,
@@ -1279,6 +1344,7 @@ function drawModel(model, layout, path) {
         svg("text", { x: x + box.markW + box.nameW + 12, y, class: "type" }, row.type));
     });
     g.addEventListener("click", () => e.path === path ? host.postMessage({ type: "open", path: e.path, line: e.line }) : go({ view: "model", id: e.path }));
+    target(g, e, box.x + box.w / 2, box.y);
     root.append(g);
   }
   document.getElementById("flow-body").replaceChildren(root);

@@ -79,6 +79,9 @@ let shownInTree;
 let graphPanel;
 /** @type {PagePanel | undefined} */
 let flowPanel;
+// Where the diagram's focus goes: the editor's cursor, 1-based.
+/** @type {{ uri: vscode.Uri, line: number } | undefined} */
+let editorAt;
 
 /** @param {vscode.ExtensionContext} context */
 export function activate(context) {
@@ -172,6 +175,10 @@ export function activate(context) {
     vscode.window.onDidChangeActiveTextEditor(() => followEditor()),
     // A file opened from the views keeps them where they are until its
     // editor is used: a click or key there doesn't change the active editor.
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      editorAt = { uri: event.textEditor.document.uri, line: event.selections[0].active.line + 1 };
+      postCursor();
+    }),
     vscode.window.onDidChangeTextEditorSelection((event) => {
       const document = event.textEditor.document;
       if (event.kind === undefined || event.textEditor !== vscode.window.activeTextEditor) return;
@@ -939,7 +946,7 @@ async function open(folder, target) {
  * question for the graph, a list to save as a file, or going back past its
  * first view.
  * @typedef {object} PageMessage
- * @property {"route" | "open" | "ask" | "save" | "flow" | "back"} type
+ * @property {"route" | "open" | "ask" | "save" | "flow" | "back" | "cursor"} type
  * @property {string} [procedure] the page id of the procedure whose flow to show
  * @property {string} [title] a new title for the page's tab
  * @property {string} [hash]
@@ -1101,6 +1108,13 @@ function showDataModel(context, uri) {
  * @param {boolean} go whether an open page goes to `hash`
  */
 function openPage(context, workspace, kind, hash, title, go) {
+  // The cursor, or the first line in view when it is scrolled away.
+  const editor = vscode.window.activeTextEditor;
+  if (editor) {
+    const cursor = editor.selection.active.line;
+    const inView = editor.visibleRanges.find((r) => r.start.line <= cursor && cursor <= r.end.line);
+    editorAt = { uri: editor.document.uri, line: (inView || !editor.visibleRanges.length ? cursor : editor.visibleRanges[0].start.line) + 1 };
+  }
   const open = kind === "graph" ? graphPanel : flowPanel;
   if (open?.workspace === workspace) {
     open.panel.reveal(undefined, true);
@@ -1108,6 +1122,7 @@ function openPage(context, workspace, kind, hash, title, go) {
       open.panel.title = title;
       void open.panel.webview.postMessage({ type: "go", hash });
     }
+    if (kind === "flow") postCursor();
     return;
   }
   open?.panel.dispose();
@@ -1170,6 +1185,9 @@ function openPage(context, workspace, kind, hash, title, go) {
       shown.hash = message.hash ?? "";
       if (message.title) panel.title = message.title;
       log.info(`${kind} page shows #${shown.hash}: drawn in ${message.drawMs} ms, ${message.sinceLoadMs} ms after the page loaded`);
+      if (kind === "flow") postCursor();
+    } else if (message.type === "cursor" && message.path) {
+      void showCursor(workspace, message.path, message.line ?? 1);
     } else if (message.type === "flow" && message.procedure) {
       showFlow(context, workspace, message.procedure);
     } else if (message.type === "back") {
@@ -1190,6 +1208,36 @@ function openPage(context, workspace, kind, hash, title, go) {
     }
   });
   log.info(`${kind} page for ${name} opened at #${hash}`);
+}
+
+// Tells the diagram page where the editor's cursor is, so it focuses the box there.
+function postCursor() {
+  const where = editorAt && locate(editorAt.uri);
+  if (!flowPanel || !editorAt || where?.workspace !== flowPanel.workspace) return;
+  void flowPanel.panel.webview.postMessage({ type: "cursor", path: where.path, line: editorAt.line });
+}
+
+// The diagram's focus moved: the cursor follows, in the file's editor if one
+// is in view, else in one beside the diagram, which keeps the keyboard.
+/** @param {Workspace} workspace @param {string} path @param {number} line */
+async function showCursor(workspace, path, line) {
+  const uri = vscode.Uri.joinPath(workspace.folder.uri, path);
+  const position = new vscode.Position(line - 1, 0);
+  const selection = new vscode.Selection(position, position);
+  const editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
+  log.info(`diagram focus on ${path}:${line}, ${editor ? "moving the cursor there" : "opening it beside"}`);
+  if (editor) {
+    editor.selection = selection;
+    editor.revealRange(selection, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    return;
+  }
+  try {
+    await vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true, preview: true, selection });
+  } catch (error) {
+    const text = `[PLG044E] Showing ${path}:${line} beside the diagram failed: ${error}`;
+    log.error(text);
+    void vscode.window.showErrorMessage(text);
+  }
 }
 
 /**

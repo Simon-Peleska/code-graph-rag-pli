@@ -156,6 +156,13 @@ extension keeps of each workspace folder:
 - **Show Data Model of NAME** is a code action on a table, view or alias name,
   in a PL/I program's SQL or in DDL; anywhere else in a DDL file it is **Show
   Data Model of FILE**.
+- The flow, data flow and data model diagrams follow the editor's cursor: one
+  opens with the box of the cursor's line in focus (the last one at or before
+  it; with the cursor scrolled out of view, the first line in view), and
+  moving the cursor moves the focus. The arrow keys move the focus to the
+  nearest box that way, Home and End to the first and last, and the cursor
+  follows: in the file's editor if one is in view, else in one opened beside
+  the diagram, which keeps the keyboard. Enter or Space does what a click does.
 - **PL/I Graph: Show Graph** (also the graph icon on those views) opens the
   graph in the editor, starting at the active file's module. It is the page
   from `viz/`; it asks for what each view draws, and a worker thread of its
@@ -432,6 +439,8 @@ can read it while VS Code runs:
   languages the same text but for blanks and case.
 - `PLG042E` Format Document: the grammars did not load (see `PLG014E`).
 - `PLG043E` Format Document: the PL/I parser gave no tree.
+- `PLG044E` A diagram's focus moved to a statement whose file could not
+  be shown beside it.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
