@@ -232,7 +232,7 @@ body.flow-page > header, body.flow-page > #sides { display: none; }
 // The page asks VS Code for what each view draws; a big graph does not fit in
 // a page. byId keeps every node seen, for labels and links.
 const host = acquireVsCodeApi();
-const flowPage = ["flow", "data", "model", "crud", "use", "dead"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
+const flowPage = ["flow", "data", "model", "crud", "use", "dead", "input"].includes(new URLSearchParams(location.hash.slice(1)).get("v"));
 const byId = new Map();
 const remember = nodes => { for (const n of nodes) byId.set(n.id, n); return nodes; };
 let asked = 0;
@@ -297,6 +297,14 @@ function el(tag, props, ...children) {
   }
   for (const child of children.flat()) if (child != null && child !== false) node.append(child);
   return node;
+}
+
+// A table of the rows' cells under the heads, without the columns that are
+// empty in every row.
+function table(heads, rows) {
+  const empty = heads.map((_, c) => rows.every(tr => !tr.children[c].textContent));
+  for (const tr of rows) [...tr.children].forEach((td, c) => empty[c] && td.remove());
+  return el("table", {}, el("tr", {}, heads.filter((_, c) => !empty[c]).map(h => el("th", {}, h))), rows);
 }
 
 function showError(code, message, error) {
@@ -1457,7 +1465,7 @@ async function renderData() {
         el("td", {}, el("pre", { title: `${s.path}:${s.line}`, onclick: open(s) }, s.text)),
         el("td", { class: "in", title: `${s.path}:${s.line}`, onclick: open(s) }, `${s.procedure}:${s.line}`)));
       document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
-        rows.length ? el("table", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, "Sets"), el("th", {}, "In")), rows) : null));
+        rows.length ? table(["When", "Sets", "In"], rows) : null));
     } else if (dataAs === "table") {
       const outcomes = (list) => list.map(o => el("div", { class: "outcome" },
         o.guards.length ? el("div", { class: "guard" }, o.guards.join(" → ")) : null,
@@ -1469,7 +1477,7 @@ async function renderData() {
         el("td", {}, outcomes(r.else)),
         el("td", { class: "in", title: `${r.path}:${r.line}`, onclick: open(r) }, `${r.procedure}:${r.line}`)));
       document.getElementById("flow-body").replaceChildren(el("div", { class: "rules" },
-        rows.length ? el("table", {}, el("tr", {}, el("th", {}, "When"), el("th", {}, "Condition"), el("th", {}, "Then"), el("th", {}, "Else"), el("th", {}, "In")), rows) : null));
+        rows.length ? table(["When", "Condition", "Then", "Else", "In"], rows) : null));
     } else if (!data.steps.length) {
       document.getElementById("flow-body").replaceChildren();
     } else {
@@ -1547,7 +1555,7 @@ async function renderCrud() {
           }))));
       });
       return el("section", {}, head, rows.length
-        ? el("table", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Name"), ...operations.map(o => el("th", {}, o[0].toUpperCase() + o.slice(1)))), rows)
+        ? table(["", "Name", ...operations.map(o => o[0].toUpperCase() + o.slice(1))], rows)
         : el("div", { class: "guard" }, "touches no segment, message, table or file"));
     });
     document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud" }, sections));
@@ -1606,7 +1614,7 @@ async function renderDead() {
         return tr;
       });
       return el("section", {}, el("h3", {}, `${title} (${items.length})`), rows.length
-        ? el("table", {}, el("tr", {}, el("th", {}, "Where"), ...head.map(h => el("th", {}, h))), rows)
+        ? table(["Where", ...head], rows)
         : el("div", { class: "guard" }, empty));
     };
     const sections = [
@@ -1626,14 +1634,102 @@ async function renderDead() {
   }
 }
 
+// ---- screen input ---------------------------------------------------------
+// A screen's input validation rules (v=input): for each field of its input
+// messages, the variable of the program's I/O area it lands in, what that is
+// checked against and what follows, such as the error message set.
+let inputName = "";
+function showInput(name) {
+  inputName = name || "";
+  document.getElementById("flow-title").textContent = "";
+  document.getElementById("flow-depth-label").hidden = true;
+  document.getElementById("data-as").hidden = true;
+  document.getElementById("flow-body").replaceChildren();
+  renderInput();
+}
+async function renderInput() {
+  const mine = ++flowAsked;
+  const status = document.getElementById("flow-status"), error = document.getElementById("flow-error");
+  const fail = (code, message, cause) => {
+    console.error(`[${code}] ${message}`, cause || "");
+    error.textContent = `[${code}] ${message}`;
+    error.hidden = false;
+    status.textContent = "";
+  };
+  error.hidden = true;
+  status.textContent = "reading…";
+  const started = performance.now();
+  const what = `the input rules of the screen ${inputName}`;
+  let input;
+  try {
+    input = await ask("screenInput", inputName);
+  } catch (cause) {
+    if (mine === flowAsked) fail("VIZ-127", `could not read ${what}: ${cause.message}`, cause);
+    return;
+  }
+  if (mine !== flowAsked) return;
+  if (!input.messages.length) return fail("VIZ-128", `no input message is mapped through the format ${input.format}`);
+  try {
+    const read = performance.now();
+    targets = [];
+    const open = (where) => () => host.postMessage({ type: "open", path: where.path, line: where.line });
+    const said = (o) => `${o.guards.length ? `when ${o.guards.join("; ")}: ` : ""}${o.text.replace(/\s+/g, " ")}`;
+    let row = 0, rules = 0;
+    const cell = (text, where, x, y, tag = "pre") => {
+      const node = el(tag, { title: `${where.path}:${where.line}`, onclick: open(where) }, text);
+      target(node, where, x, y);
+      return node;
+    };
+    const outcomes = (list, x, y) => el("td", {}, list.map((o, i) => cell(said(o), o, x, y + i / 10)));
+    const sections = input.messages.map(m => {
+      const head = el("h3", { class: "in", title: `${m.path}:${m.line}`, onclick: open(m) },
+        `${m.name}${m.code ? ` · transaction ${m.code}` : ""} · ${m.receives.length ? m.receives.map(r => `GU into ${r.area} in ${r.path.split("/").pop()}`).join(", ") : m.programs.length ? `${m.programs.join(", ")} receive it with no GU on the I/O PCB` : "no program is known to receive it"}`);
+      target(head, m, 0, row++);
+      const rows = m.fields.flatMap(f => {
+        const name = f.name ? `${f.name}${f.label ? ` '${f.label}'` : ""}` : `'${f.literal ?? ""}'`;
+        const where = { path: m.path, line: f.line };
+        const lines = [];
+        const fieldCell = (y) => el("td", {}, lines.length === 0 ? cell(name, where, 0, y) : "");
+        if (!f.variables.length) {
+          const y = row++;
+          lines.push(el("tr", {}, el("td", {}, cell(name, where, 0, y)), el("td", { class: "guard" }, f.unmapped.length ? f.unmapped.map(u => `bytes ${u.start}-${u.end} of ${u.area}`).join(", ") : "-"), el("td", {}), el("td", {}), el("td", {})));
+          return lines;
+        }
+        for (const v of f.variables) {
+          const variable = `${v.qualified}${v.goes.length ? ` → ${v.goes.join(", ")}` : ""}`;
+          const checks = v.rules.length ? v.rules : [null];
+          checks.forEach((r, i) => {
+            const y = row++;
+            const fieldTd = fieldCell(y);
+            const variableTd = el("td", {}, i === 0 ? cell(variable, v, 1, y) : "");
+            if (!r) return lines.push(el("tr", {}, fieldTd, variableTd, el("td", { class: "guard" }, "checked nowhere"), el("td", {}), el("td", {})));
+            rules++;
+            const reached = r.when.length ? el("div", { class: "guard" }, `reached ${r.when.map(w => w.join(" › ")).join(" or ")}`) : "";
+            lines.push(el("tr", {}, fieldTd, variableTd, el("td", {}, cell(`${r.condition}`, r, 2, y), reached), outcomes(r.then, 3, y), outcomes(r.else, 4, y)));
+          });
+        }
+        return lines;
+      });
+      return el("section", {}, head, table(["Field", "Variable", "Check", "True", "False"], rows));
+    });
+    document.getElementById("flow-body").replaceChildren(el("div", { class: "rules crud" }, sections, input.truncated ? el("div", { class: "guard" }, "some rules were cut off") : ""));
+    status.textContent = "";
+    host.postMessage({ type: "route", hash: location.hash.slice(1), title: `Screen Input: ${input.format}`, drawMs: Math.round(performance.now() - read), sinceLoadMs: Math.round(performance.now()) });
+    console.info(`[graph] ${what}: ${input.messages.length} messages, ${rules} rules, read in ${Math.round(read - started)} ms, drawn in ${Math.round(performance.now() - read)} ms`);
+  } catch (cause) {
+    fail("VIZ-129", `could not draw ${what}: ${cause.message}`, cause);
+  }
+}
+
 // The diagram tab shows a procedure's flow, a variable's data flow, a DDL
-// file's data model, what transactions or a procedure do to the data, or the
-// dead code.
+// file's data model, what transactions or a procedure do to the data, the
+// dead code, or a screen's input rules.
 const isModel = () => route().view === "model";
 const isCrud = () => ["crud", "use"].includes(route().view);
 const isDead = () => route().view === "dead";
-const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : showFlow(route().id);
-const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : renderFlow();
+const isInput = () => route().view === "input";
+const showDiagram = () => isModel() ? showModel(route().id) : route().view === "data" ? showData(route().id) : isCrud() ? showCrud(route().id) : isDead() ? showDead(route().id) : isInput() ? showInput(route().id) : showFlow(route().id);
+const renderDiagram = () => isModel() ? renderModel() : route().view === "data" ? renderData() : isCrud() ? renderCrud() : isDead() ? renderDead() : isInput() ? renderInput() : renderFlow();
 document.getElementById("flow-depth").addEventListener("input", renderDiagram);
 
 // ---- render ---------------------------------------------------------------

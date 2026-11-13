@@ -280,6 +280,8 @@ test("the IMS system definition maps transactions to their PSB and program", () 
       { tran: "KD03", detail: "PSB=KDP00001,PGMTYPE=TP,CODE=(KD02,KD03)", kind: "program", name: "KDP00001", path: "SRC/KDP00001" },
       { tran: "KD05", detail: "PSB=KDP00005,PGMTYPE=TP,CODE=KD05,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "psb", name: "KDP00005", path: "IMS/KDPSB05" },
       { tran: "KD05", detail: "PSB=KDP00005,PGMTYPE=TP,CODE=KD05,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00005", path: "SRC/KDP00005" },
+      { tran: "KD06", detail: "PSB=KDP00011,PGMTYPE=TP,CODE=KD06,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "psb", name: "KDP00011", path: null },
+      { tran: "KD06", detail: "PSB=KDP00011,PGMTYPE=TP,CODE=KD06,MSGTYPE=(SNGLSEG,RESPONSE)", kind: "program", name: "KDP00011", path: "SRC/KDP00011" },
     ],
   );
 });
@@ -314,6 +316,8 @@ test("DL/I calls name their function, PCB parameter and SSA segments, also from 
       { entry: "PLITDLI", function: "ISRT", pcb: "IOPCB", pcb_parameter: 1, io_area: "MSG", segment: "KDF001O", path: "KDF001O", arguments: "VIER, ISRT_FUNC, IOPCB, MSG, MODNAME", line: 37 },
       { entry: "CEETDLI", function: "DLET", pcb: "DBPCB", pcb_parameter: 3, io_area: "SEG", segment: null, path: null, arguments: "'DLET', DBPCB, SEG", line: 38 },
       { entry: "PLITDLI", function: "GU", pcb: "DBPCB", pcb_parameter: 2, io_area: "SEG", segment: "KUNDE", path: "KUNDE", arguments: "VIER, GU_FUNC, DBPCB, SEG, KUNDE_SSA", line: 6 },
+      { entry: "PLITDLI", function: "GU", pcb: "IOPCB", pcb_parameter: 1, io_area: "EINGABE", segment: null, path: null, arguments: "DREI, GU_FUNC, IOPCB, EINGABE", line: 25 },
+      { entry: "PLITDLI", function: "ISRT", pcb: "IOPCB", pcb_parameter: 1, io_area: "AUSGABE", segment: null, path: null, arguments: "DREI, ISRT_FUNC, IOPCB, AUSGABE", line: 38 },
     ],
   );
 });
@@ -466,6 +470,7 @@ test("comments describe procedures and declarations, literals are kept with thei
     { name: "KDP00009", comment: "KDP00009: SPERRPRUEFUNG PRUEFT, OB EIN KUNDE GESPERRT IST", line: 5 },
     { name: "PROTO", comment: "PROTOKOLL", line: 19 },
     { name: "KDP00010", comment: "KDP00010: MONATSABSCHLUSS MIT ALTLASTEN", line: 2 },
+    { name: "KDP00011", comment: "KDP00011: KUNDE ANLEGEN", line: 2 },
   ]);
   assert.deepEqual(
     rows(`SELECT v.qualified, v.comment FROM variables v JOIN files f ON f.id = v.file WHERE v.comment IS NOT NULL AND f.path IN ('SRC/KDP00009', 'INCLUDE/KDC00001') ORDER BY v.id`),

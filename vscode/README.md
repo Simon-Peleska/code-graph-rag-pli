@@ -175,6 +175,12 @@ extension keeps of each workspace folder:
   the variables nothing reads. A click opens the line. A call through a
   name the graph cannot resolve, or a program run from outside PL/I, is not
   seen, so check a procedure before dropping it.
+- **PL/I Graph: Show Input Rules of the Screen** takes the MFS format or
+  message at the cursor (or the active file's) and lists, per field the user
+  types, the variable of the program's I/O area it lands in, the conditions
+  that test it, and what happens when each holds or fails, such as the
+  error message set. The program is the one the message's transaction code
+  runs; only the first segment, read by the GU on the I/O PCB, is mapped.
 - The flow, data flow, data model, transaction and data use diagrams follow the editor's cursor: one
   opens with the box of the cursor's line in focus (the last one at or before
   it; with the cursor scrolled out of view, the first line in view), and
@@ -229,7 +235,8 @@ extension keeps of each workspace folder:
   `psb` (an IMS PSB or a transaction's: its PCBs, the segments each may
   access and who uses it), `screen` (an MFS format's fields with their
   labels, and where each message field sits in the program's I/O area),
-  `dli` (a program's DL/I calls: function, SSA
+  `screen_input` (per input field: the I/O area variable it lands in, the
+  conditions that test it and their outcomes), `dli` (a program's DL/I calls: function, SSA
   segments, I/O area and the PSB's PCB each call uses), `transaction` (a
   transaction's CRUD matrix: the messages, segments and tables its programs
   insert, read, update and delete, and where), `data_use` (the same for a
@@ -466,6 +473,8 @@ can read it while VS Code runs:
 - `PLG044E` A diagram's focus moved to a statement whose file could not
   be shown beside it.
 - `PLG045E` Show Data Use: there is no procedure at the cursor.
+- `PLG046E` Show Input Rules of the Screen: there is no MFS format or
+  message at the cursor or in the active file.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
@@ -480,7 +489,9 @@ the transactions could not be read, `VIZ-120` there are no transactions for
 the name, `VIZ-121` they could not be drawn, `VIZ-122` a procedure's data
 use could not be read, `VIZ-123` the procedure is not in the graph,
 `VIZ-124` its data use could not be drawn, `VIZ-125` the dead code could
-not be read, `VIZ-126` it could not be drawn.
+not be read, `VIZ-126` it could not be drawn, `VIZ-127` a screen's input
+rules could not be read, `VIZ-128` no input message is mapped through the
+format, `VIZ-129` they could not be drawn.
 
 Don't install it next to the pli-lsp extension: both define the `pli`
 language, so highlighting would clash and trees would show twice.

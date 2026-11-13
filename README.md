@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG045E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG046E`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -91,7 +91,8 @@ Derived from these rows when asked, not stored: who writes and reads a
 dataset across jobs (MCP tool `dataset`), a program's files with their DDs
 and datasets (`program_files`), a table's columns with every SQL statement
 using each and its host variable (`table_columns`), a PSB's layout and users (`psb`), a screen's fields and
-the programs naming it (`screen`), which PCB of the PSB a DL/I call uses
+the programs naming it (`screen`), the variable each input field lands in
+and the checks on it (`screen_input`), which PCB of the PSB a DL/I call uses
 (`dli`), what each transaction inserts, reads, updates and deletes
 (`transaction`) and each procedure with its callees (`data_use`), which
 branches, procedures and variables are dead (`dead_code`), where a field is set, passed or compared and under which

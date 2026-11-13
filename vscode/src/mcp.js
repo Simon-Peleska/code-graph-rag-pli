@@ -88,6 +88,12 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { name: { type: "string", description: "a format or message name" } }, required: ["name"] },
   },
   {
+    name: "screen_input",
+    description:
+      "A 3270 screen's input validation rules, drawn from the code: for each input message of an IMS MFS format, the program that receives it (by its transaction code) and the I/O area of its GU on the I/O PCB; for each field the user types, the variable of that area at the field's place, the variables its value goes on to, what it is checked against, and what follows when the check is true or false, such as the error message set.",
+    inputSchema: { type: "object", properties: { name: { type: "string", description: "a format or message name" } }, required: ["name"] },
+  },
+  {
     name: "dli",
     description:
       "A program's IMS DL/I calls: the function, the segments its SSAs name, the PCB and I/O area, each PCB matched to the PCB it is in the PSBs the program runs under.",
@@ -291,6 +297,36 @@ function call(name, args) {
     ]);
     if (!screens.some((s) => s.kind === "format")) lines.unshift(`No format ${format} is defined.`);
     lines.push(...users.map((u) => `named as ${u.name} in ${u.path}:${u.line}`));
+    return lines.join("\n");
+  }
+  if (name === "screen_input") {
+    const { format, messages, truncated } = open().screenInput(args.name.toUpperCase());
+    if (messages.length === 0) return `No input message is mapped through the format ${format}.`;
+    /** @param {{ text: string, guards: string[], path: string, line: number }} o */
+    const outcome = (o) => `${o.guards.length ? `when ${o.guards.join("; ")}: ` : ""}${o.text.replace(/\s+/g, " ")} (${o.path}:${o.line})`;
+    const lines = messages.flatMap((m) => [
+      `Input message ${m.name}: ${m.path}:${m.line}${m.code ? `, transaction ${m.code}` : ""}`,
+      ...(m.programs.length ? [] : ["  No program is known to receive it."]),
+      ...(m.programs.length && !m.receives.length ? [`  ${m.programs.join(", ")} make no GU on the I/O PCB with an I/O area.`] : []),
+      ...m.receives.map((r) => `  received by the GU into ${r.area} at ${r.path}:${r.line}${r.header ? `, its first ${r.header} bytes LL and ZZ` : ""}`),
+      ...m.fields.flatMap((f) => {
+        const what = f.name ? `${f.name}${f.label ? ` label '${f.label}'` : ""}${f.row !== null ? ` at ${f.row},${f.col}` : ""}` : `'${f.literal ?? ""}'`;
+        return [
+          `  ${what} offset ${f.offset ?? "?"} length ${f.length ?? "?"} (${m.path}:${f.line})`,
+          ...f.unmapped.map((u) => `    lands in ${u.area} bytes ${u.start}-${u.end}, no field of its own: ${u.path}`),
+          ...f.variables.flatMap((v) => [
+            `    into ${v.qualified}: ${v.path}:${v.line}${v.goes.length ? `, goes on to ${v.goes.join(", ")}` : ""}`,
+            ...(v.rules.length ? [] : ["      checked nowhere"]),
+            ...v.rules.flatMap((r) => [
+              `      ${r.condition} in ${r.procedure}: ${r.path}:${r.line}${r.when.length ? `, reached ${r.when.map((w) => w.join(" > ")).join(" or ")}` : ""}`,
+              ...r.then.map((o) => `        then ${outcome(o)}`),
+              ...r.else.map((o) => `        else ${outcome(o)}`),
+            ]),
+          ]),
+        ];
+      }),
+    ]);
+    if (truncated) lines.push("(Some rules were cut off; ask the field tool for the rest.)");
     return lines.join("\n");
   }
   if (name === "dli") {

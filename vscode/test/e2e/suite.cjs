@@ -239,6 +239,10 @@ exports.run = async () => {
   // ABFCUST1 holds the format CUSTFMT.
   const screen = vscode.Uri.joinPath(folder, "ABFCUST1");
   await shownAs(screen, "hlasm");
+  await vscode.commands.executeCommand("pliGraph.screenInput");
+  await webviewTab("Screen Input: CUSTFMT");
+  console.log("Show Input Rules of the Screen opens");
+  await shownAs(screen, "hlasm");
   await vscode.commands.executeCommand("pliGraph.showScreen", screen);
   await webviewTab("3270: CUSTFMT");
   console.log("Show 3270 Screen opens");

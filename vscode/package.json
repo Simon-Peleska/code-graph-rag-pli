@@ -188,6 +188,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "pliGraph.screenInput",
+        "title": "Show Input Rules of the Screen",
+        "category": "PL/I Graph",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "pliGraph.showScreen",
         "title": "Show 3270 Screen",
         "category": "PL/I Graph",

@@ -8,6 +8,23 @@
 /** A procedure detail of OPTIONS(MAIN). */
 export const MAIN_OPTIONS = /OPTIONS\s*\([^)]*\bMAIN\b/i;
 
+/**
+ * Bytes a field of a record takes, or undefined when it cannot be known
+ * from its declaration.
+ * @param {{ type: string | null, size: string | null }} v
+ */
+export function bytes(v) {
+  const size = v.size ?? "";
+  if (v.type === "CHAR") return Number(size) || undefined;
+  if (v.type === "PIC") {
+    const expanded = size.replace(/\((\d+)\)(.)/g, (_, n, c) => c.repeat(Number(n)));
+    return expanded.replace(/V/gi, "").length;
+  }
+  if (v.type === "FIXED DEC") return Math.ceil((Number(size.split(",")[0]) + 1) / 2);
+  if (v.type === "FIXED BIN") return Number(size.split(",")[0]) > 15 ? 4 : 2;
+  return undefined;
+}
+
 /** @type {Record<string, Language>} */
 const EXTENSIONS = {
   ".pli": "pli", ".pl1": "pli", ".pco": "pli", ".inc": "pli",

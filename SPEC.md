@@ -584,7 +584,7 @@ The harness is tuned like any other program: by a test suite.
 
 Exists today: `find_definition`, `find_references`, `dependencies`,
 `dependents`, `dataset`, `program_files`, `table_columns`, `psb`, `screen`,
-`dli`, `transaction`, `data_use`, `dead_code`, `field`, `lineage`, `text`, `get_source`, `query_graph`.
+`screen_input`, `dli`, `transaction`, `data_use`, `dead_code`, `field`, `lineage`, `text`, `get_source`, `query_graph`.
 
 - **FR-MCP-1** `explain(subject)`: the summary, rules, glossary terms and
   metadata of a subject, with trust and sources.

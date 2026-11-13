@@ -33,7 +33,7 @@ test("the server introduces itself and lists its tools", () => {
   assert.equal(hello.result.serverInfo.name, "pli-graph");
   assert.deepEqual(
     list.result.tools.map((/** @type {any} */ t) => t.name),
-    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
+    ["find_definition", "find_references", "dependencies", "dependents", "dataset", "program_files", "table_columns", "psb", "screen", "screen_input", "dli", "transaction", "data_use", "dead_code", "field", "lineage", "text", "get_source", "query_graph"],
   );
 });
 
@@ -253,6 +253,48 @@ test("dead_code lists the branches, procedures and variables that can go", () =>
     ].join("\n"),
   );
   assert.equal(none.result.content[0].text, "Found no dead code in NIX.");
+});
+
+test("screen_input follows each field the user types into the program and its checks", () => {
+  const [input, noGu, none] = serve([tool("screen_input", { name: "kdf002o" }), tool("screen_input", { name: "KDF001" }), tool("screen_input", { name: "NIX" })], facts);
+  assert.equal(
+    input.result.content[0].text,
+    [
+      "Input message KDF002I: MFS/KDF00002:14, transaction KD06",
+      "  received by the GU into EINGABE at SRC/KDP00011:25, its first 6 bytes LL and ZZ",
+      "  'KD06    ' offset 0 length 8 (MFS/KDF00002:16)",
+      "    into EINGABE.TRANCODE: SRC/KDP00011:15",
+      "      checked nowhere",
+      "  KDNR label 'KUNDENNR:' at 3,20 offset 8 length 8 (MFS/KDF00002:17)",
+      "    into EINGABE.KDNR: SRC/KDP00011:16, goes on to AUSGABE.KDNR, KUNDENNR, NUMMER",
+      "      IF EINGABE.KDNR = 0 in KDP00011: SRC/KDP00011:28",
+      "        then AUSGABE.MELDUNG = 'KD101 KUNDENNR FEHLT'; (SRC/KDP00011:28)",
+      "        else KUNDENNR = EINGABE.KDNR; (SRC/KDP00011:30)",
+      "        else CALL PRUEFE_NR(KUNDENNR); (SRC/KDP00011:31)",
+      "      IF VERIFY(NUMMER, '0123456789') > 0 in PRUEFE_NR: SRC/KDP00011:41, reached IF EINGABE.KDNR = 0 [false] > KDP00011: KUNDENNR = EINGABE.KDNR; > KDP00011: CALL PRUEFE_NR(KUNDENNR);",
+      "        then AUSGABE.MELDUNG = 'KD104 KUNDENNR NICHT NUMERISCH'; (SRC/KDP00011:41)",
+      "  TYP label 'TYP (P/G):' at 4,20 offset 16 length 1 (MFS/KDF00002:18)",
+      "    into EINGABE.TYP: SRC/KDP00011:17",
+      "      WHEN ('P', 'G') in KDP00011: SRC/KDP00011:34",
+      "        else AUSGABE.MELDUNG = 'KD102 TYP MUSS P ODER G SEIN'; (SRC/KDP00011:35)",
+      "      IF TYP = 'P' & LIMIT > 5000 in KDP00011: SRC/KDP00011:37",
+      "        then AUSGABE.MELDUNG = 'KD103 LIMIT ZU HOCH'; (SRC/KDP00011:37)",
+      "  LIMIT label 'KREDITLIMIT:' at 5,20 offset 17 length 7 (MFS/KDF00002:19)",
+      "    into EINGABE.LIMIT: SRC/KDP00011:18",
+      "      IF TYP = 'P' & LIMIT > 5000 in KDP00011: SRC/KDP00011:37",
+      "        then AUSGABE.MELDUNG = 'KD103 LIMIT ZU HOCH'; (SRC/KDP00011:37)",
+    ].join("\n"),
+  );
+  assert.equal(
+    noGu.result.content[0].text,
+    [
+      "Input message KDF001I: MFS/KDF00001:14, transaction KD01",
+      "  SRC/KDP00001 make no GU on the I/O PCB with an I/O area.",
+      "  'KD01    ' offset 0 length 8 (MFS/KDF00001:16)",
+      "  KDNR label 'KUNDENNR:' at 3,20 offset 8 length 8 (MFS/KDF00001:17)",
+    ].join("\n"),
+  );
+  assert.equal(none.result.content[0].text, "No input message is mapped through the format NIX.");
 });
 
 test("field shows where a field is set, passed and compared, and under which conditions", () => {

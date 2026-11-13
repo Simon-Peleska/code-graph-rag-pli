@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 23;
+const INDEXER_VERSION = 24;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -2190,11 +2190,14 @@ function readHlasm(root, file) {
     const symbol = addSymbol(file, -1, operation === "FMT" ? "format" : "message", name, statement);
     if (operation !== "MSG") continue;
     // A message names the format it is mapped through (SOR=) and the message
-    // that follows it (NXT=).
+    // that follows it (NXT=); its detail says whether it is the screen's input
+    // or output, input when TYPE= is left out.
+    file.symbols[symbol].detail = "INPUT";
     for (const operand of operands?.namedChildren ?? []) {
       if (operand?.type !== "keyword_operand") continue;
       const key = fieldText(operand, "key").toUpperCase();
       const value = operand.childForFieldName("value");
+      if (key === "TYPE" && value) file.symbols[symbol].detail = value.text.toUpperCase();
       if ((key !== "SOR" && key !== "NXT") || !value) continue;
       const word = firstWord(value);
       const target = word && memberName(word.text);

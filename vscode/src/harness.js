@@ -8,7 +8,7 @@ import http from "node:http";
 import https from "node:https";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { blankMargins } from "./source.js";
+import { blankMargins, bytes } from "./source.js";
 
 export const PROMPT_VERSION = 1;
 
@@ -132,23 +132,6 @@ function ownRanges(db, unit) {
 
 /** A source line without the sequence number of fixed format (columns 73-80). @param {string} line */
 const code = (line) => (line.length > 72 && /^\s*\d*\s*$/.test(line.slice(72)) ? line.slice(0, 72) : line).trimEnd();
-
-/**
- * Bytes a field of a record takes, or undefined when it cannot be known
- * from its declaration.
- * @param {{ type: string | null, size: string | null }} v
- */
-function bytes(v) {
-  const size = v.size ?? "";
-  if (v.type === "CHAR") return Number(size) || undefined;
-  if (v.type === "PIC") {
-    const expanded = size.replace(/\((\d+)\)(.)/g, (_, n, c) => c.repeat(Number(n)));
-    return expanded.replace(/V/gi, "").length;
-  }
-  if (v.type === "FIXED DEC") return Math.ceil((Number(size.split(",")[0]) + 1) / 2);
-  if (v.type === "FIXED BIN") return Number(size.split(",")[0]) > 15 ? 4 : 2;
-  return undefined;
-}
 
 /**
  * The positions of each field of a level-1 structure as it lies in a record,

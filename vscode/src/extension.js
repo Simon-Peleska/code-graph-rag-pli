@@ -145,6 +145,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.transactions", () => showTransactions(context)),
     vscode.commands.registerCommand("pliGraph.dataUse", (/** @type {string | undefined} */ id) => showDataUse(context, id)),
     vscode.commands.registerCommand("pliGraph.deadCode", () => showDeadCode(context)),
+    vscode.commands.registerCommand("pliGraph.screenInput", () => showScreenInput(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     vscode.commands.registerCommand("pliGraph.tab", pliTab),
@@ -1148,6 +1149,38 @@ function showDeadCode(context) {
   const path = shown.where && shown.graph.module(shown.where.path) ? shown.where.path : "";
   log.info(`dead code of ${path || "the workspace"}`);
   openPage(context, shown.workspace, "flow", `v=dead&id=${encodeURIComponent(path)}`, `Dead Code: ${path ? path.split("/").pop() : "all"}`, true);
+}
+
+// The input rules of the screen at the cursor: the format or message named
+// there, else the first defined in the active file, else the first the
+// active program names.
+/** @param {vscode.ExtensionContext} context */
+function showScreenInput(context) {
+  const shown = workspaceShown();
+  if (!shown) return;
+  const word = shown.editor && shown.editor.document.getWordRangeAtPosition(shown.editor.selection.active, /[A-Za-z0-9_@#$]+/);
+  const named = word ? shown.editor?.document.getText(word).toUpperCase() ?? "" : "";
+  const screen = /** @type {{ name: string } | undefined} */ (
+    shown.graph.all(
+      `SELECT name FROM (
+         SELECT name, 0 AS rank, 0 AS line FROM symbols WHERE kind IN ('format', 'message') AND name = ?
+         UNION ALL SELECT s.name, 1, s.line FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind IN ('format', 'message') AND f.path = ?
+         UNION ALL SELECT r.name, 2, r.line FROM refs r JOIN files f ON f.id = r.file
+           WHERE r.kind = 'screen' AND f.path = ? AND r.name IN (SELECT name FROM symbols WHERE kind IN ('format', 'message')))
+       ORDER BY rank, line LIMIT 1`,
+      named,
+      shown.where?.path ?? "",
+      shown.where?.path ?? "",
+    )[0]
+  );
+  if (!screen) {
+    const message = `[PLG046E] There is no MFS format or message to show the input rules of${shown.where ? ` at the cursor or in ${shown.where.path}` : ": no file is open"}.`;
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  log.info(`screen input of ${screen.name}`);
+  openPage(context, shown.workspace, "flow", `v=input&id=${encodeURIComponent(screen.name)}`, `Screen Input: ${screen.name}`, true);
 }
 
 // Both pages ask for what they draw. A worker of its own with its own

@@ -16,8 +16,16 @@ in the flow page and an MCP tool, both drawn from the graph, never by a model.
 - That gives you the input validation rules per screen. It's also the first
   thing an expert would recognize in a German review.
 
-Status: the `screen` MCP tool gives a format's fields and message order;
-nothing joins a field to the I/O area variable and follows it.
+Status: built. The `screen_input` MCP tool and *Show Input Rules of the
+Screen* take an MFS format or input message. For each input field they give
+the I/O area variable the GU on the I/O PCB reads it into, the IF and WHEN
+conditions that test that variable (and the parameters it is passed to),
+and the outcomes of each branch, such as the message set. The programs are
+found by the transaction code in the message's first literal field, else by
+naming the format or message. Limits: only the first segment; no alignment
+padding; an area is laid out up to its first field with `LIKE`, dimensions
+or an unknown length. The sample's messages carry no transaction code and
+its programs make no GU, so there it lists the fields only.
 
 ## 2. A database column's path
 
