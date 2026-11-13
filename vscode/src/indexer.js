@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 24;
+const INDEXER_VERSION = 25;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -412,6 +412,7 @@ CREATE TABLE IF NOT EXISTS steps (
 );
 CREATE INDEX IF NOT EXISTS steps_file ON steps(file);
 CREATE INDEX IF NOT EXISTS steps_program ON steps(program);
+CREATE INDEX IF NOT EXISTS steps_job ON steps(job);
 CREATE TABLE IF NOT EXISTS dds (
   id INTEGER PRIMARY KEY,
   file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -443,6 +444,7 @@ CREATE TABLE IF NOT EXISTS file_io (
 );
 CREATE INDEX IF NOT EXISTS file_io_file ON file_io(file);
 CREATE INDEX IF NOT EXISTS file_io_name ON file_io(name);
+CREATE INDEX IF NOT EXISTS file_io_caller ON file_io(caller);
 -- Db2: the columns embedded SQL uses, and the columns of CREATE TABLE.
 CREATE TABLE IF NOT EXISTS sql_columns (
   id INTEGER PRIMARY KEY,
@@ -461,6 +463,7 @@ CREATE TABLE IF NOT EXISTS sql_columns (
 CREATE INDEX IF NOT EXISTS sql_columns_file ON sql_columns(file);
 CREATE INDEX IF NOT EXISTS sql_columns_column ON sql_columns(table_name, column_name);
 CREATE INDEX IF NOT EXISTS sql_columns_host ON sql_columns(host);
+CREATE INDEX IF NOT EXISTS sql_columns_caller ON sql_columns(caller);
 CREATE TABLE IF NOT EXISTS columns (
   id INTEGER PRIMARY KEY,
   file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -475,6 +478,7 @@ CREATE TABLE IF NOT EXISTS columns (
 );
 CREATE INDEX IF NOT EXISTS columns_file ON columns(file);
 CREATE INDEX IF NOT EXISTS columns_name ON columns(table_name, name);
+CREATE INDEX IF NOT EXISTS columns_table_symbol ON columns(table_symbol);
 -- IMS gens: the PCBs and SENSEGs of PSBs, the segments and fields of DBDs.
 CREATE TABLE IF NOT EXISTS pcbs (
   id INTEGER PRIMARY KEY,
@@ -490,6 +494,7 @@ CREATE TABLE IF NOT EXISTS pcbs (
 );
 CREATE INDEX IF NOT EXISTS pcbs_psb ON pcbs(psb);
 CREATE INDEX IF NOT EXISTS pcbs_dbd ON pcbs(dbd);
+CREATE INDEX IF NOT EXISTS pcbs_file ON pcbs(file);
 CREATE TABLE IF NOT EXISTS sensegs (
   id INTEGER PRIMARY KEY,
   file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -500,6 +505,7 @@ CREATE TABLE IF NOT EXISTS sensegs (
   line INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sensegs_pcb ON sensegs(pcb);
+CREATE INDEX IF NOT EXISTS sensegs_file ON sensegs(file);
 CREATE TABLE IF NOT EXISTS segments (
   id INTEGER PRIMARY KEY,
   file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -512,6 +518,7 @@ CREATE TABLE IF NOT EXISTS segments (
 );
 CREATE INDEX IF NOT EXISTS segments_dbd ON segments(dbd);
 CREATE INDEX IF NOT EXISTS segments_name ON segments(name);
+CREATE INDEX IF NOT EXISTS segments_file ON segments(file);
 CREATE TABLE IF NOT EXISTS segment_fields (
   id INTEGER PRIMARY KEY,
   file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -524,6 +531,7 @@ CREATE TABLE IF NOT EXISTS segment_fields (
   line INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS segment_fields_segment ON segment_fields(segment);
+CREATE INDEX IF NOT EXISTS segment_fields_file ON segment_fields(file);
 -- IMS DL/I calls; pcb_parameter is the main procedure's parameter the PCB
 -- comes from, which is its position in the PSB.
 CREATE TABLE IF NOT EXISTS dli_calls (
@@ -542,6 +550,7 @@ CREATE TABLE IF NOT EXISTS dli_calls (
 );
 CREATE INDEX IF NOT EXISTS dli_calls_file ON dli_calls(file);
 CREATE INDEX IF NOT EXISTS dli_calls_segment ON dli_calls(segment);
+CREATE INDEX IF NOT EXISTS dli_calls_caller ON dli_calls(caller);
 -- MFS: the DFLDs of a format's first device and the MFLDs of a message.
 CREATE TABLE IF NOT EXISTS mfs_fields (
   id INTEGER PRIMARY KEY,
@@ -562,6 +571,7 @@ CREATE TABLE IF NOT EXISTS mfs_fields (
 );
 CREATE INDEX IF NOT EXISTS mfs_fields_screen ON mfs_fields(screen);
 CREATE INDEX IF NOT EXISTS mfs_fields_name ON mfs_fields(name);
+CREATE INDEX IF NOT EXISTS mfs_fields_file ON mfs_fields(file);
 -- PL/I's executable statements and declarations as a tree: parent is the statement one is in,
 -- branch says whether in the THEN or ELSE of an IF.
 CREATE TABLE IF NOT EXISTS statements (
@@ -578,7 +588,7 @@ CREATE TABLE IF NOT EXISTS statements (
 );
 CREATE INDEX IF NOT EXISTS statements_file ON statements(file);
 CREATE INDEX IF NOT EXISTS statements_parent ON statements(parent);
-CREATE INDEX IF NOT EXISTS statements_caller ON statements(file, caller);
+CREATE INDEX IF NOT EXISTS statements_caller ON statements(caller);
 -- The fields a statement reads and writes, by name as written.
 CREATE TABLE IF NOT EXISTS accesses (
   id INTEGER PRIMARY KEY,
@@ -662,19 +672,30 @@ const INDEXES = SCHEMA.match(/^CREATE INDEX .*;$/gm) ?? [];
  */
 export function openGraph(path) {
   const db = new DatabaseSync(path);
+  // Other connections (the pages, the MCP server, a virus scanner on Windows)
+  // hold the file for moments; wait them out instead of failing the sync.
+  db.exec("PRAGMA busy_timeout = 10000");
   db.exec("CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value)");
   const version = /** @type {{ value: number } | undefined} */ (db.prepare("SELECT value FROM meta WHERE name = 'indexer_version'").get());
-  if (version?.value !== INDEXER_VERSION) {
-    // An older indexer's graph lacks tables and columns, and unchanged files
-    // would never get the facts this one reads: it is built again.
-    db.exec("PRAGMA foreign_keys = OFF");
-    for (const { name } of /** @type {{ name: string }[]} */ (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('meta') AND name NOT LIKE 'sqlite_%'").all())) {
-      db.exec(`DROP TABLE "${name}"`);
-    }
-    db.prepare("INSERT INTO meta (name, value) VALUES ('indexer_version', ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value").run(INDEXER_VERSION);
-  }
+  // An older indexer's graph lacks tables and columns, and unchanged files
+  // would never get the facts this one reads: it is built again.
+  if (version?.value !== INDEXER_VERSION) emptyGraph(db);
   db.exec(SCHEMA);
   return db;
+}
+
+/**
+ * Forgets every file, for the next sync to read them all again. Dropping the
+ * tables takes seconds where deleting the rows, cascading, took minutes.
+ * @param {DatabaseSync} db
+ */
+export function emptyGraph(db) {
+  db.exec("PRAGMA foreign_keys = OFF");
+  for (const { name } of /** @type {{ name: string }[]} */ (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('meta') AND name NOT LIKE 'sqlite_%'").all())) {
+    db.exec(`DROP TABLE "${name}"`);
+  }
+  db.prepare("INSERT INTO meta (name, value) VALUES ('indexer_version', ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value").run(INDEXER_VERSION);
+  db.exec(SCHEMA);
 }
 
 /**
@@ -701,7 +722,8 @@ export async function sync(db, root, indexer, options = {}) {
   /** @type {Map<string, { id: number, mtime: number, size: number }>} */
   const known = new Map();
   const knownUnder = db.prepare(
-    "SELECT id, path, mtime, size FROM files WHERE path = ? OR substr(path, 1, length(?) + 1) = ? || '/'",
+    // Under the folder: from 'folder/' up to 'folder0', '0' coming right after '/'.
+    "SELECT id, path, mtime, size FROM files WHERE path = ? OR (path >= ? || '/' AND path < ? || '0')",
   );
   const knownRows = options.paths
     ? options.paths.flatMap((path) => knownUnder.all(path, path, path))
@@ -1048,7 +1070,7 @@ export async function sync(db, root, indexer, options = {}) {
     let refs;
     let relinked;
     if (fresh) {
-      const stale = `file NOT IN (SELECT value FROM json_each(?)) OR name IN (SELECT value FROM json_each(?))`;
+      const stale = `/* full scan */ file NOT IN (SELECT value FROM json_each(?)) OR name IN (SELECT value FROM json_each(?))`;
       const args = [JSON.stringify(linkedEarly), JSON.stringify([...definedLater])];
       refs = /** @type {Iterable<RefRow>} */ (db.prepare(`SELECT ${REF_COLUMNS} FROM refs WHERE ${stale}`).iterate(...args));
       relinked = /** @type {{ n: number }} */ (db.prepare(`SELECT count(*) AS n FROM refs WHERE ${stale}`).get(...args)).n;

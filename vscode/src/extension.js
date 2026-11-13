@@ -335,6 +335,15 @@ function startWorker(context) {
       progressed(workspace, reply.id, reply.progress);
       return;
     }
+    if ("log" in reply) {
+      log.info(`${workspace.folder.name}: ${reply.log}`);
+      return;
+    }
+    if ("warn" in reply) {
+      log.warn(reply.warn);
+      void vscode.window.showWarningMessage(reply.warn);
+      return;
+    }
     if ("focused" in reply) {
       log.info(`${workspace.folder.name}: the open file and what it uses are indexed, reading the rest`);
       openGraph(workspace);

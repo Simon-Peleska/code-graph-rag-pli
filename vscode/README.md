@@ -475,6 +475,8 @@ can read it while VS Code runs:
 - `PLG045E` Show Data Use: there is no procedure at the cursor.
 - `PLG046E` Show Input Rules of the Screen: there is no MFS format or
   message at the cursor or in the active file.
+- `PLG047W` The graph is not in WAL mode, usually because its folder is on a
+  network drive; reading and indexing then block each other.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

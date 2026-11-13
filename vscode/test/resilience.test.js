@@ -1,10 +1,12 @@
 // Real code has syntax the grammar does not know and shapes the indexer
 // never saw: a sync must read everything else and say what it missed.
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { Worker } from "node:worker_threads";
 import { openGraph, sync } from "../src/indexer.js";
 import { indexer } from "./indexed.js";
 
@@ -61,6 +63,40 @@ test("syntax the grammar does not know is counted, and what follows is still rea
     db.prepare("SELECT r.name, r.line FROM refs r JOIN files f ON f.id = r.file WHERE f.path = 'ODD' AND r.kind = 'call'").all().map((r) => ({ ...r })),
     [{ name: "GOOD", line: 4 }],
   );
+});
+
+test("a sync waits out another connection's short write lock instead of failing", async () => {
+  const { root, db } = folder();
+  // Stands in for a reader checkpointing the WAL, or a virus scanner, holding the file for a moment.
+  const holder = new Worker(
+    `const { DatabaseSync } = require("node:sqlite");
+     const { parentPort, workerData } = require("node:worker_threads");
+     const db = new DatabaseSync(workerData);
+     db.exec("BEGIN IMMEDIATE");
+     parentPort.postMessage("locked");
+     setTimeout(() => { db.exec("COMMIT"); db.close(); }, 300);`,
+    { eval: true, workerData: join(root, ".graph.sqlite") },
+  );
+  await once(holder, "message");
+  const result = await sync(db, root, indexer);
+  assert.equal(result.changed, 3);
+  await holder.terminate();
+});
+
+// Deleting a file cascades to its rows; a foreign key without an index scans
+// its whole table for every deleted row, and a rebuild never ends.
+test("every foreign key has an index starting with its column", () => {
+  const { db } = folder();
+  const unindexed = [];
+  for (const { name } of /** @type {{ name: string }[]} */ (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all())) {
+    const firsts = /** @type {{ first: string }[]} */ (
+      db.prepare("SELECT (SELECT name FROM pragma_index_info(il.name) WHERE seqno = 0) AS first FROM pragma_index_list(?) il").all(name)
+    ).map((index) => index.first);
+    for (const fk of /** @type {{ from: string }[]} */ (db.prepare("SELECT * FROM pragma_foreign_key_list(?)").all(name))) {
+      if (!firsts.includes(fk.from)) unindexed.push(`${name}.${fk.from}`);
+    }
+  }
+  assert.deepEqual(unindexed, []);
 });
 
 test("a changed include re-matches the accesses of the unchanged files using it, and a changed file gets its own", async () => {

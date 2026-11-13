@@ -326,7 +326,7 @@
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --test \"test/*.test.*\"",
+    "test": "node --import ./test/plans.js --test \"test/*.test.*\"",
     "package": "npm run check && node build.mjs --minify && node package-vsix.mjs"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@
 
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
-import { createIndexer, grammarsIn, openGraph, sync } from "./indexer.js";
+import { createIndexer, emptyGraph, grammarsIn, openGraph, sync } from "./indexer.js";
 
 /**
  * @typedef {object} SyncRequest
@@ -26,6 +26,8 @@ import { createIndexer, grammarsIn, openGraph, sync } from "./indexer.js";
 /**
  * @typedef {{ id: number, progress: import("./indexer.js").Progress }
  *   | { id: number, focused: true }
+ *   | { id: number, log: string }
+ *   | { id: number, warn: string }
  *   | { id: number, result: import("./indexer.js").SyncResult }
  *   | { id: number, error: string }} SyncReply
  */
@@ -60,12 +62,15 @@ async function handle(request) {
     const indexer = await ready;
     let db = graphs.get(request.graph);
     if (!db) {
+      const started = performance.now();
       db = openGraph(request.graph);
       graphs.set(request.graph, db);
+      const mode = /** @type {{ journal_mode: string }} */ (db.prepare("PRAGMA journal_mode").get()).journal_mode;
+      reply({ id: request.id, log: `graph ${request.graph} opened in ${Math.round(performance.now() - started)} ms, journal mode ${mode}` });
+      // Without WAL, every read blocks the indexer's writes and the other way round.
+      if (mode !== "wal") reply({ id: request.id, warn: `[PLG047W] The graph ${request.graph} is not in WAL mode (${mode}); its folder may be on a network drive. Reading and indexing will block each other.` });
     }
-    if (request.rebuild) {
-      db.exec("DELETE FROM files");
-    }
+    if (request.rebuild) emptyGraph(db);
     const result = await sync(db, request.root, indexer, {
       paths: request.paths,
       members: request.members,
@@ -76,6 +81,6 @@ async function handle(request) {
     });
     reply({ id: request.id, result });
   } catch (error) {
-    reply({ id: request.id, error: error instanceof Error ? (error.stack ?? error.message) : String(error) });
+    reply({ id: request.id, error: `${request.graph}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}` });
   }
 }

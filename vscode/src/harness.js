@@ -310,13 +310,14 @@ export function verify(db, root, unit, answer) {
      WHERE s.file = ? AND s.line BETWEEN ? AND ? AND v.init IS NOT NULL`).all(unit.file, unit.line, unit.end_line).map((r) => String(r.init).toUpperCase());
   const known = text + "\n" + inits.join("\n");
   const numbers = new Set([...known.matchAll(/(?<![A-Z0-9_#@$])\d+(\.\d+)?/g)].map((m) => Number(m[0])));
-  const field = db.prepare("SELECT 1 FROM variables WHERE name = ? OR qualified = ? UNION SELECT 1 FROM file_io WHERE name = ? LIMIT 1");
+  // A qualified name ends in the variable's own name, so the name finds it.
+  const field = db.prepare("SELECT 1 FROM variables WHERE name = ? UNION SELECT 1 FROM file_io WHERE name = ? LIMIT 1");
   for (const [i, rule] of answer.rules.entries()) {
     const at = `rule ${i + 1}`;
     for (const line of rule.lines) if (line < unit.line || line > unit.end_line) errors.push(`${at}: line ${line} is not in ${unit.name} (lines ${unit.line}-${unit.end_line})`);
     for (const name of rule.fields) {
       const bare = name.trim().toUpperCase().replace(/\(.*$/, "");
-      if (!field.get(bare.split(".").at(-1) ?? bare, bare, bare)) errors.push(`${at}: field ${name} is not declared anywhere`);
+      if (!field.get(bare.split(".").at(-1) ?? bare, bare)) errors.push(`${at}: field ${name} is not declared anywhere`);
     }
     for (const value of rule.values) {
       const n = number(value);

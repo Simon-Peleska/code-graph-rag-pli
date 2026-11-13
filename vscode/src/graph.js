@@ -2731,7 +2731,7 @@ export class Graph {
     if (!name) return [];
     const like = `%${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     const found = [
-      ...this.symbolNodes(`s.kind != 'package' AND s.name LIKE ? ESCAPE '\\' ORDER BY s.name = ? DESC, s.name LIMIT 50`, like, name),
+      ...this.symbolNodes(`/* full scan */ s.kind != 'package' AND s.name LIKE ? ESCAPE '\\' ORDER BY s.name = ? DESC, s.name LIMIT 50`, like, name),
       .../** @type {{ path: string }[]} */ (this.all(`SELECT path FROM files WHERE path LIKE ? ESCAPE '\\' ORDER BY path LIMIT 50`, like)).map((row) =>
         moduleNode(row.path),
       ),
