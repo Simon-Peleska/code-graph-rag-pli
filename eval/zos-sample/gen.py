@@ -56,15 +56,63 @@ def fixed_format(name: str, lines: list[str]) -> list[str]:
     return [f" {line[1:]:<71}{name[:3]}{(i + 1) * 10:05d}" for i, line in enumerate(lines)]
 
 
+def record(copybook_name: str) -> tuple[str, list[tuple[str, str]]]:
+    # Seeded by the member, so programs know the layout of any copybook.
+    r = random.Random(copybook_name)
+    types = [r.choice(["CHAR(8)", "FIXED BIN(31)", "FIXED DEC(9,2)", "BIT(1)"]) for _ in range(r.randint(3, 12))]
+    return f"R{copybook_name[:2]}{copybook_name[3:]}", [(f"F{i:02d}", t) for i, t in enumerate(types)]
+
+
 def copybook(app: str, n: int) -> list[str]:
-    fields = [f"   2 F{i:02d} {rng.choice(['CHAR(8)', 'FIXED BIN(31)', 'FIXED DEC(9,2)', 'BIT(1)'])}"
-              for i in range(rng.randint(3, 12))]
+    name, fields = record(member(app, "C", n))
+    lines = [f"   2 {field} {type_}" for field, type_ in fields]
     return [
         f" /* {member(app, 'C', n)}: record layout */",
-        f" DCL 1 R{app}{n:05d} BASED,",
-        *[f"{f}," for f in fields[:-1]],
-        f"{fields[-1]};",
+        f" DCL P{name[1:]} PTR;",
+        f" DCL 1 {name} BASED(P{name[1:]}),",
+        *[f"{line}," for line in lines[:-1]],
+        f"{lines[-1]};",
     ]
+
+
+def record_logic(includes: list[str], tables: list[str], helper: str) -> list[str]:
+    # What a program does with its records: fills them from Db2, decides on
+    # their fields, moves fields between them, passes them on and writes back.
+    lines = []
+    previous_char = None
+    for include in includes:
+        rec, fields = record(include)
+        of = lambda type_: [f"{rec}.{field}" for field, t in fields if t == type_]
+        chars, decs, bins, bits = of("CHAR(8)"), of("FIXED DEC(9,2)"), of("FIXED BIN(31)"), of("BIT(1)")
+        lines.append(f"   ALLOCATE {rec};")
+        if chars:
+            lines.append(f"   {chars[0]} = KEY;")
+        if tables and decs:
+            lines += [f"   EXEC SQL SELECT AMOUNT INTO :{decs[0]}", f"            FROM PROD.{tables[0]} WHERE ID = :KEY;"]
+        if decs and bits:
+            lines += [f"   IF {decs[0]} > {rng.choice([100, 500, 1000, 5000])} THEN {bits[0]} = '1'B;",
+                      f"   ELSE {bits[0]} = '0'B;"]
+        if len(decs) > 1:
+            lines.append(f"   {decs[1]} = {decs[0]} * {rng.choice(['1.19', '0.07', '12'])};")
+        if bins:
+            lines.append(f"   {bins[0]} = {bins[0]} + CNT;")
+        if len(chars) > 1:
+            codes = rng.sample("ABCDEFGX", 3)
+            lines += [
+                f"   SELECT (SUBSTR({chars[1]}, 1, 1));",
+                f"     WHEN ('{codes[0]}') RC = 0;",
+                f"     WHEN ('{codes[1]}', '{codes[2]}') RC = 4;",
+                "     OTHERWISE RC = 8;",
+                "   END;",
+            ]
+        if chars and previous_char:
+            lines.append(f"   {chars[-1]} = {previous_char};")
+        if chars:
+            lines.append(f"   CALL {helper}({chars[0]});")
+            previous_char = chars[0]
+        if tables and decs:
+            lines += [f"   EXEC SQL UPDATE PROD.{tables[0]} SET AMOUNT = :{decs[-1]}", "            WHERE ID = :KEY;"]
+    return lines
 
 
 def program(app: str, n: int) -> list[str]:
@@ -86,6 +134,7 @@ def program(app: str, n: int) -> list[str]:
         lines.append(f"   DCL OUTMSG CHAR(8) INIT('{mfs_format(app, screen)}O ');")
     for t in tables:
         lines += [f"   EXEC SQL SELECT COUNT(*) INTO :CNT", f"            FROM PROD.{t} WHERE ID = :KEY;"]
+    lines += record_logic(includes, tables, helpers[0])
     for helper in helpers:
         lines.append(f"   CALL {helper}(KEY);")
     for callee in callees:
