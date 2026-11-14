@@ -16,6 +16,7 @@ import { generateJs } from "./tojs.js";
  * @property {any[]} args
  */
 /** @typedef {{ id: number, result: unknown, ms: number } | { id: number, error: string }} PageAnswer */
+/** @typedef {{ progress: string }} PageProgress what generateJs is doing, before its answer */
 
 const port = /** @type {import("node:worker_threads").MessagePort} */ (parentPort);
 const db = new DatabaseSync(workerData.graph);
@@ -49,7 +50,9 @@ const answers = {
   coverage: () => coverageReport(db, workerData.root, keywordsIn(workerData.grammars)),
   generateJs: async (outDir) => {
     indexer ??= createIndexer(grammarsIn(workerData.grammars));
-    return generateJs(db, workerData.root, await indexer, outDir, { templates: join(workerData.grammars, "jsruntime") });
+    /** @param {string} text */
+    const progress = (text) => port.postMessage(/** @type {PageProgress} */ ({ progress: text }));
+    return generateJs(db, workerData.root, await indexer, outDir, { templates: join(workerData.grammars, "jsruntime"), progress });
   },
 };
 

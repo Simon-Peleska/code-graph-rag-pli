@@ -815,6 +815,11 @@ so on them only the silent gaps apply.
   that is not JSON; the log has the error.
 - `PLG084W` Checking GitHub for a newer release, or installing it, failed;
   the extension keeps its version and tries again in 6 hours.
+- `PLG085W` Generate JavaScript: a transaction is left out, because no PL/I
+  file is named like its program (the PSB of its `APPLCTN`) and no file's
+  outermost procedure is.
+- `PLG086E` Generate JavaScript: translating one program failed; it is left
+  out, the others are generated, and the summary has the stack trace.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

@@ -34,7 +34,7 @@ import { PLI_BUILTINS, blankMargins, bytes, ddlTables } from "./source.js";
  * @typedef {"char" | "varchar" | "bits" | "dec" | "pic" | "bin" | "float" | "bit" | "pointer" | "structure" | "literal" | "string" | "number" | "unknown"} Kind
  * @typedef {{ code: string, kind: Kind, v?: Variable, text?: string }} Expr
  * @typedef {{ line: number, scopes: number[], loops: string[], changed: string[], gotos: Map<string, string>, units: boolean, start?: string }} At loops: "loop", "dispatch", "group", or the JS label of a DO group a LEAVE ends; changed: the parameters the procedure returns; gotos: the dispatcher of each label in this function; units: the procedure keeps ON units; start: where the procedure's statements start, an ENTRY's name
- * @typedef {{ line: number, why: string }} Todo
+ * @typedef {{ line: number, why: string, path?: string }} Todo path: the include the line is in, else the program's file
  */
 
 /** Declarations that are not data. */
@@ -264,14 +264,32 @@ function programToJs(db, root, indexer, path) {
       )
       .all(file.id)
   ).map((row) => row.id);
-  const variables = /** @type {Variable[]} */ (
+  const ownFiles = JSON.stringify([file.id, ...included]);
+  // %INCLUDE is textual: an include's procedures and statements are the
+  // includer's, translated where it stands, the file being read in `current`.
+  /** @type {Map<number, { path: string, tree: import("web-tree-sitter").Tree | null }>} */
+  const includeTrees = new Map();
+  for (const f of /** @type {{ id: number, path: string }[]} */ (db.prepare(`SELECT id, path FROM files WHERE id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(included)))) {
+    includeTrees.set(f.id, { path: f.path, tree: indexer.pli.parse(blankMargins(readFileSync(join(root, f.path), "utf-8"), "pli")) });
+  }
+  const roots = [tree.rootNode, ...[...includeTrees.values()].flatMap((i) => (i.tree ? [i.tree.rootNode] : []))];
+  /** @param {string} type */
+  const allOfType = (type) => roots.flatMap((r) => r.descendantsOfType(type));
+  let current = { id: file.id, path };
+  /** @type {Set<number>} the includes being translated, so one including itself stops */
+  const expanding = new Set();
+  const filePaths = new Map([[file.id, path], ...[...includeTrees].map(([id, i]) => /** @type {[number, string]} */ ([id, i.path]))]);
+  const declared = /** @type {Variable[]} */ (
     db
       .prepare(
         `SELECT id, file, scope, parent, name, qualified, type, size, dims, storage, base, init, like, external, parameter, attributes, comment, line
          FROM variables WHERE file IN (SELECT value FROM json_each(?)) ORDER BY file = ?, line, id`,
       )
-      .all(JSON.stringify([file.id, ...included]), file.id)
+      .all(ownFiles, file.id)
   );
+  // An include read alone makes the includer's variables it uses implicit ones of its own.
+  const explicit = new Set(declared.filter((v) => v.storage !== "IMPLICIT").map((v) => v.name.toUpperCase()));
+  const variables = declared.filter((v) => v.file === file.id || v.storage !== "IMPLICIT" || !explicit.has(v.name.toUpperCase()));
   const byId = new Map(variables.map((v) => [v.id, v]));
   /** @type {Map<number, Variable[]>} */
   const children = new Map();
@@ -317,22 +335,25 @@ function programToJs(db, root, indexer, path) {
   }
   /** @type {Map<string, number>} */
   const accessed = new Map();
-  for (const row of /** @type {{ line: number, name: string, variable: number, through: number | null }[]} */ (
+  for (const row of /** @type {{ file: number, line: number, name: string, variable: number, through: number | null }[]} */ (
     db
-      .prepare(`SELECT s.line, a.name, a.variable, a.through FROM accesses a JOIN statements s ON s.id = a.statement WHERE s.file = ? AND a.variable IS NOT NULL`)
-      .all(file.id)
+      .prepare(
+        `SELECT s.file, s.line, a.name, a.variable, a.through FROM accesses a JOIN statements s ON s.id = a.statement
+         WHERE s.file IN (SELECT value FROM json_each(?)) AND a.variable IS NOT NULL`,
+      )
+      .all(ownFiles)
   )) {
     const copy = row.through === null ? undefined : copies.get(`${row.through}:${row.variable}`);
-    accessed.set(`${row.line}:${row.name.toUpperCase()}`, copy?.id ?? row.variable);
+    accessed.set(`${row.file}:${row.line}:${row.name.toUpperCase()}`, copy?.id ?? row.variable);
   }
-  const procedures = /** @type {{ id: number, name: string, line: number }[]} */ (
-    db.prepare(`SELECT id, name, line FROM symbols WHERE file = ? AND kind = 'procedure'`).all(file.id)
+  const procedures = /** @type {{ id: number, file: number, name: string, line: number }[]} */ (
+    db.prepare(`SELECT id, file, name, line FROM symbols WHERE file IN (SELECT value FROM json_each(?)) AND kind = 'procedure'`).all(ownFiles)
   );
   const procedureNames = new Set(procedures.map((p) => p.name.toUpperCase()));
-  const dliCalls = /** @type {{ line: number, entry: string, function: string | null, pcb: string | null, pcb_parameter: number | null, io_area: string | null, segment: string | null, path: string | null }[]} */ (
-    db.prepare(`SELECT line, entry, function, pcb, pcb_parameter, io_area, segment, path FROM dli_calls WHERE file = ?`).all(file.id)
+  const dliCalls = /** @type {{ file: number, line: number, entry: string, function: string | null, pcb: string | null, pcb_parameter: number | null, io_area: string | null, segment: string | null, path: string | null }[]} */ (
+    db.prepare(`SELECT file, line, entry, function, pcb, pcb_parameter, io_area, segment, path FROM dli_calls WHERE file IN (SELECT value FROM json_each(?))`).all(ownFiles)
   );
-  const dli = new Map(dliCalls.map((row) => [row.line, row]));
+  const dli = new Map(dliCalls.map((row) => [`${row.file}:${row.line}`, row]));
   // A PCB parameter is the PSB's PCB at its position, after the I/O PCB unless
   // the program runs as DLI batch without CMPAT=YES (as programDli in graph.js);
   // else the DBD having the segments the calls on the PCB name.
@@ -388,14 +409,14 @@ function programToJs(db, root, indexer, path) {
   /** @param {number} procedure */
   const changedBy = (procedure) => /** @type {{ name: string, parameter: number }[]} */ (changedParameters.all(procedure));
   const externalCalls = new Map(
-    /** @type {{ line: number, id: number, name: string, path: string, member: string }[]} */ (
+    /** @type {{ file: number, line: number, id: number, name: string, path: string, member: string }[]} */ (
       db
         .prepare(
-          `SELECT r.line, s.id, s.name, f.path, f.member FROM refs r JOIN links l ON l.ref = r.id JOIN symbols s ON s.id = l.target_symbol JOIN files f ON f.id = l.target_file
-           WHERE r.file = ? AND r.kind IN ('call', 'invoke') AND s.kind = 'procedure' AND f.id <> r.file`,
+          `SELECT r.file, r.line, s.id, s.name, f.path, f.member FROM refs r JOIN links l ON l.ref = r.id JOIN symbols s ON s.id = l.target_symbol JOIN files f ON f.id = l.target_file
+           WHERE r.file IN (SELECT value FROM json_each(?)) AND r.kind IN ('call', 'invoke') AND s.kind = 'procedure' AND f.id NOT IN (SELECT value FROM json_each(?))`,
         )
-        .all(file.id)
-    ).map((row) => [`${row.line}:${row.name.toUpperCase()}`, row]),
+        .all(ownFiles, ownFiles)
+    ).map((row) => [`${row.file}:${row.line}:${row.name.toUpperCase()}`, row]),
   );
   /** @type {Map<string, string>} the procedures of other programs called, by the module they are in */
   const imports = new Map();
@@ -411,8 +432,7 @@ function programToJs(db, root, indexer, path) {
   );
   /** @type {Set<string>} the variables ALLOCATE makes */
   const allocated = new Set(
-    tree.rootNode
-      .descendantsOfType("allocate_item")
+    allOfType("allocate_item")
       .map((item) => item?.namedChildren.find((c) => c?.type === "reference")?.text.replace(/\s+/g, "").toUpperCase() ?? ""),
   );
   /** @type {Set<number>} the scalars that are overlays, their value in the field `$` */
@@ -432,16 +452,16 @@ function programToJs(db, root, indexer, path) {
   const statics = [];
   /** @type {Map<string, string>} each cursor's SELECT */
   const cursors = new Map();
-  const usesSql = /EXEC\s+SQL/i.test(tree.rootNode.text);
-  const gotoTargets = new Set(tree.rootNode.descendantsOfType("goto_statement").map((g) => g?.childForFieldName("label")?.text.toUpperCase() ?? ""));
-  for (const entry of tree.rootNode.descendantsOfType("entry_statement")) {
+  const usesSql = roots.some((r) => /EXEC\s+SQL/i.test(r.text));
+  const gotoTargets = new Set(allOfType("goto_statement").map((g) => g?.childForFieldName("label")?.text.toUpperCase() ?? ""));
+  for (const entry of allOfType("entry_statement")) {
     for (const prefix of entry?.parent?.namedChildren.filter((c) => c?.type === "statement_prefix") ?? []) gotoTargets.add(prefix?.childForFieldName("label")?.text.toUpperCase() ?? "");
   }
-  const labels = new Set(tree.rootNode.descendantsOfType("statement_prefix").map((p) => p?.childForFieldName("label")?.text.toUpperCase() ?? ""));
+  const labels = new Set(allOfType("statement_prefix").map((p) => p?.childForFieldName("label")?.text.toUpperCase() ?? ""));
   let dispatchers = 0;
   /** @type {Map<string, Node>} the FORMAT statements by their labels */
   const formats = new Map();
-  for (const labeled of tree.rootNode.descendantsOfType("labeled_statement")) {
+  for (const labeled of allOfType("labeled_statement")) {
     const format = labeled?.namedChildren.find((c) => c?.type === "format_statement");
     for (const prefix of format ? (labeled?.namedChildren.filter((c) => c?.type === "statement_prefix") ?? []) : []) {
       formats.set(prefix?.childForFieldName("label")?.text.toUpperCase() ?? "", /** @type {Node} */ (format));
@@ -471,14 +491,14 @@ function programToJs(db, root, indexer, path) {
 
   /** @param {Node} node @param {number} depth @param {string} why */
   const todoStatement = (node, depth, why) => {
-    todos.push({ line: lineOf(node), why });
+    todos.push({ path: current.path, line: lineOf(node), why });
     failed.add(node.id);
     emit(depth, `// TODO: ${why}, line ${lineOf(node)}:`);
     for (const line of node.text.split("\n")) emit(depth, `//   ${line.trim()}`);
   };
   /** @param {Node} node @param {string} why @param {At} at @returns {Expr} */
   const todoExpr = (node, why, at) => {
-    todos.push({ line: at.line, why });
+    todos.push({ path: current.path, line: at.line, why });
     return { code: `todo(${JSON.stringify(`${why}: ${node.text.replace(/\s+/g, " ")}`)})`, kind: "unknown" };
   };
 
@@ -489,7 +509,7 @@ function programToJs(db, root, indexer, path) {
    * @param {At} at
    */
   const variableAt = (name, at) => {
-    const id = accessed.get(`${at.line}:${name}`);
+    const id = accessed.get(`${current.id}:${at.line}:${name}`);
     if (id !== undefined && byId.has(id)) return byId.get(id);
     const candidates = byName.get(name) ?? [];
     for (const scope of at.scopes) {
@@ -644,7 +664,7 @@ function programToJs(db, root, indexer, path) {
     if (node.text.includes("->")) return todoExpr(node, "a pointer-qualified reference", at);
     if (v?.type === "BUILTIN") return builtin(names[0], args, node, at);
     if (v && v.type === "ENTRY") {
-      const external = externalCalls.get(`${at.line}:${names[0]}`);
+      const external = externalCalls.get(`${current.id}:${at.line}:${names[0]}`);
       if (!external) return todoExpr(node, `${names[0]} is an external entry not in the graph`, at);
       imports.set(js(external.name), external.member);
       calls.add(external.path);
@@ -727,12 +747,12 @@ function programToJs(db, root, indexer, path) {
    */
   const initial = (v, depth, at, bare = false, element = undefined) => {
     if (v.like && !children.has(v.id)) {
-      todos.push({ line: v.line, why: `LIKE ${v.like}, which is not declared` });
+      todos.push({ path: filePaths.get(v.file), line: v.line, why: `LIKE ${v.like}, which is not declared` });
       return `todo(${JSON.stringify(`LIKE ${v.like} is not declared`)})`;
     }
     const dims = v.dims ? bounds(v.dims) : [];
     if (dims.some((d) => d === null)) {
-      todos.push({ line: v.line, why: `${v.qualified} has bounds that are not constants` });
+      todos.push({ path: filePaths.get(v.file), line: v.line, why: `${v.qualified} has bounds that are not constants` });
       return `todo(${JSON.stringify(`the bounds of ${v.qualified}`)})`;
     }
     const lengths = dims.map((d) => /** @type {{ length: number }} */ (d).length);
@@ -756,7 +776,7 @@ function programToJs(db, root, indexer, path) {
       if (item.value === "*") break;
       const value = constant(item.value);
       if (!value) {
-        todos.push({ line: v.line, why: `the INIT of ${v.qualified}` });
+        todos.push({ path: filePaths.get(v.file), line: v.line, why: `the INIT of ${v.qualified}` });
         values.push([item.count, `todo(${JSON.stringify(`INIT ${item.value}`)})`]);
         break;
       }
@@ -849,7 +869,7 @@ function programToJs(db, root, indexer, path) {
         emit(depth, `const ${js(v.name)} = overlay(${view.base}, [\n${view.layout.map((f) => `${"  ".repeat(depth + 1)}${f},`).join("\n")}\n${"  ".repeat(depth)}]${view.offset ? `, ${view.offset}` : ""});`);
         return;
       }
-      todos.push({ line: v.line, why: `${v.storage} ${v.name}` });
+      todos.push({ path: filePaths.get(v.file), line: v.line, why: `${v.storage} ${v.name}` });
       emit(depth, `// TODO: ${v.name} is ${v.storage} ${v.base ?? ""}: here its own storage, not an overlay, line ${v.line}`);
     }
     if (v.external) return emit(depth, `EXTERNAL.${js(v.name)} ??= ${initialOf(v, depth, at)};`);
@@ -1228,7 +1248,7 @@ function programToJs(db, root, indexer, path) {
     const entry = node.childForFieldName("entry");
     const name = entry?.namedChildren.find((c) => c?.type === "identifier")?.text.toUpperCase() ?? "";
     const args = node.namedChildren.find((c) => c?.type === "argument_list")?.namedChildren.filter((c) => c?.type === "argument") ?? [];
-    const d = dli.get(at.line);
+    const d = dli.get(`${current.id}:${at.line}`);
     if (d) {
       const fn = d.function?.trim();
       const dbd = d.pcb ? pcbDbds.get(d.pcb.toUpperCase()) : undefined;
@@ -1267,7 +1287,7 @@ function programToJs(db, root, indexer, path) {
     const argNodes = args.map((a) => /** @type {Node} */ (/** @type {Node} */ (a).namedChildren[0]));
     const internal = procedures.find((p) => p.name.toUpperCase() === name);
     if (internal) return emit(depth, invoke(name, internal.id, argNodes, at));
-    const external = externalCalls.get(`${at.line}:${name}`);
+    const external = externalCalls.get(`${current.id}:${at.line}:${name}`);
     if (external) {
       imports.set(js(external.name), external.member);
       calls.add(external.path);
@@ -1657,7 +1677,7 @@ function programToJs(db, root, indexer, path) {
    */
   const procedure = (node, name, line, depth, at) => {
     const symbol =
-      procedures.find((p) => p.name.toUpperCase() === name && p.line === line) ?? procedures.find((p) => p.name.toUpperCase() === name);
+      procedures.find((p) => p.name.toUpperCase() === name && p.file === current.id && p.line === line) ?? procedures.find((p) => p.name.toUpperCase() === name);
     if (!symbol) return todoStatement(node, depth, `the procedure ${name} is not in the graph`);
     const block = node.childForFieldName("body");
     /** @param {Node | null | undefined} n */
@@ -1673,7 +1693,7 @@ function programToJs(db, root, indexer, path) {
     const entries = (block?.namedChildren ?? []).flatMap((c) => {
       const entry = c?.type === "labeled_statement" ? c.namedChildren.find((e) => e?.type === "entry_statement") : undefined;
       const label = c && labelsOf(c)[0];
-      const id = procedures.find((p) => p.name.toUpperCase() === label && p.line === lineOf(c))?.id;
+      const id = procedures.find((p) => p.name.toUpperCase() === label && p.file === current.id && p.line === lineOf(c))?.id;
       return entry && label && id ? [{ name: label, id, parameters: parametersOf(entry) }] : [];
     });
     const changed = [...new Set([symbol.id, ...entries.map((e) => e.id)].flatMap((id) => changedBy(id).map((p) => js(p.name))))];
@@ -1725,12 +1745,12 @@ function programToJs(db, root, indexer, path) {
       emit(depth, `${exported}async function ${js(name)}(${parameters.map(js).join(", ")}) {`);
     }
     if (changed.length && heading && /\bRETURNS\b/i.test(heading.text)) {
-      todos.push({ line, why: `${name} returns a value and changes its parameters ${changed.join(", ")}` });
+      todos.push({ path: current.path, line, why: `${name} returns a value and changes its parameters ${changed.join(", ")}` });
       emit(depth + 1, `// TODO: ${name} returns a value, so the changes to ${changed.join(", ")} do not reach the caller.`);
       scope.changed = [];
     }
     const declarations = [
-      ...(depth === 0 ? variables.filter((v) => v.file !== file.id && v.parent === null) : []),
+      ...(depth === 0 ? variables.filter((v) => v.file !== file.id && v.parent === null && v.scope === null) : []),
       ...own.filter((v) => v.parameter === null && !allParameters.includes(v.name.toUpperCase())),
     ];
     for (const v of declarations) {
@@ -1794,7 +1814,7 @@ function programToJs(db, root, indexer, path) {
         if (inner.type === "procedure_statement") return procedure(inner, labels[0], at.line, depth, at);
         if (inner.type === "package_statement" && depth === 0) {
           // A package's procedures are the module's, its variables module variables.
-          const symbol = /** @type {{ id: number } | undefined} */ (db.prepare(`SELECT id FROM symbols WHERE file = ? AND kind = 'package' AND line = ?`).get(file.id, at.line));
+          const symbol = /** @type {{ id: number } | undefined} */ (db.prepare(`SELECT id FROM symbols WHERE file = ? AND kind = 'package' AND line = ?`).get(current.id, at.line));
           if (!symbol) return todoStatement(node, depth, `the package ${labels[0]} is not in the graph`);
           const scope = { ...at, scopes: [symbol.id, ...at.scopes] };
           for (const v of variables.filter((v) => v.scope === symbol.id && v.parent === null)) declare(v, 0, scope, new Map());
@@ -1805,8 +1825,27 @@ function programToJs(db, root, indexer, path) {
         emit(depth, `// ${labels.join(": ")}:`);
         return statement(inner, depth, at);
       }
-      case "preprocessor_include":
-        return emit(depth, `// ${node.text.trim().replace(/;$/, "")}: its declarations are at the top, from includes/`);
+      case "preprocessor_include": {
+        const text = node.text.trim().replace(/;$/, "");
+        const target = /** @type {{ target_file: number } | undefined} */ (
+          db.prepare(`SELECT l.target_file FROM refs r JOIN links l ON l.ref = r.id WHERE r.file = ? AND r.kind = 'include' AND r.line = ?`).get(current.id, at.line)
+        );
+        const include = target && includeTrees.get(target.target_file);
+        const code = include?.tree?.rootNode.namedChildren.filter((c) => c && c.type !== "comment" && c.type !== "declare_statement") ?? [];
+        if (!target || !include?.tree || !code.length || expanding.has(target.target_file)) return emit(depth, `// ${text}: its declarations are at the top, from includes/`);
+        emit(depth, `// ${text}: its declarations are at the top, from includes/, its statements here`);
+        const outer = current;
+        current = { id: target.target_file, path: include.path };
+        expanding.add(target.target_file);
+        try {
+          statementList(code, depth, at);
+        } finally {
+          expanding.delete(target.target_file);
+          current = outer;
+        }
+        emit(depth, `// end of ${text}`);
+        return;
+      }
       case "allocate_statement": {
         for (const item of node.namedChildren.filter((c) => c?.type === "allocate_item")) {
           const [allocatedNode, setNode] = /** @type {Node[]} */ (item?.namedChildren.filter((c) => c?.type === "reference") ?? []);
@@ -2555,18 +2594,24 @@ function sqliteDdl(db, root, databases) {
  * @param {string} root
  * @param {{ pli: import("web-tree-sitter").Parser }} indexer
  * @param {string} outDir
- * @param {{ templates: string, tn3270?: string, paths?: string[], jobs?: string[] }} options templates: the folder of runtime.js,
- *   server.js and terminal.js; tn3270: the folder of tn3270's terminal modules, by default tn3270 in templates; jobs: JCL file paths
+ * @param {{ templates: string, tn3270?: string, paths?: string[], jobs?: string[], progress?: (text: string) => void }} options templates: the folder of runtime.js,
+ *   server.js and terminal.js; tn3270: the folder of tn3270's terminal modules, by default tn3270 in templates; jobs: JCL file paths;
+ *   progress: told each step, what is skipped and what failed
  */
-export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join(templates, "tn3270"), paths, jobs }) {
+export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join(templates, "tn3270"), paths, jobs, progress = () => {} }) {
   const transactions = /** @type {{ code: string, program: string }[]} */ (
     db
       .prepare(`SELECT t.name AS code, r.name AS program FROM symbols t JOIN refs r ON r.caller = t.id AND r.kind = 'program' WHERE t.kind = 'transaction' ORDER BY t.name`)
       .all()
   );
-  /** @param {string} member */
+  /** The file named like the program, else the one whose outermost procedure is. @param {string} member */
   const pathOfMember = (member) =>
-    /** @type {{ path: string } | undefined} */ (db.prepare(`SELECT path FROM files WHERE member = ? AND language = 'pli' ORDER BY path LIMIT 1`).get(member))?.path;
+    /** @type {{ path: string } | undefined} */ (
+      db.prepare(`SELECT path FROM files WHERE member = ? AND language = 'pli' ORDER BY path LIMIT 1`).get(member) ??
+        db
+          .prepare(`SELECT f.path FROM symbols s JOIN files f ON f.id = s.file WHERE s.name = ? AND s.kind = 'procedure' AND s.parent IS NULL AND f.language = 'pli' ORDER BY f.path LIMIT 1`)
+          .get(member)
+    )?.path;
   const jobIds = /** @type {{ id: number }[]} */ (
     jobs
       ? db.prepare(`SELECT s.id FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'job' AND f.path IN (SELECT value FROM json_each(?)) ORDER BY s.name`).all(JSON.stringify(jobs))
@@ -2575,7 +2620,17 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
         : db.prepare(`SELECT id FROM symbols WHERE kind = 'job' ORDER BY name`).all()
   ).map((j) => jobToJs(db, root, j.id, pathOfMember));
   const batch = jobs ? jobIds : jobIds.filter((j) => j.programs.length);
-  const transactionPaths = jobs ? [] : transactions.map((t) => pathOfMember(t.program)).filter((p) => p !== undefined);
+  progress(`${transactions.length} transactions and ${batch.length} batch jobs with PL/I programs in the graph`);
+  /** @type {{ code: string, program: string, why: string }[]} */
+  const skipped = [];
+  /** @type {string[]} */
+  const transactionPaths = [];
+  for (const t of jobs || paths ? [] : transactions) {
+    const path = pathOfMember(t.program);
+    if (path) transactionPaths.push(path);
+    else skipped.push({ code: t.code, program: t.program, why: `no PL/I member ${t.program}` });
+  }
+  for (const s of skipped) progress(`[PLG085W] transaction ${s.code} is skipped: ${s.why}`);
   const programPaths = [...new Set([...(paths ?? transactionPaths), ...batch.flatMap((j) => j.programs)])];
 
   mkdirSync(join(outDir, "programs"), { recursive: true });
@@ -2588,10 +2643,24 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
   const includeModules = new Map();
   const queue = [...programPaths];
   const done = new Set(queue);
+  /** @type {{ path: string, error: string }[]} */
+  const failures = [];
   while (queue.length) {
     const path = /** @type {string} */ (queue.shift());
     const member = /** @type {{ member: string }} */ (db.prepare(`SELECT member FROM files WHERE path = ?`).get(path)).member;
-    const { code, statements, todos, calls, includes } = programToJs(db, root, indexer, path);
+    const started = Date.now();
+    progress(`translating ${path} (${programs.length + failures.length + 1} of ${done.size})`);
+    let translated;
+    try {
+      translated = programToJs(db, root, indexer, path);
+    } catch (error) {
+      const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      failures.push({ path, error: text });
+      progress(`[PLG086E] translating ${path} failed, the program is left out: ${text}`);
+      continue;
+    }
+    const { code, statements, todos, calls, includes } = translated;
+    progress(`translated ${path}: ${statements} statements, ${todos.length} TODOs in ${Date.now() - started} ms`);
     const module = `programs/${member}.js`;
     writeFileSync(join(outDir, module), code);
     for (const [include, factories] of includes) {
@@ -2645,11 +2714,16 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
   const screenFiles = new Set();
   const generated = [];
   for (const transaction of transactions) {
-    const program = programs.find((p) => p.member === transaction.program);
-    if (!program) continue;
+    const path = pathOfMember(transaction.program);
+    const program = programs.find((p) => p.path === path);
+    if (!program) {
+      const failed = failures.find((f) => f.path === path);
+      if (failed) skipped.push({ code: transaction.code, program: transaction.program, why: `translating ${failed.path} failed` });
+      continue;
+    }
     const input = inputs.find((i) => i.literal.trim().split(/\s+/)[0] === transaction.code);
     if (input) screenFiles.add(input.path);
-    generated.push({ ...transaction, program, input });
+    generated.push({ ...transaction, entry: transaction.program, program, input });
   }
 
   /** @type {Map<string, string>} the module name of each MFS file */
@@ -2704,7 +2778,7 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
       "export const transactions = {",
       ...generated.map(
         (t) =>
-          `  ${t.code}: { program: () => import("./${t.program.module}"), entry: ${JSON.stringify(t.program.member)}, screens: ${
+          `  ${t.code}: { program: () => import("./${t.program.module}"), entry: ${JSON.stringify(t.entry)}, screens: ${
             t.input ? js(/** @type {string} */ (screenModules.get(t.input.path))) : "null"
           }, input: ${JSON.stringify(t.input?.message ?? null)} },`,
       ),
@@ -2719,5 +2793,6 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
     join(outDir, "package.json"),
     `${JSON.stringify({ name: "pli-generated", private: true, type: "module", scripts: { start: "node server.js" }, dependencies: { ibm_db: "^3.2.4" } }, null, 2)}\n`,
   );
-  return { programs, transactions: generated.map((t) => t.code), jobs: batch.map((j) => ({ name: j.name, path: j.path, module: `jobs/${j.name}.js`, todos: j.todos })) };
+  progress(`wrote ${programs.length} programs, ${generated.length} transactions and ${batch.length} jobs to ${outDir}`);
+  return { programs, transactions: generated.map((t) => t.code), skipped, failures, jobs: batch.map((j) => ({ name: j.name, path: j.path, module: `jobs/${j.name}.js`, todos: j.todos })) };
 }

@@ -1586,14 +1586,25 @@ async function generateJavaScript(context) {
   const name = workspace.folder.name;
   const started = Date.now();
   log.info(`generating JavaScript for ${name} into ${outDir}`);
+  log.show(true);
   const worker = new Worker(join(context.extensionPath, "out", "graphpage.cjs"), {
     workerData: { graph: workspace.graphFile, root: workspace.folder.uri.fsPath, grammars: join(context.extensionPath, "out") },
   });
   try {
     const result = /** @type {ReturnType<typeof import("./tojs.js").generateJs>} */ (
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Generating JavaScript from ${name}…` }, () =>
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Generating JavaScript from ${name}…` }, (shown) =>
         new Promise((resolve, reject) => {
-          worker.on("message", (/** @type {import("./graphpage.js").PageAnswer} */ answer) => ("error" in answer ? reject(new Error(answer.error)) : resolve(/** @type {any} */ (answer.result))));
+          worker.on("message", (/** @type {import("./graphpage.js").PageAnswer | import("./graphpage.js").PageProgress} */ answer) => {
+            if ("progress" in answer) {
+              if (/^\[PLG\d+E\]/.test(answer.progress)) log.error(answer.progress);
+              else if (/^\[PLG\d+W\]/.test(answer.progress)) log.warn(answer.progress);
+              else log.info(answer.progress);
+              shown.report({ message: answer.progress.split("\n")[0] });
+              return;
+            }
+            if ("error" in answer) reject(new Error(answer.error));
+            else resolve(/** @type {any} */ (answer.result));
+          });
           worker.on("error", reject);
           worker.on("exit", (code) => reject(new Error(`the worker stopped with exit code ${code}`)));
           worker.postMessage({ id: 0, what: "generateJs", args: [outDir] });
@@ -1601,18 +1612,26 @@ async function generateJavaScript(context) {
       )
     );
     const todos = result.programs.reduce((sum, p) => sum + p.todos.length, 0);
-    log.info(`generated ${result.programs.length} programs with ${todos} TODOs and ${result.jobs.length} jobs in ${Date.now() - started} ms`);
+    log.info(
+      `generated ${result.programs.length} programs with ${todos} TODOs and ${result.jobs.length} jobs in ${Date.now() - started} ms; ${result.skipped.length} transactions left out, ${result.failures.length} programs failed`,
+    );
     const lines = [
       `# JavaScript generated from ${name}`,
       "",
       `In \`${outDir}\`: ${result.programs.length} programs, transactions ${result.transactions.join(", ") || "none"}.`,
       "Run it with `npm install` and `npm start` there, with `DB2_CONNECTION` set to the Db2 connection string.",
       "",
+      ...(result.skipped.length
+        ? ["## Transactions left out", "", ...result.skipped.map((s) => `- ${s.code} (program ${s.program}): ${s.why}`), ""]
+        : []),
+      ...(result.failures.length
+        ? ["## Programs that failed to translate", "", ...result.failures.flatMap((f) => [`- ${f.path}:`, "", "  ```", ...f.error.split("\n").map((l) => `  ${l}`), "  ```"]), ""]
+        : []),
       "| Program | Statements translated | TODOs |",
       "| --- | ---: | ---: |",
       ...result.programs.map((p) => `| ${p.member} | ${p.statements} | ${p.todos.length} |`),
       "",
-      ...result.programs.flatMap((p) => (p.todos.length ? [`## ${p.member}`, "", ...p.todos.map((t) => `- ${p.path}:${t.line} ${t.why}`), ""] : [])),
+      ...result.programs.flatMap((p) => (p.todos.length ? [`## ${p.member}`, "", ...p.todos.map((t) => `- ${t.path ?? p.path}:${t.line} ${t.why}`), ""] : [])),
       ...(result.jobs.length
         ? [
             "## Batch jobs",

@@ -275,6 +275,52 @@ test("a variable or field named like a built-in is the variable", async () => {
   assert.deepEqual(await ZZNAME(0), { OUT: 442 });
 });
 
+test("the procedures of an include are the includer's, seeing its variables", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "SRC"));
+  writeFileSync(
+    join(root, "SRC/ZZMAIN"),
+    ` ZZMAIN: PROC(OUT) OPTIONS(MAIN);
+   DCL OUT FIXED BIN(31);
+   DCL ZAEHLER FIXED BIN(31) INIT(0);
+   %INCLUDE ZZPROCS;
+   CALL ERHOEHE(5);
+   CALL ERHOEHE(2);
+   OUT = ZAEHLER;
+ END ZZMAIN;
+`,
+  );
+  writeFileSync(
+    join(root, "SRC/ZZPROCS"),
+    ` ERHOEHE: PROC(N);
+   DCL N FIXED BIN(31);
+   ZAEHLER = ZAEHLER + N;
+ END ERHOEHE;
+`,
+  );
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  /** @type {string[]} */
+  const said = [];
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, paths: ["SRC/ZZMAIN"], progress: (/** @type {string} */ text) => said.push(text) });
+  assert.deepEqual(summary.programs.map((p) => [p.member, p.todos]), [["ZZMAIN", []]]);
+  assert.ok(!existsSync(join(out, "programs/ZZPROCS.js")));
+  const { ZZMAIN } = await import(pathToFileURL(join(out, "programs/ZZMAIN.js")).href);
+  assert.deepEqual(await ZZMAIN(0), { OUT: 7 });
+  assert.ok(said.some((s) => s.includes("SRC/ZZMAIN")), said.join("\n"));
+});
+
+test("a transaction whose program is not found is reported with why", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "SYSDEF"));
+  writeFileSync(join(root, "SYSDEF/ZZSYSDEF"), "* IMS STAGE 1\n         APPLCTN PSB=NIRGENDS,PGMTYPE=TP\n         TRANSACT CODE=ZZTX\n");
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  /** @type {string[]} */
+  const said = [];
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, progress: (/** @type {string} */ text) => said.push(text) });
+  assert.deepEqual(summary.skipped, [{ code: "ZZTX", program: "NIRGENDS", why: "no PL/I member NIRGENDS" }]);
+  assert.ok(said.some((s) => s.includes("ZZTX")), said.join("\n"));
+});
+
 test("the INIT of a field of an array of structures gives each element its own value", async () => {
   const root = mkdtempSync(join(tmpdir(), "pli-src-"));
   mkdirSync(join(root, "SRC"));
