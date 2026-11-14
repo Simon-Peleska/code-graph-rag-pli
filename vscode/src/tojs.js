@@ -540,6 +540,9 @@ function programToJs(db, root, indexer, path) {
   const builtin = (name, argNodes, node, at) => {
     const args = argNodes.map((a) => expr(a, at));
     const codes = args.map((a) => a.code);
+    if (args.length === 0 && !["DATE", "TIME", "DATETIME", "NULL", "SYSNULL", "ONCODE"].includes(name)) {
+      return todoExpr(node, `the built-in ${name} without arguments`, at);
+    }
     switch (name) {
       case "SUBSTR":
         return { code: `substr(${[asString(args[0]), ...codes.slice(1)].join(", ")})`, kind: "string" };
@@ -631,11 +634,14 @@ function programToJs(db, root, indexer, path) {
   const reference = (node, at) => {
     const named = node.namedChildren.filter((c) => c !== null);
     const builtinName = named.find((c) => c.type === "builtin_name");
-    const names = named.filter((c) => c.type === "identifier").map((c) => c.text.toUpperCase());
+    // The grammar marks LENGTH, INDEX, … as built-ins, even as the name of a declared field;
+    // with arguments the field has no dimensions for, it is still the built-in.
+    const names = named.filter((c) => c.type === "identifier" || c.type === "builtin_name").map((c) => c.text.toUpperCase());
     const args = named.flatMap((c) => (c.type === "argument" && c.namedChildren[0] ? [c.namedChildren[0]] : []));
-    if (builtinName) return builtin(builtinName.text.toUpperCase(), args, node, at);
-    if (node.text.includes("->")) return todoExpr(node, "a pointer-qualified reference", at);
     const v = variableAt(names.join("."), at);
+    const isVariable = v && v.type !== "BUILTIN" && (args.length === 0 || v.dims);
+    if (builtinName && !isVariable) return builtin(builtinName.text.toUpperCase(), args, node, at);
+    if (node.text.includes("->")) return todoExpr(node, "a pointer-qualified reference", at);
     if (v?.type === "BUILTIN") return builtin(names[0], args, node, at);
     if (v && v.type === "ENTRY") {
       const external = externalCalls.get(`${at.line}:${names[0]}`);

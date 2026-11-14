@@ -251,6 +251,30 @@ test("TRANSLATE, DIVIDE and SUM over a cross-section run without being declared"
   assert.deepEqual(await ZZSUM(0, ""), { OUT: 2.25, TXT: "0102" });
 });
 
+test("a variable or field named like a built-in is the variable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "SRC"));
+  writeFileSync(
+    join(root, "SRC/ZZNAME"),
+    ` ZZNAME: PROC(OUT);
+   DCL OUT FIXED BIN(31);
+   DCL 1 REC,
+         3 LENGTH FIXED BIN(15),
+         3 TEXT CHAR(4);
+   DCL INDEX FIXED BIN(15);
+   REC.LENGTH = 4;
+   INDEX = 2;
+   OUT = REC.LENGTH * 10 + INDEX + LENGTH(TEXT) * 100;
+ END ZZNAME;
+`,
+  );
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, paths: ["SRC/ZZNAME"] });
+  assert.deepEqual(summary.programs[0].todos, []);
+  const { ZZNAME } = await import(pathToFileURL(join(out, "programs/ZZNAME.js")).href);
+  assert.deepEqual(await ZZNAME(0), { OUT: 442 });
+});
+
 test("the INIT of a field of an array of structures gives each element its own value", async () => {
   const root = mkdtempSync(join(tmpdir(), "pli-src-"));
   mkdirSync(join(root, "SRC"));
