@@ -35,6 +35,9 @@ const EXTENSIONS = {
 /** @type {Record<string, Language>} */
 const MEMBER_LANGUAGES = { J: "jcl", F: "hlasm", T: "db2" };
 
+/** The workspace folder Generate JavaScript writes into, as generated/JS; no source. */
+export const GENERATED = "generated";
+
 // The extension decides, and an extensionless z/OS member whose third
 // character is J, F or T is JCL, MFS or Db2; any other member is PL/I.
 /**

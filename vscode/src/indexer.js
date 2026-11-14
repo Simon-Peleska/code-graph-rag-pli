@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { Language, Parser } from "web-tree-sitter";
-import { MAIN_OPTIONS, PLI_BUILTINS, blankMargins, languageOf, sqlOperation } from "./source.js";
+import { GENERATED, MAIN_OPTIONS, PLI_BUILTINS, blankMargins, languageOf, sqlOperation } from "./source.js";
 import { mfsFields } from "./mfs.js";
 
 /** @typedef {import("web-tree-sitter").Node} Node */
@@ -733,11 +733,12 @@ export async function sync(db, root, indexer, options = {}) {
   }
   /** @type {Map<string, { mtime: number, size: number }>} */
   const onDisk = new Map();
-  // Hidden files and folders, .git above all, are no source.
+  // Hidden files and folders, .git above all, are no source, nor is what
+  // Generate JavaScript writes to generated/.
   /** @param {string} path */
   const look = (path) => {
     const name = path.split("/").pop() ?? "";
-    if (name.startsWith(".")) return;
+    if (name.startsWith(".") || path.split("/")[0] === GENERATED) return;
     let stat;
     try {
       stat = statSync(join(root, path));

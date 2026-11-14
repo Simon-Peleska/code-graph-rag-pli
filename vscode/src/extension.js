@@ -13,7 +13,7 @@ import { createHighlighter, highlight, TOKEN_MODIFIERS, TOKEN_TYPES } from "./hi
 import { mfsFormats } from "./mfs.js";
 import { format } from "./format.js";
 import { describe } from "./progress.js";
-import { PLI_BUILTINS, insertBlanks } from "./source.js";
+import { GENERATED, PLI_BUILTINS, insertBlanks } from "./source.js";
 import { Symbols } from "./symbols.js";
 
 /** @typedef {import("./graph.js").Target} Target */
@@ -1527,15 +1527,7 @@ async function generateJavaScript(context) {
     void vscode.window.showErrorMessage(message);
     return;
   }
-  const picked = await vscode.window.showOpenDialog({
-    canSelectFolders: true,
-    canSelectFiles: false,
-    canSelectMany: false,
-    openLabel: "Generate Here",
-    title: "The folder for the generated JavaScript",
-  });
-  const outDir = picked?.[0]?.fsPath;
-  if (!outDir) return;
+  const outDir = join(workspace.folder.uri.fsPath, GENERATED, "JS");
   const name = workspace.folder.name;
   const started = Date.now();
   log.info(`generating JavaScript for ${name} into ${outDir}`);

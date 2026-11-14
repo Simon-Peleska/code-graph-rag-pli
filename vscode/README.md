@@ -256,7 +256,8 @@ extension keeps of each workspace folder:
   into `x`, number into `9` and string into `'…'`, so it can be shared
   without the code; part 2 has the names and paths. It takes about 8
   seconds for 6 million lines, in a worker thread.
-- **PL/I Graph: Generate JavaScript** asks for a folder and writes into it a
+- **PL/I Graph: Generate JavaScript** writes into `generated/JS` in the
+  workspace folder (which the graph leaves out, like hidden folders) a
   JavaScript translation of the program of every IMS transaction and of the
   programs they call: `programs/<MEMBER>.js`, the MFS formats and messages
   in `screens/`, `runtime.js` (PL/I types and built-ins, IMS message calls,

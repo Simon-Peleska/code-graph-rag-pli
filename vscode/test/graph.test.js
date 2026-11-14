@@ -13,6 +13,10 @@ const graph = new Graph(db, fixture);
 /** @param {TreeRow[]} rows */
 const labels = (rows) => rows.map((row) => `${row.kind} ${row.label}${row.repeated ? " (repeated)" : ""}`);
 
+test("the generated JavaScript in generated/ is no source", () => {
+  assert.deepEqual(db.prepare(`SELECT path FROM files WHERE path LIKE 'generated/%'`).all(), []);
+});
+
 test("a call goes to the procedure the indexer resolved", () => {
   assert.deepEqual(graph.definitions("shop/main.pli", 3, "helper"), [{ path: "shop/helper.pli", line: 1, col: 0, endCol: 6 }]);
 });
