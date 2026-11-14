@@ -256,6 +256,101 @@ extension keeps of each workspace folder:
   into `x`, number into `9` and string into `'…'`, so it can be shared
   without the code; part 2 has the names and paths. It takes about 8
   seconds for 6 million lines, in a worker thread.
+- **PL/I Graph: Generate JavaScript** asks for a folder and writes into it a
+  JavaScript translation of the program of every IMS transaction and of the
+  programs they call: `programs/<MEMBER>.js`, the MFS formats and messages
+  in `screens/`, `runtime.js` (PL/I types and built-ins, IMS message calls,
+  Db2 through `ibm_db` and `DB2_CONNECTION`) and `server.js`, which shows
+  each transaction's input screen on tn3270's terminal (`terminal.js` and
+  `tn3270/`, the same one *Show 3270 Screen* draws) at
+  `http://localhost:8080/<CODE>`. Enter, a PF or a PA key sends the input
+  message, runs the program and shows the screen of its reply; Clear blanks
+  the screen (`npm install && node server.js`, `PORT` defaults to 8080). With
+  `SQLITE=<file>` (`SQLITE=data.db node server.js`, or before a job) the
+  SQL runs on that SQLite file instead, no `ibm_db` needed: on first use it
+  creates the tables from `sqlite.sql` (every Db2 table of the graph, with
+  its key and defaults, named `"SCHEMA.TABLE"`, and the IMS segment
+  tables); `CURRENT DATE`, `FETCH FIRST n ROWS ONLY` and `WITH UR` are
+  translated, a duplicate key gives `SQLCODE` -803. A program called again
+  while it runs stops with `PLG081E`, unless it is `RECURSIVE`. Declarations
+  keep their PL/I types as JSDoc. Each include becomes
+  `includes/<MEMBER>.js`, a function per declaration that returns a new
+  variable with its initial value; a program calls them for its own copies.
+  A `BASED` or `DEFINED` overlay, a `LIKE` and a `FILE` stay in the
+  program, since they depend on it. PL/I passes arguments by reference, so a
+  procedure that changes scalar parameters returns them as an object and
+  the caller assigns them back. A record file is a text file of one record
+  per line, a keyed one with the key and a tab in front, at the path in
+  `DD_<name>` (the DD name or the OPEN's `TITLE`), else
+  `files/<name>.txt` under `FILES`; numbers are written as text as wide as
+  their digits. `ON ENDFILE` and `ON KEY` of a file become handlers on it.
+  A stream file is a text file at the same place, written line by line by
+  `PUT` (`LIST`, `EDIT` with `A`, `B`, `F`, `E`, `P`, `X`, `COL`, `SKIP`,
+  `PAGE` as a form feed, `R` for a `FORMAT` statement's list, and `DATA`)
+  and read by `GET LIST`, `GET EDIT` and `GET DATA`, with repeated data
+  items such as `((A(I) DO I = 1 TO N))`;
+  `SYSPRINT` is stdout and `SYSIN` stdin unless `DD_SYSPRINT` or
+  `DD_SYSIN` names a file, and `PUT STRING`/`GET STRING` work on a
+  variable. Each JCL job running a PL/I program becomes `jobs/<JOB>.js`
+  (`node jobs/<JOB>.js`), which runs its steps in order with each DD as a
+  file under `DATASETS` (default `datasets`): `DSN.txt`, `DSN/MEMBER.txt`,
+  a GDG generation as `DSN/G0001V00.txt` counted from the newest one when
+  the job starts, `&&TEMP` under `TEMP/<JOB>/`, SYSOUT as
+  `SYSOUT/<JOB>/<STEP>.<DD>.txt` (`SYSPRINT` stays on stdout), in-stream
+  data written to `INSTREAM/<JOB>/`, and `DUMMY` the null device. A JCL
+  procedure runs its steps with the job's DDs replacing theirs by name;
+  `IKJEFT01` runs the program of `RUN PROGRAM` in `SYSTSIN`; `DFSRRC00` the
+  one in its `PARM`. A step's return code is the one `PLIRETC` sets, the
+  job's the highest; a DD with `DISP=(…,DELETE)` is deleted after its step.
+  `COND` on the job, a step or a procedure step (`COND.STEP=`), `EVEN`,
+  `ONLY` and `IF`/`THEN`/`ELSE`/`ENDIF` on `RC`, `STEP.RC`, `ABEND` and
+  `STEP.RUN` decide which steps run, also inside a JCL procedure, where a
+  step name means the procedure's own step and an `IF` around its `EXEC`
+  is tested once, before its first step; symbolic parameters in DSNs, members,
+  `DISP` and `PARM` take their values from `SET`, the procedure's defaults
+  and the `EXEC`. A concatenation reads its first dataset. `DO` loops with
+  several ranges, `REPEAT` and `UNTIL` run. A `LIKE` structure or field
+  gets its own copy of the template's fields. Whole arrays and structures
+  are assigned element by element, by position or `BY NAME`. `GOTO` runs: a list of statements with a label a
+  `GOTO` goes to becomes a loop around a `switch`, and a `GOTO` out of an ON
+  unit or an internal procedure throws to it. `ON` units for `ERROR`,
+  `CONDITION(x)` and the others, `SIGNAL`, `REVERT`, `ON ... SYSTEM`,
+  `ONCODE()`, `BEGIN` blocks, `STOP` and `EXIT` run as in PL/I: an error
+  thrown in a procedure with ON units runs the newest `ERROR` unit, and the
+  program ends when it returns. A `DEFINED` or `BASED` variable is a view
+  on the variable under it: on a `CHAR` each field reads and writes its
+  slice of the text (`POSITION` included); on a structure, or a `CHAR`
+  holding a mask's fields, its n-th field is the n-th field there, whatever
+  its name. So a `CHAR` area in a SPA keeps the fields one mask put there
+  as a JavaScript object, and another mask reads them by position. The IMS
+  databases become Db2 tables, one to one, in `ims-db2.sql`: a table
+  `DBD.SEGMENT` each segment, a row each segment occurrence with `IMS_ID`,
+  `IMS_PARENT` (the parent's `IMS_ID`, its rows deleted with it) and a column
+  each field. The fields are those of the PL/I structure most DL/I calls
+  read the segment into or write it from (also one `BASED` or `DEFINED` on a
+  `CHAR` I/O area) when every DBD field is one of them, named as in the DBD;
+  else the DBD's fields with `FILLER`s between them. A unique sequence field
+  is a `UNIQUE` key under the parent. `databases.js` describes the tables
+  for `dli` in `runtime.js`, which runs the calls on a DB PCB as SQL: `GU`,
+  `GN`, `GNP` and their `GH` forms read in IMS's hierarchic order (each
+  level by its sequence field, twins by `IMS_ID`) with the SSAs'
+  qualifications (`=`, `>`, `<`, `>=`, `<=`, `¬=`, `&`, `|`) as `WHERE`
+  terms; `ISRT` inserts below the parent the SSAs or the PCB's position
+  give; `REPL` and `DLET` change the row last held. The PCB gets `STATUS`
+  (blank, `GE`, `GB`, `II`, `DJ`, `DA`, `GP`, `AD`), `SEGLEVEL`, `SEGNAME`
+  and the key feedback. A DB PCB is found by its parameter's place in the
+  PSB, else by the DBD having the calls' segments; the server and jobs pass
+  only the I/O PCB, so it starts empty. Limits: a qualification's value is
+  compared as text; `GA` and `GK` are not set; command codes are skipped; a
+  packed field without a PL/I structure has no decimals. `FIXED DEC` is a
+  JS number: an assignment cuts it to its precision and scale, and
+  arithmetic compared or turned into text is rounded to 15 digits first,
+  so `1.10 + 2.20 = 3.30` holds and sums print without binary noise. That
+  is exact up to 15 digits, not beyond (`FIXED DEC(31)`). What is not
+  translated is a `TODO` comment with its line, listed in the Markdown
+  summary that opens afterwards; [What Generate JavaScript does not
+  translate](#what-generate-javascript-does-not-translate) lists it, and
+  what runs differently from the mainframe. 9,000 programs and 2,400 jobs take 9 seconds.
 - **PL/I Graph: Show 3270 Screen** (the window icon on an MFS file, or its
   context menu in the explorer) draws the MFS format at the cursor as a 3270
   terminal next to the editor, with
@@ -467,6 +562,115 @@ can read it while VS Code runs:
   `indexer_version` names what the indexer reads, and a graph of an older
   one is built again from scratch.
 
+## What Generate JavaScript does not translate
+
+Two kinds of gaps. The first is visible: the generator writes a `TODO`
+comment with the PL/I line (a statement), or a `todo()` call that throws
+`PLG051E` when the program gets there (an expression), and lists each in
+the Markdown summary. The second is silent: the code runs but can behave
+differently from the mainframe. The sample's 9,000 programs have no TODO,
+so on them only the silent gaps apply.
+
+### Marked with a TODO
+
+- **Statements** other than assignment, `IF`, `DO`, `SELECT`, `LEAVE`,
+  `ITERATE`, `RETURN`, `CALL`, `GOTO`, `ON`, `SIGNAL`, `REVERT`, `STOP`,
+  `BEGIN`, `ALLOCATE`, `FREE`, `FETCH`, `RELEASE`, `DISPLAY`, `OPEN`,
+  `CLOSE`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `PUT`, `GET`, `EXEC SQL`
+  and `%INCLUDE`; for example `LOCATE`, `WAIT`, `DELAY`, `EXEC CICS`.
+  `DISPLAY ... REPLY`; `ITERATE` without a label in a `DO` group that is
+  no loop; `GOTO` to a label variable. An unlabeled `LEAVE` ends the
+  innermost `DO` group, loop or not, as PL/I does.
+- **Built-ins** other than `SUBSTR`, `LENGTH`, `INDEX`, `VERIFY`, `TRIM`
+  (one argument), `TRANSLATE`, `MOD`, `MAX`, `MIN`, `ABS`, `TRUNC`,
+  `FLOOR`, `CEIL`, `SIGN`, `ROUND`, `DIVIDE`, `SUM`, `REPEAT`, `COPY`,
+  `HIGH`, `LOW`, `NULL`, `SYSNULL`, `ADDR`, `DATE`, `TIME`, `DATETIME`,
+  `DEC`/`FIXED`, `BIN`, `CHAR`, `ONCODE` and `DIM`/`LBOUND`/`HBOUND` of the
+  first dimension, also of a field in an array of structures; for example
+  `SEARCH`, `UNSPEC`, `STRING`, `POINTERADD`. A cross-section such as
+  `A(I,*)` is an array.
+- **Expressions:** a pointer-qualified reference (`P->X`); calling an
+  `ENTRY` variable; a name that is not declared; more subscripts than
+  dimensions; literals other than strings, bit strings and decimal
+  numbers, such as `'C1'X`, `'F'B4` or `1010B`.
+- **Declarations:** `LIKE` of a structure that is not declared; arrays
+  whose bounds are not constants; an `INIT` that is not a constant; a
+  `DEFINED` or `BASED` that cannot be a view (on an array, `BASED` on
+  something that is no pointer, a field without a known length, or an
+  array of more than one dimension inside it). Such a variable gets its
+  own storage, so writes through it do not reach the variable under it.
+- **Procedures** with `RETURNS` that also change their parameters: the
+  changes do not reach the caller.
+- **CALL** of a program not in the graph, including system routines
+  (`PLIDUMP`, `CEE...`); only `PLIRETC` is known.
+- **IMS:** `AIBTDLI`; a DL/I call whose function is not known (a variable
+  set at run time); a DB call without a PCB and an I/O area variable; calls
+  on the I/O PCB other than `GU` and `ISRT`, so no `CHNG`, `PURG`, `CMD`,
+  no `ISRT` to an alternate PCB, no `CHKP`/`XRST`. `GN` on the I/O PCB only
+  says there is no next segment: messages have one segment.
+- **SQL:** `WHENEVER`, `PREPARE`, `EXECUTE`, `DESCRIBE` (dynamic SQL),
+  `OPEN` of a cursor not declared in the program.
+- **Stream I/O:** options other than `FILE`, `STRING`, `SKIP`, `LINE` and
+  `PAGE`; `PUT`/`GET` on a record file; `GET` without data; `PUT STRING`
+  into something that is no variable; a format item with a computed width
+  or repeat factor; `R` to something that is no `FORMAT`; `PUT DATA` of an
+  expression or a repeated item; `GET` into something that is no scalar
+  variable; `GET DATA` of an array of structures; a repeated item whose
+  range waits on a call.
+- **Record I/O:** files that are not declared; options other than `INTO`,
+  `FROM`, `KEY`, `KEYFROM` and `KEYTO` (`SET`, `IGNORE`, `EVENT`);
+  `READ SET` (locate mode); an area that is neither a structure nor a
+  `CHAR`; `READ INTO` a `CHAR` with `KEYTO`; a structure with an array of
+  more than one dimension.
+- **ON units** of file conditions other than `ENDFILE` and, on a record
+  file, `KEY` (`TRANSMIT`, `UNDEFINEDFILE`, `RECORD`, `ENDPAGE`), and
+  `SIGNAL`/`REVERT` of any file condition.
+- **JCL:** a `COND` or `IF` it cannot read (an `IF` then counts as true); a
+  symbolic parameter without a value; a DD that is neither a dataset,
+  `SYSOUT`, in-stream data nor `DUMMY`; a JCL procedure not in the graph; a
+  step running anything but a PL/I program in the graph (`IDCAMS`, `SORT`,
+  `IEBGENER`, ...; `IEFBR14` is skipped quietly).
+
+### Silent differences
+
+- **Numbers.** `FIXED DEC` is exact up to 15 digits only. Intermediate
+  results do not follow PL/I's precision rules: JavaScript computes in
+  doubles and only the assignment cuts to the target's precision and
+  scale, so `1/3` and other divisions can end in another last digit.
+  `FIXED BIN` is truncated to an integer but never overflows or wraps at
+  15 or 31 bits. `FLOAT` is a double. Division by zero gives `Infinity`
+  or `NaN`.
+- **Conditions.** `ZERODIVIDE`, `SIZE`, `FIXEDOVERFLOW`, `CONVERSION`,
+  `STRINGRANGE` and `SUBSCRIPTRANGE` are raised only by `SIGNAL`, never by
+  the computation; any JavaScript error becomes `ERROR`. A subscript out
+  of range reads `undefined`; `SUBSTR` past the end gives a shorter
+  string; a non-numeric text assigned to a number gives `NaN` (`0` when
+  read from a message or record).
+- **Characters** are JavaScript strings, not EBCDIC. `<` and `>` on
+  strings, and sorting, follow Unicode order: digits before letters and
+  upper case before lower case, the reverse of EBCDIC. `HIGH` is `\xff`
+  and `LOW` `\0`. Two `CHAR` variables of different lengths are compared
+  as they are; only a literal is padded to the variable's length.
+- **Bit strings.** `BIT(1)` is a boolean; a longer `BIT(n)` is a string of
+  `0`s and `1`s, and `&` and `|` on it are JavaScript's logical operators,
+  not bitwise.
+- **Storage.** There are no bytes: a `DEFINED` or `BASED` view on a `CHAR`
+  slices its text and one on a structure maps fields by position, so
+  redefining a number's bytes (a `CHAR` over a `FIXED BIN` or a packed
+  decimal) does not give the mainframe's bytes. `ADDR` is a reference,
+  without pointer arithmetic. `STATIC` variables are set up again on every
+  call; `EXTERNAL` ones are not shared between programs. `CONTROLLED`
+  keeps one generation: `ALLOCATE` replaces the value, `FREE` does nothing.
+- **Files** are text files, one record per line, numbers in characters as
+  wide as their digits; no packed or binary fields, no `RECFM`/`LRECL`,
+  no VSAM other than a key in front of the line. A concatenated DD reads
+  its first dataset only. An `ON ENDFILE` or `ON KEY` unit stays after the
+  procedure that set it returns.
+- **IMS DB** (see Generate JavaScript above): a qualification's value is
+  compared as text; `GA` and `GK` are not set; command codes are skipped;
+  a packed field without a PL/I structure has no decimals.
+- **Time.** `DATE`, `TIME` and `DATETIME` read the local clock.
+
 ## Error codes
 
 - `PLG004E` a file from the tree could not be opened.
@@ -542,6 +746,65 @@ can read it while VS Code runs:
   Code after installing a new version.
 - `PLG049E` Show Path of the Column: there is no Db2 column of a
   `CREATE TABLE` or an `EXEC SQL` at the cursor.
+- `PLG050E` Generated JavaScript: an SQL statement failed; the message has
+  the statement and the Db2 error.
+- `PLG051E` Generated JavaScript: the program reached a `todo()`, a part
+  that is not translated.
+- `PLG052E` Generated JavaScript: no `WHEN` of a `SELECT` without
+  `OTHERWISE` matched.
+- `PLG053E` Generate JavaScript: a program file is not in the graph.
+- `PLG054E` Generate JavaScript: a program file could not be parsed.
+- `PLG055E` Generated server: there is no such transaction.
+- `PLG056E` Generated server: the transaction has no input screen.
+- `PLG057E` Generated server: the transaction's program failed; the page
+  shows the error.
+- `PLG058E` Generate JavaScript: there is no graph yet.
+- `PLG059E` Generate JavaScript: generating failed.
+- `PLG060E` Generated JavaScript: a READ found no record left and the file
+  has no `ON ENDFILE`.
+- `PLG061E` Generated JavaScript: a key was not found, or was there already,
+  and the file has no `ON KEY`.
+- `PLG062E` Generated JavaScript: a file to read does not exist.
+- `PLG063E` Generated JavaScript: `GET STRING` ran out of text.
+- `PLG064E` Generated JavaScript: a format item of `PUT EDIT` is not
+  supported.
+- `PLG065E` Generated JavaScript: a format list has no data format for the
+  next value.
+- `PLG066E` Generated JavaScript: a job step's program is not translated.
+- `PLG067E` Generated JavaScript: a job step ended abnormally; only steps
+  with `COND=EVEN`, `COND=ONLY` or under an `IF` testing `ABEND` run after
+  it, then the job fails.
+- `PLG068E` Generated JavaScript: a `GOTO` went to a label no active block
+  has.
+- `PLG069W` Generated JavaScript: a `CONDITION` was signaled and no ON unit
+  takes it; the program goes on.
+- `PLG070E` Generated JavaScript: `ERROR` was signaled and no ON unit takes
+  it.
+- `PLG071E` Generated JavaScript: the `ON ERROR` unit returned, so the
+  program ends.
+- `PLG072E` Generated JavaScript: `GET DATA` read text that is no
+  `NAME=value` list ending in `;`.
+- `PLG073E` Generated JavaScript: `GET DATA` read a name that is not in its
+  data list (or, without one, not declared).
+- `PLG074E` Generated JavaScript: a `DEFINED` or `BASED` view has more
+  fields than the structure under it holds; the field named is the first
+  beyond them.
+- `PLG075E` Generated JavaScript: a DL/I call's I/O area and the segment's
+  columns split bytes differently where one side holds a number.
+- `PLG076E` Generated JavaScript: an SSA names no segment of the PCB's DBD.
+- `PLG077E` Generated JavaScript: an SSA tests a field the segment does not
+  have.
+- `PLG078E` Generated JavaScript: an SSA has an unknown relational operator.
+- `PLG079E` Generated JavaScript: a `CHAR` I/O area holds a segment's fields
+  from another segment, with another number of fields.
+- `PLG080E` Generated JavaScript: a DL/I call's SQL failed; the log has the
+  database error.
+- `PLG081E` Generated JavaScript: a program not `RECURSIVE` was called while
+  it runs; the message has the chain of calls.
+- `PLG082E` Generated JavaScript's terminal page: the server did not answer a
+  key; the status row and the browser console have the cause.
+- `PLG083E` Generated JavaScript's server: a request failed, such as a body
+  that is not JSON; the log has the error.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import { Language, Parser } from "web-tree-sitter";
-import { MAIN_OPTIONS, blankMargins, languageOf, sqlOperation } from "./source.js";
+import { MAIN_OPTIONS, PLI_BUILTINS, blankMargins, languageOf, sqlOperation } from "./source.js";
 import { mfsFields } from "./mfs.js";
 
 /** @typedef {import("web-tree-sitter").Node} Node */
@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 26;
+const INDEXER_VERSION = 27;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -1525,7 +1525,7 @@ function readPli(root, file, db2) {
           const details = options.map((c) => tidy(c?.text ?? ""));
           if (node.type === "entry_statement") details.unshift("ENTRY");
           if (details.length) file.symbols[parent].detail = details.join(" ");
-          const list = heading?.namedChildren.find((c) => c?.type === "parameter_list");
+          const list = (heading ?? node).namedChildren.find((c) => c?.type === "parameter_list");
           parameters.set(parent, list?.namedChildren.map((c) => c?.text.toUpperCase() ?? "") ?? []);
         }
         statement = -1;
@@ -1661,12 +1661,18 @@ function readPli(root, file, db2) {
       stack.push({ node: child, caller, parent, statement, branch, label });
     }
   }
-  // A parameter left undeclared has PL/I's default attributes.
-  const declared = new Set(file.variables.filter((v) => v.level === 1).map((v) => `${v.scope} ${v.name}`));
+  // A parameter left undeclared has PL/I's default attributes. An ENTRY's
+  // parameters are declared in its procedure: each gets a copy in the entry.
+  const declared = new Map(file.variables.filter((v) => v.level === 1).map((v) => [`${v.scope} ${v.name}`, v]));
   for (const [scope, names] of parameters) {
     const symbol = file.symbols[scope];
     for (const [i, name] of names.entries()) {
       if (declared.has(`${scope} ${name}`)) continue;
+      const outer = symbol.detail?.startsWith("ENTRY") ? declared.get(`${symbol.parent} ${name}`) : undefined;
+      if (outer) {
+        file.variables.push({ ...outer, scope, storage: "PARAMETER", parameter: i + 1, line: symbol.line });
+        continue;
+      }
       const [type, size] = withDefaults(name, null, null);
       file.variables.push({
         scope, parent: -1, level: 1, name, qualified: name, type, size, dims: null, storage: "PARAMETER",
@@ -2690,7 +2696,7 @@ function resolveAccesses(db, files, failures, fresh) {
   const includesOf = db.prepare(
     "SELECT r.caller, l.target_file AS target FROM refs r JOIN links l ON l.ref = r.id WHERE r.file = ? AND r.kind = 'include' ORDER BY r.id",
   );
-  const parentsOf = db.prepare("SELECT id, parent, detail FROM symbols WHERE file = ?");
+  const parentsOf = db.prepare("SELECT id, parent, detail, name, kind FROM symbols WHERE file = ?");
   const dliCallsOf = db.prepare("SELECT id, caller, entry, arguments FROM dli_calls WHERE file = ?");
   const updateDliCall = db.prepare("UPDATE dli_calls SET function = ?, pcb_parameter = ?, segment = ?, path = ? WHERE id = ?");
   const pendingOf = db.prepare("SELECT accesses FROM pending_accesses WHERE file = ?");
@@ -2765,9 +2771,12 @@ function resolveAccesses(db, files, failures, fresh) {
       const parentOf = new Map();
       /** @type {Set<number>} the main procedures */
       const mains = new Set();
-      for (const row of /** @type {{ id: number, parent: number | null, detail: string | null }[]} */ (parentsOf.all(file))) {
+      /** @type {Set<string>} the file's procedures and entries, called as functions, not variables */
+      const procedures = new Set();
+      for (const row of /** @type {{ id: number, parent: number | null, detail: string | null, name: string, kind: string }[]} */ (parentsOf.all(file))) {
         parentOf.set(row.id, row.parent ?? 0);
         if (MAIN_OPTIONS.test(row.detail ?? "")) mains.add(row.id);
+        if (row.kind === "procedure" || row.kind === "entry") procedures.add(row.name.toUpperCase());
       }
 
       /** A name's variable, seen from a scope. @param {string[]} parts @param {number} from @returns {VariableRow | undefined} */
@@ -2835,7 +2844,7 @@ function resolveAccesses(db, files, failures, fresh) {
           variable = find([...structure.like.split("."), ...parts.slice(i)], scope);
           if (variable) through = structure.id;
         }
-        if (!variable && parts.length === 1) variable = declareImplicitly(parts[0], scope, access.statement);
+        if (!variable && parts.length === 1 && !procedures.has(parts[0]) && !PLI_BUILTINS.includes(parts[0])) variable = declareImplicitly(parts[0], scope, access.statement);
         variables.push(variable);
         throughs.push(through);
       }

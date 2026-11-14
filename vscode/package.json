@@ -230,6 +230,12 @@
         "icon": "$(checklist)"
       },
       {
+        "command": "pliGraph.generateJs",
+        "title": "Generate JavaScript",
+        "category": "PL/I Graph",
+        "icon": "$(file-code)"
+      },
+      {
         "command": "pliGraph.menu",
         "title": "Menu",
         "category": "PL/I Graph"

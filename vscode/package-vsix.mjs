@@ -3,7 +3,7 @@
 // One package serves every platform: the indexer is JavaScript and WebAssembly.
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { extname } from "node:path";
+import { extname, join, relative, sep } from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
 
 const manifest = JSON.parse(readFileSync("package.json", "utf-8"));
@@ -19,16 +19,10 @@ const files = [
   "syntaxes/jcl.tmLanguage.json",
   "syntaxes/hlasm.tmLanguage.json",
   "syntaxes/db2.tmLanguage.json",
-  "out/graph.html",
-  "out/screen.html",
-  "out/web-tree-sitter.wasm",
-  // Every bundle build.mjs writes: the extension starts some of them as threads.
-  ...readdirSync("out")
-    .filter((name) => name.endsWith(".cjs"))
-    .map((name) => `out/${name}`),
-  ...readdirSync("out")
-    .filter((name) => name.startsWith("tree-sitter-") && (name.endsWith(".wasm") || name.endsWith(".scm")))
-    .map((name) => `out/${name}`),
+  // All that build.mjs writes, so a new output cannot be left out.
+  ...readdirSync("out", { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(".", join(entry.parentPath, entry.name)).split(sep).join("/")),
 ];
 
 const xml = (text) => text.replace(/[<>&"]/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -60,9 +54,11 @@ const vsixManifest = `<?xml version="1.0" encoding="utf-8"?>
 const contentTypes = {
   ".cjs": "application/octet-stream",
   ".html": "text/html",
+  ".js": "application/javascript",
   ".json": "application/json",
   ".md": "text/markdown",
   ".scm": "text/plain",
+  ".txt": "text/plain",
   ".vsixmanifest": "text/xml",
   ".wasm": "application/wasm",
 };

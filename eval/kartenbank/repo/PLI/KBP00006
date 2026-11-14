@@ -1,0 +1,109 @@
+ /*******************************************************************/
+ /* KBP00006  KONTOAUSKUNFT ONLINE (TRX KB01, FORMAT KBF001)          */
+ /*   KONTONUMMER EINGEBEN, SALDO, LIMITS UND VERFUEGBAREN BETRAG     */
+ /*   AUS DER ONLINE-KOPIE KB.KONTO ANZEIGEN.                         */
+ /*                                                                   */
+ /* AENDERUNGEN                                                       */
+ /*   2003-05-20  WBE  ERSTELT                                        */
+ /*   2006-02-14  WBE  MAHNSTUFE ANZEIGEN                             */
+ /*   2009-01-12  ALM  BEI VERZUG/KUENDIGUNG NICHTS VERFUEGBAR         */
+ /*   2012-07-30  ALM  KB103 BEI UEBERZIEHUNG                          */
+ /*******************************************************************/
+ KBP00006: PROC(IOPCB_PTR) OPTIONS(MAIN);
+   DCL IOPCB_PTR POINTER;
+   DCL PLITDLI ENTRY EXTERNAL OPTIONS(ASM INTER);
+   DCL 1 IOPCB BASED(IOPCB_PTR),
+         2 LTERM  CHAR(8),
+         2 *      CHAR(2),
+         2 STATUS CHAR(2);
+   DCL DREI      FIXED BIN(31) STATIC INIT(3);
+   DCL GU_FUNC   CHAR(4) STATIC INIT('GU  ');
+   DCL ISRT_FUNC CHAR(4) STATIC INIT('ISRT');
+
+   DCL 1 EIN,
+         2 LL       FIXED BIN(31),
+         2 ZZ       FIXED BIN(15),
+         2 TRANCODE CHAR(8),
+         2 KTONR    CHAR(11);
+   DCL 1 AUS,
+         2 LL       FIXED BIN(31),
+         2 ZZ       FIXED BIN(15),
+         2 KTONR    CHAR(11),
+         2 STATUS   CHAR(16),
+         2 SALDO    PIC 'ZZ.ZZZ.ZZ9V,99-',
+         2 LIMIT    PIC 'ZZ.ZZZ.ZZ9V,99',
+         2 VERFUEG  PIC 'ZZ.ZZZ.ZZ9V,99',
+         2 BARLIM   PIC 'ZZ.ZZZ.ZZ9V,99',
+         2 ABLAUF   CHAR(10),
+         2 MAHN     PIC 'Z9',
+         2 MELDUNG  CHAR(79);
+
+   /* HOSTVARIABLEN KB.KONTO */
+   DCL H_NR    CHAR(11);
+   DCL H_ST    CHAR(1);
+   DCL H_SLD   FIXED DEC(10,2);
+   DCL H_KLIM  FIXED DEC(10,2);
+   DCL H_BLIM  FIXED DEC(10,2);
+   DCL H_ABDT  CHAR(8);
+   DCL H_MAHN  FIXED BIN(15);
+   DCL VERF    FIXED DEC(11,2);
+   DCL SQLC    PIC '-(4)9';
+
+   CALL PLITDLI(DREI, GU_FUNC, IOPCB, EIN);
+   AUS.KTONR = EIN.KTONR;
+   AUS.STATUS = '';
+   AUS.ABLAUF = '';
+   AUS.MELDUNG = '';
+
+   IF EIN.KTONR = '' THEN DO;
+     AUS.MELDUNG = 'KB101 BITTE KONTONUMMER EINGEBEN';
+     GOTO SENDEN;
+   END;
+
+   H_NR = EIN.KTONR;
+   EXEC SQL SELECT KTO_ST, KTO_SLD, KTO_KLIM, KTO_BLIM, KTO_ABDT, KTO_MAHN
+              INTO :H_ST, :H_SLD, :H_KLIM, :H_BLIM, :H_ABDT, :H_MAHN
+              FROM KB.KONTO
+             WHERE KTO_NR = :H_NR;
+   SELECT;
+     WHEN (SQLCODE = 0) ;
+     WHEN (SQLCODE = 100) DO;
+       AUS.MELDUNG = 'KB102 KONTO ' || EIN.KTONR || ' NICHT VORHANDEN';
+       GOTO SENDEN;
+     END;
+     OTHERWISE DO;
+       SQLC = SQLCODE;
+       AUS.MELDUNG = 'KB199 DB2-FEHLER SQLCODE ' || SQLC;
+       GOTO SENDEN;
+     END;
+   END;
+
+   SELECT (H_ST);
+     WHEN ('A') AUS.STATUS = 'AKTIV';
+     WHEN ('D') AUS.STATUS = 'IN VERZUG';
+     WHEN ('C') AUS.STATUS = 'GEKUENDIGT';
+     WHEN ('X') AUS.STATUS = 'ABGESCHRIEBEN';
+     OTHERWISE  AUS.STATUS = 'UNBEKANNT (' || H_ST || ')';
+   END;
+
+   AUS.SALDO  = H_SLD;
+   AUS.LIMIT  = H_KLIM;
+   AUS.BARLIM = H_BLIM;
+   AUS.MAHN   = H_MAHN;
+   AUS.ABLAUF = SUBSTR(H_ABDT,7,2) || '.' || SUBSTR(H_ABDT,5,2) || '.'
+             || SUBSTR(H_ABDT,1,4);
+
+   /* 2009-01-12: NUR AKTIVE KONTEN HABEN EINEN VERFUEGBAREN BETRAG */
+   IF H_ST = 'A' THEN VERF = H_KLIM - H_SLD;
+   ELSE VERF = 0;
+   IF VERF < 0 THEN VERF = 0;
+   AUS.VERFUEG = VERF;
+
+   IF H_SLD > H_KLIM THEN
+     AUS.MELDUNG = 'KB103 LIMIT UEBERSCHRITTEN';
+   ELSE
+     AUS.MELDUNG = 'KB100 AUSKUNFT ERTEILT';
+
+ SENDEN:
+   CALL PLITDLI(DREI, ISRT_FUNC, IOPCB, AUS);
+ END KBP00006;

@@ -237,8 +237,9 @@ test("the graph page's worker answers questions and reports failures", async () 
 test("SQL uses plain ? parameters, which the Node of VS Code 1.105 binds; it skips ?1", async () => {
   const { readdir, readFile } = await import("node:fs/promises");
   const dir = join(import.meta.dirname, "..", "src");
-  for (const file of await readdir(dir)) {
-    const text = await readFile(join(dir, file), "utf8");
-    assert.doesNotMatch(text, /[=(,|] *\?\d/, file);
+  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const text = await readFile(join(entry.parentPath, entry.name), "utf8");
+    assert.doesNotMatch(text, /[=(,|] *\?\d/, entry.name);
   }
 });

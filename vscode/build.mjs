@@ -57,6 +57,17 @@ for (const name of readdirSync("grammars").filter((n) => n.endsWith(".wasm") || 
   copyFileSync(`grammars/${name}`, `out/${name}`);
 }
 
+// The generated JavaScript's runtime and server, copied next to the programs.
+mkdirSync("out/jsruntime", { recursive: true });
+for (const name of readdirSync("src/jsruntime")) copyFileSync(`src/jsruntime/${name}`, `out/jsruntime/${name}`);
+// Its pages draw the screens on tn3270's terminal, the same modules screen/page.js bundles.
+mkdirSync("out/jsruntime/tn3270", { recursive: true });
+// The VSIX types files by extension, so the license goes in as LICENSE.txt.
+for (const name of readdirSync("screen/vendor/tn3270").filter((n) => n.endsWith(".js"))) {
+  copyFileSync(`screen/vendor/tn3270/${name}`, `out/jsruntime/tn3270/${name}`);
+}
+copyFileSync("screen/vendor/tn3270/LICENSE", "out/jsruntime/tn3270/LICENSE.txt");
+
 await build({
   entryPoints: { extension: "src/extension.js", worker: "src/worker.js", parser: "src/parser.js", mcp: "src/mcp.js", graphpage: "src/graphpage.js" },
   outdir: "out",

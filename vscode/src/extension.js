@@ -183,6 +183,7 @@ export function activate(context) {
     vscode.commands.registerCommand("pliGraph.screenInput", () => showScreenInput(context)),
     vscode.commands.registerCommand("pliGraph.columnPath", () => showColumnPath(context)),
     vscode.commands.registerCommand("pliGraph.coverage", () => showCoverage(context)),
+    vscode.commands.registerCommand("pliGraph.generateJs", () => generateJavaScript(context)),
     vscode.commands.registerCommand("pliGraph.showScreen", (/** @type {vscode.Uri | undefined} */ uri) => showScreen(context, uri)),
     vscode.commands.registerCommand("pliGraph.tab", pliTab),
     registerMcpServer(context),
@@ -1504,6 +1505,85 @@ async function showCoverage(context) {
     await vscode.window.showTextDocument(opened, { viewColumn: vscode.ViewColumn.Active });
   } catch (error) {
     const text = `[PLG028E] The coverage report for ${name} failed: ${error instanceof Error ? error.message : error}`;
+    log.error(text);
+    void vscode.window.showErrorMessage(text);
+  } finally {
+    void worker.terminate();
+  }
+}
+
+/**
+ * Generates JavaScript from the graph into a folder the user picks: the
+ * programs of the IMS transactions, their screens and a server running
+ * them. Opens a summary with what was not translated.
+ * @param {vscode.ExtensionContext} context
+ */
+async function generateJavaScript(context) {
+  const document = vscode.window.activeTextEditor?.document;
+  const workspace = (document && locate(document.uri)?.workspace) ?? [...workspaces.values()][0];
+  if (!workspace?.graph) {
+    const message = sqliteError ?? workspace?.error ?? "[PLG058E] There is no graph to generate from yet: it is still being built, or no folder is open.";
+    log.error(message);
+    void vscode.window.showErrorMessage(message);
+    return;
+  }
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    openLabel: "Generate Here",
+    title: "The folder for the generated JavaScript",
+  });
+  const outDir = picked?.[0]?.fsPath;
+  if (!outDir) return;
+  const name = workspace.folder.name;
+  const started = Date.now();
+  log.info(`generating JavaScript for ${name} into ${outDir}`);
+  const worker = new Worker(join(context.extensionPath, "out", "graphpage.cjs"), {
+    workerData: { graph: workspace.graphFile, root: workspace.folder.uri.fsPath, grammars: join(context.extensionPath, "out") },
+  });
+  try {
+    const result = /** @type {ReturnType<typeof import("./tojs.js").generateJs>} */ (
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Generating JavaScript from ${name}…` }, () =>
+        new Promise((resolve, reject) => {
+          worker.on("message", (/** @type {import("./graphpage.js").PageAnswer} */ answer) => ("error" in answer ? reject(new Error(answer.error)) : resolve(/** @type {any} */ (answer.result))));
+          worker.on("error", reject);
+          worker.on("exit", (code) => reject(new Error(`the worker stopped with exit code ${code}`)));
+          worker.postMessage({ id: 0, what: "generateJs", args: [outDir] });
+        }),
+      )
+    );
+    const todos = result.programs.reduce((sum, p) => sum + p.todos.length, 0);
+    log.info(`generated ${result.programs.length} programs with ${todos} TODOs and ${result.jobs.length} jobs in ${Date.now() - started} ms`);
+    const lines = [
+      `# JavaScript generated from ${name}`,
+      "",
+      `In \`${outDir}\`: ${result.programs.length} programs, transactions ${result.transactions.join(", ") || "none"}.`,
+      "Run it with `npm install` and `npm start` there, with `DB2_CONNECTION` set to the Db2 connection string.",
+      "",
+      "| Program | Statements translated | TODOs |",
+      "| --- | ---: | ---: |",
+      ...result.programs.map((p) => `| ${p.member} | ${p.statements} | ${p.todos.length} |`),
+      "",
+      ...result.programs.flatMap((p) => (p.todos.length ? [`## ${p.member}`, "", ...p.todos.map((t) => `- ${p.path}:${t.line} ${t.why}`), ""] : [])),
+      ...(result.jobs.length
+        ? [
+            "## Batch jobs",
+            "",
+            "Run one with `node jobs/<JOB>.js`; its datasets are files under `DATASETS` (default `datasets`).",
+            "",
+            "| Job | TODOs |",
+            "| --- | ---: |",
+            ...result.jobs.map((j) => `| ${j.name} | ${j.todos.length} |`),
+            "",
+            ...result.jobs.flatMap((j) => (j.todos.length ? [`### ${j.name}`, "", ...j.todos.map((t) => `- ${j.path}:${t.line} ${t.why}`), ""] : [])),
+          ]
+        : []),
+    ];
+    const opened = await vscode.workspace.openTextDocument({ language: "markdown", content: lines.join("\n") });
+    await vscode.window.showTextDocument(opened, { viewColumn: vscode.ViewColumn.Active });
+  } catch (error) {
+    const text = `[PLG059E] Generating JavaScript for ${name} failed: ${error instanceof Error ? error.message : error}`;
     log.error(text);
     void vscode.window.showErrorMessage(text);
   } finally {

@@ -1,0 +1,29 @@
+--*****************************************************************
+--* KBT00001  KARTENBANK ONLINE-TABELLEN                          *
+--*   KB.KONTO       ONLINE-KOPIE DES KONTOSTAMMS (NACHTS GELADEN)*
+--*   KB.LIMIT_HIST  JEDE LIMITAENDERUNG AUS TRX KB02             *
+--* AENDERUNGEN                                                   *
+--*   2003-05-20  WBE  ERSTELT                                    *
+--*   2008-09-03  ALM  LIMIT_HIST                                 *
+--*****************************************************************
+CREATE TABLE KB.KONTO
+      (KTO_NR      CHAR(11)       NOT NULL,
+       KTO_ST      CHAR(1)        NOT NULL,
+       KTO_SLD     DECIMAL(10,2)  NOT NULL WITH DEFAULT,
+       KTO_KLIM    DECIMAL(10,2)  NOT NULL,
+       KTO_BLIM    DECIMAL(10,2)  NOT NULL,
+       KTO_ABDT    CHAR(8)        NOT NULL,
+       KTO_MAHN    SMALLINT       NOT NULL WITH DEFAULT,
+       KTO_KDNR    CHAR(9)        NOT NULL,
+       PRIMARY KEY (KTO_NR))
+  IN KBDB01.KBTS01;
+
+CREATE TABLE KB.LIMIT_HIST
+      (KTO_NR      CHAR(11)       NOT NULL,
+       AEND_DAT    DATE           NOT NULL,
+       LIM_ALT     DECIMAL(10,2)  NOT NULL,
+       LIM_NEU     DECIMAL(10,2)  NOT NULL,
+       BLIM_NEU    DECIMAL(10,2)  NOT NULL,
+       GRUND       CHAR(1)        NOT NULL,
+       LTERM       CHAR(8)        NOT NULL)
+  IN KBDB01.KBTS02;
