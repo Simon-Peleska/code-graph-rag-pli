@@ -205,6 +205,17 @@ the table icon on a DDL editor): a UML class diagram of its tables, views and
 aliases with their columns, keys and the foreign keys, FROMs and FORs between
 them, with the *Relations deep* slider adding other files' tables.
 
+Outside VS Code, `viz/build-graph-site.mjs` indexes a folder and writes the
+whole graph into one `graph.html` (`viz/site.template.html`, no server
+needed) for small repos; `--json` writes only the graph data:
+
+```sh
+node viz/build-graph-site.mjs SOURCES -o graph.html
+```
+
+It fails with `VIZ-001` when SOURCES is no folder and `VIZ-003` when
+indexing it failed.
+
 ## 3270 screens
 
 **PL/I Graph: Show 3270 Screen** shows an MFS format as the 3270 screen it
@@ -223,24 +234,3 @@ npm run build && node test/e2e/run.mjs <sources>   # the extension in a real VS 
 ```
 
 `npm run check` type-checks the JavaScript.
-
-## The code-graph-rag patch set
-
-The extension started out driving
-[code-graph-rag](https://github.com/vitali87/code-graph-rag) (cgr) in Python.
-`patches/0001-pli-support.patch` (against upstream `ed322ab`) still adds the
-same languages to cgr, and `viz/build_graph_site.py` turns an offline
-`cgr index` into a standalone `graph.html`, with the page from before it asked
-the extension (`viz/site.template.html`). Neither is used by the extension
-any more. To try them:
-
-```sh
-git clone https://github.com/vitali87/code-graph-rag upstream   # gitignored
-cd upstream && git checkout ed322ab
-git apply --index ../patches/0001-pli-support.patch
-git submodule update --init grammars/tree-sitter-pli grammars/tree-sitter-jcl \
-  grammars/tree-sitter-hlasm grammars/tree-sitter-db2
-nix develop .. -c uv sync --extra treesitter-full --extra test
-CGR_PLI_EXTENSIONLESS_MEMBERS=true uv run cgr index --repo-path /path/to/sources -o /tmp/idx
-uv run python ../viz/build_graph_site.py /tmp/idx -o ../graph.html
-```

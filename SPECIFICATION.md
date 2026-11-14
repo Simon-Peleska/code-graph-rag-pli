@@ -22,8 +22,9 @@ JCL, HLASM and Db2 siblings.
   targets may have moved are re-linked. Changes that arrive during a sync
   are synced together when it ends; there is no batching timer.
 
-The rest of this file is the original plan for adding PL/I to cgr, which
-the patch set in `patches/` implements. The grammar notes still hold.
+The rest of this file is the original plan for adding PL/I to cgr, the
+Python code-graph-rag the extension started from (its patch set is gone).
+The grammar notes still hold.
 
 ## The grammar: tree-sitter-pli
 
