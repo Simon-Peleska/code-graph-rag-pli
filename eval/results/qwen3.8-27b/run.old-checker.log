@@ -1,7 +1,0 @@
-[  0.0 min] model qwen3.8:27b, judge gemma4:31b, arms raw, harness, 38 gold rules
-[  0.0 min] raw: material 92439 characters
-[ 42.4 min] raw docs: 2541 s
-[ 64.8 min] raw app: 1345 s
-[ 64.8 min] raw: app crashed, one repair round
-[ 76.5 min] raw repair: 701 s
-[ 76.5 min] raw: 0/24 case steps pass, 0.0 % of lines

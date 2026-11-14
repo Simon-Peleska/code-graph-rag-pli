@@ -3,7 +3,7 @@
 //   raw      the model reads every PL/I member, copybook and JCL as they are
 //   harness  the model reads the harness's checked explanations of every
 //            procedure, the record layouts and the JCL
-// Each arm's docs then go, alone, to the model to build app.py, which runs
+// Each arm's docs then go, alone, to the model to build app.js, which runs
 // against the cases (check.mjs). A judge model scores the docs against the
 // gold rules (REGELN.md).
 //
@@ -34,7 +34,7 @@ const log = (text) => console.log(`[${((Date.now() - started) / 60000).toFixed(1
 // About 3 characters a token for this code and German text, plus room for the answer.
 const contextFor = (chars, answer) => Math.min(131072, Math.ceil((chars / 3 + answer) / 4096) * 4096);
 
-const DOCS = `You document a legacy PL/I batch system for a team that will rebuild it in Python without ever seeing the source.
+const DOCS = `You document a legacy PL/I batch system for a team that will rebuild it in JavaScript without ever seeing the source.
 Write Markdown. For each job step that runs in production:
 - the program, its input and output files (DD names), and every record layout with exact positions, lengths and formats (sign, implied decimal point, padding);
 - the processing in order, and every business rule exactly: conditions and their order, codes, message texts, constants, calculations, rounding, sort orders;
@@ -42,12 +42,12 @@ Write Markdown. For each job step that runs in production:
 Say which programs, jobs and code are dead, not scheduled, or only write to the log, so nobody rebuilds them.
 Only write what the material shows; say so where it is unclear.`;
 
-const APP = `Write app.py from the documentation below. Python 3, standard library only, run as:
-    python3 app.py STEP IN_DIR OUT_DIR
+const APP = `Write app.js from the documentation below. Node.js 24, an ES module using only Node's standard library, run as:
+    node app.js STEP IN_DIR OUT_DIR
 STEP is POST (program KBP00001), INTEREST (KBP00002) or STATEMENT (KBP00003) of job KBJ00001.
 Each input file is IN_DIR/<DD name> (for example IN_DIR/ACCTFILE): one record per line, trailing blanks removed, so pad a line to its record length.
 Write each output file as OUT_DIR/<DD name>, one record per line: POST writes ACCTOUT, TCATOUT, TRANOUT and REJECTS; INTEREST writes ACCTOUT and TRANOUT; STATEMENT writes ACCTOUT and STMTFILE. SYSPRINT is not needed.
-Answer with the complete program in one \`\`\`python block.`;
+Answer with the complete program in one \`\`\`javascript block.`;
 
 const JUDGE = `You grade documentation of a batch system against the gold list of its rules, written by an expert.
 For every rule id in the gold list (P-.., I-.., S-.., D-..) say whether the documentation states it:
@@ -69,7 +69,7 @@ const JUDGE_SCHEMA = {
 
 const read = (path) => readFileSync(path, "latin1");
 const files = (folder) => readdirSync(join(root, folder)).sort().map((name) => ({ name: `${folder}/${name}`, text: read(join(root, folder, name)) }));
-const python = (reply) => (/```python\n([^]*?)```/.exec(reply) ?? /```\n([^]*?)```/.exec(reply))?.[1] ?? reply;
+const javascript = (reply) => (/```(?:javascript|js|mjs)\n([^]*?)```/.exec(reply) ?? /```\n([^]*?)```/.exec(reply))?.[1] ?? reply;
 const timed = async (label, work) => {
   const at = Date.now();
   const value = await work();
@@ -158,22 +158,22 @@ for (const arm of arms) {
     client({ url, model, schema: null, contextTokens: contextFor(context.length, 12000), maxTokens: 12000 })(
       [{ role: "system", content: DOCS }, { role: "user", content: context }]));
 
-  const appMessages = [{ role: "system", content: "You write Python programs from documentation." }, { role: "user", content: `${APP}\n\n# Documentation\n\n${docs}` }];
+  const appMessages = [{ role: "system", content: "You write JavaScript programs from documentation." }, { role: "user", content: `${APP}\n\n# Documentation\n\n${docs}` }];
   const appClient = client({ url, model, schema: null, contextTokens: contextFor(docs.length, 16000), maxTokens: 14000 });
-  const first = await stage("app", "app.first.py", async () => python(await appClient(appMessages)));
-  let score = existsSync(at("check.first.json")) ? JSON.parse(read(at("check.first.json"))) : check(at("app.first.py"));
+  const first = await stage("app", "app.first.js", async () => javascript(await appClient(appMessages)));
+  let score = existsSync(at("check.first.json")) ? JSON.parse(read(at("check.first.json"))) : check(at("app.first.js"));
   writeFileSync(at("check.first.json"), JSON.stringify(score, null, 2));
   const crash = Object.values(score.steps).flatMap((s) => s.errors).find((e) => e.startsWith("CHK001E"));
 
   if (crash) {
     log(`${arm}: app crashed, one repair round`);
     const repairClient = client({ url, model, schema: null, contextTokens: contextFor(docs.length + first.length + crash.length, 16000), maxTokens: 14000 });
-    await stage("repair", "app.py", async () => python(await repairClient([...appMessages,
-      { role: "assistant", content: "```python\n" + first + "```" },
-      { role: "user", content: `It crashed:\n${crash}\nAnswer with the complete fixed program in one \`\`\`python block.` }])));
-    score = check(at("app.py"));
-  } else if (!existsSync(at("app.py"))) {
-    writeFileSync(at("app.py"), first);
+    await stage("repair", "app.js", async () => javascript(await repairClient([...appMessages,
+      { role: "assistant", content: "```javascript\n" + first + "```" },
+      { role: "user", content: `It crashed:\n${crash}\nAnswer with the complete fixed program in one \`\`\`javascript block.` }])));
+    score = check(at("app.js"));
+  } else if (!existsSync(at("app.js"))) {
+    writeFileSync(at("app.js"), first);
   }
   writeFileSync(at("check.json"), JSON.stringify(score, null, 2));
   log(`${arm}: ${score.passed}/${score.cases} case steps pass, ${(score.lineScore * 100).toFixed(1)} % of lines`);

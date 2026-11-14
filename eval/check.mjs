@@ -1,5 +1,6 @@
 // Score a rebuilt Kartenbank application against the generated cases.
-//   node check.mjs <app.py> [cases_dir]   -> prints the score as JSON
+//   node check.mjs <app.js> [cases_dir]   -> prints the score as JSON
+// An app.py, such as the reference, runs with python3, anything else with node.
 // A case step passes when every output file matches line by line
 // (trailing blanks ignored). Lines are scored too, for partial credit.
 import { execFileSync } from "node:child_process";
@@ -21,7 +22,7 @@ export function check(app, casesDir = join(import.meta.dirname, "kartenbank/case
       let crashed = null;
       let failure = null;
       try {
-        execFileSync("python3", [app, step, join(casesDir, name, step, "in"), out], { timeout, stdio: "pipe" });
+        execFileSync(app.endsWith(".py") ? "python3" : process.execPath, [app, step, join(casesDir, name, step, "in"), out], { timeout, stdio: "pipe" });
       } catch (e) {
         // Return code 4 is a warning, as on z/OS: KBP00001 ends with it when it rejected a transaction.
         if (e.status !== 4) failure = e;
@@ -29,7 +30,9 @@ export function check(app, casesDir = join(import.meta.dirname, "kartenbank/case
       if (failure) {
         const said = failure.stderr?.toString().trim();
         const how = failure.signal ? `killed by ${failure.signal}${failure.signal === "SIGTERM" ? ` (over ${timeout / 1000} s)` : ""}` : `exit status ${failure.status}`;
-        crashed = said ? said.split("\n").slice(-6).join("\n") : `${how}, nothing on stderr`;
+        // Python's traceback ends with the error, Node's stack trace starts with it.
+        const lines = said ? said.split("\n") : undefined;
+        crashed = lines ? (app.endsWith(".py") ? lines.slice(-6) : lines.slice(0, 6)).join("\n") : `${how}, nothing on stderr`;
         s.errors.push(`CHK001E ${name}/${step} crashed: ${crashed}`);
       }
       let ok = !crashed;
