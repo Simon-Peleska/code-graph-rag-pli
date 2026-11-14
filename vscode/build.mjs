@@ -3,7 +3,7 @@
 // load, graph.html, the graph website's page with vscode-elements and Cytoscape inlined, and
 // screen.html, the 3270 screen page. The extension fills in __PROJECT__ and __SCREEN_JSON__.
 //
-//   node build.mjs [--minify]
+//   node build.mjs
 
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { build } from "esbuild";
@@ -22,7 +22,6 @@ const elements = await build({
   bundle: true,
   format: "iife",
   target: "chrome120",
-  minify: true,
   write: false,
   logLevel: "warning",
 });
@@ -43,7 +42,6 @@ const screenScript = await build({
   bundle: true,
   format: "iife",
   target: "chrome120",
-  minify: true,
   write: false,
   logLevel: "warning",
 });
@@ -80,6 +78,5 @@ await build({
   // its ES module build would look for it at an import.meta.url a bundle lacks.
   alias: { "web-tree-sitter": "./node_modules/web-tree-sitter/web-tree-sitter.cjs" },
   external: ["vscode"],
-  minify: process.argv.includes("--minify"),
   logLevel: "warning",
 });

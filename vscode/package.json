@@ -363,7 +363,7 @@
     "build": "node build.mjs",
     "check": "tsc --noEmit",
     "test": "node --import ./test/plans.js --test \"test/*.test.*\" \"../viz/*.test.mjs\"",
-    "package": "npm run check && node build.mjs --minify && node package-vsix.mjs"
+    "package": "npm run check && node build.mjs && node package-vsix.mjs"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
