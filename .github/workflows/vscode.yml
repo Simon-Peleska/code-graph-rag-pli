@@ -31,11 +31,16 @@ jobs:
         with:
           node-version: 24
 
+      # Pushed builds become releases the installed extension updates itself
+      # from; a local build stays 0.0.0 and never updates.
       - name: Check, test and package
         working-directory: vscode
         run: |
           npm ci
           npm test
+          if [ "${{ github.event_name }}" = push ]; then
+            npm version --no-git-tag-version "0.1.${{ github.run_number }}"
+          fi
           npm run package
           ls -l pli-graph.vsix
 
@@ -66,3 +71,21 @@ jobs:
         with:
           name: pli-graph-vsix
           path: vscode/pli-graph.vsix
+
+  release:
+    needs: extension
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pli-graph-vsix
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v0.1.${{ github.run_number }}" pli-graph.vsix \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" \
+            --title "0.1.${{ github.run_number }}" --notes "Build of ${{ github.sha }}."

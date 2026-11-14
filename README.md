@@ -13,7 +13,7 @@ to WebAssembly, which are separate projects:
 The extension is plain JavaScript (types in JSDoc, checked by `tsc`), so one
 `pli-graph.vsix` of about 600 KB serves every platform and needs nothing
 else installed. What it does, its settings, the graph's tables and the error
-codes (`PLG004E`-`PLG083E`) are in [`vscode/README.md`](vscode/README.md).
+codes (`PLG004E`-`PLG084W`) are in [`vscode/README.md`](vscode/README.md).
 
 ## What ends up in the graph
 
@@ -122,7 +122,8 @@ npm run package        # type check, bundle, write pli-graph.vsix
 Install it with **Extensions → ... → Install from VSIX**. Every push to
 `main`/`master` also builds it (`.github/workflows/vscode.yml`, artifact
 `pli-graph-vsix`) and opens it on Windows and Linux in a real VS Code with no
-settings.
+settings, then publishes it as GitHub release `v0.1.<build>`, which installed
+copies update themselves from when `pliGraph.autoUpdate` is on.
 
 The grammars are committed as `vscode/grammars/*.wasm`, each with a copy of
 its `highlights.scm`;

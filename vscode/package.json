@@ -2,7 +2,7 @@
   "name": "pli-graph",
   "displayName": "PL/I Graph",
   "description": "PL/I, JCL, IMS MFS and Db2 highlighting, Go to Definition, references and dependency trees from a code graph the extension keeps in sync with your files.",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "local",
   "license": "MIT",
   "private": true,
@@ -316,6 +316,12 @@
     "configuration": {
       "title": "PL/I Graph",
       "properties": {
+        "pliGraph.autoUpdate": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "markdownDescription": "Install new versions of the extension from its GitHub releases by itself (off by default), on start and every 6 hours. A local build (version `0.0.0`) never updates."
+        },
         "pliGraph.extensionlessMembers": {
           "type": "boolean",
           "default": true,

@@ -3,7 +3,7 @@
 // sync with the files; the extension only reads it.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch as watchFolder } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch as watchFolder, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -114,14 +114,27 @@ export function activate(context) {
         settle = setTimeout(() => {
           const newer = readdirSync(installed).find((folder) => folder.toLowerCase().startsWith(prefix) && bundleTime(folder) > running);
           if (!newer) return;
-          log.info(`${newer} was installed; restarting the extensions to run it`);
-          vscode.commands.executeCommand("workbench.action.restartExtensionHost");
+          // Restarting the extension host loads the folder the window knows of, so a
+          // new version, in a new folder, needs the window reloaded to be found.
+          const sameFolder = newer === basename(context.extensionPath);
+          log.info(`${newer} was installed; ${sameFolder ? "restarting the extensions" : "reloading the window"} to run it`);
+          vscode.commands.executeCommand(sameFolder ? "workbench.action.restartExtensionHost" : "workbench.action.reloadWindow");
         }, 2000);
       });
       context.subscriptions.push({ dispose: () => (watcher.close(), clearTimeout(settle)) });
     } catch (error) {
       log.warn(`[PLG048W] Watching ${installed} for updates of the extension failed; restart VS Code after an update.`, error);
     }
+  }
+
+  // Updates come from the GitHub release CI makes of each master build, as
+  // they would from a marketplace; the watcher above then restarts us.
+  const version = String(context.extension.packageJSON.version);
+  if (context.extensionMode === vscode.ExtensionMode.Production && version !== LOCAL_BUILD) {
+    const check = () => void updateFromGitHub(context, version);
+    check();
+    const timer = setInterval(check, 6 * 60 * 60 * 1000);
+    context.subscriptions.push({ dispose: () => clearInterval(timer) });
   }
 
   const grammars = createHighlighter(join(context.extensionPath, "out")).catch((error) => {
@@ -1512,8 +1525,50 @@ async function showCoverage(context) {
   }
 }
 
+/** The version of a build packaged by hand, which never updates itself; CI gives its builds 0.1.<run>. */
+const LOCAL_BUILD = "0.0.0";
+const LATEST_RELEASE = "https://api.github.com/repos/Simon-Peleska/pli-graph/releases/latest";
+
+/** @param {string} a @param {string} b whether version a is after b */
+const isAfter = (a, b) => {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+
 /**
- * Generates JavaScript from the graph into a folder the user picks: the
+ * Installs the latest GitHub release when it is newer than the running version.
+ * @param {vscode.ExtensionContext} context
+ * @param {string} running
+ */
+async function updateFromGitHub(context, running) {
+  if (!vscode.workspace.getConfiguration("pliGraph").get("autoUpdate", false)) return;
+  log.info(`checking ${LATEST_RELEASE} for a version after ${running}`);
+  try {
+    const response = await fetch(LATEST_RELEASE, { headers: { accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`${LATEST_RELEASE} answered ${response.status}`);
+    const release = /** @type {{ tag_name: string, assets: { name: string, browser_download_url: string }[] }} */ (await response.json());
+    const latest = release.tag_name.replace(/^v/, "");
+    const asset = release.assets.find((a) => a.name.endsWith(".vsix"));
+    if (!asset || !isAfter(latest, running)) {
+      log.info(`the latest release is ${latest}, running ${running}: no update`);
+      return;
+    }
+    log.info(`installing ${latest} from ${asset.browser_download_url} over ${running}`);
+    const download = await fetch(asset.browser_download_url, { signal: AbortSignal.timeout(120_000) });
+    if (!download.ok) throw new Error(`${asset.browser_download_url} answered ${download.status}`);
+    mkdirSync(context.globalStorageUri.fsPath, { recursive: true });
+    const vsix = join(context.globalStorageUri.fsPath, "update.vsix");
+    writeFileSync(vsix, Buffer.from(await download.arrayBuffer()));
+    await vscode.commands.executeCommand("workbench.extensions.installExtension", vscode.Uri.file(vsix));
+  } catch (error) {
+    log.warn(`[PLG084W] Updating the extension from GitHub failed; it keeps running ${running}.`, error);
+  }
+}
+
+/**
+ * Generates JavaScript from the graph into generated/JS in the workspace folder: the
  * programs of the IMS transactions, their screens and a server running
  * them. Opens a summary with what was not translated.
  * @param {vscode.ExtensionContext} context

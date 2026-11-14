@@ -442,6 +442,13 @@ output.
 `pliGraph.format.abbreviations` (`short`, `long`, `keep`) set how Format
 Document writes words, as above.
 
+Updates come like a marketplace extension's, without a marketplace: every
+push to `master` makes a GitHub release `v0.1.<build>` with the package, and
+the installed extension checks for a newer one on start and every 6 hours,
+installs it and reloads the window, once `pliGraph.autoUpdate` is on (it is
+off by default). Install the first release by hand. A package built
+locally has version `0.0.0` and never updates itself.
+
 Needs VS Code 1.101 or newer, whose Node has `node:sqlite`.
 
 ### The graph's tables
@@ -806,6 +813,8 @@ so on them only the silent gaps apply.
   key; the status row and the browser console have the cause.
 - `PLG083E` Generated JavaScript's server: a request failed, such as a body
   that is not JSON; the log has the error.
+- `PLG084W` Checking GitHub for a newer release, or installing it, failed;
+  the extension keeps its version and tries again in 6 hours.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the
