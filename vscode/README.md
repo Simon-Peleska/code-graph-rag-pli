@@ -820,6 +820,16 @@ so on them only the silent gaps apply.
   outermost procedure is.
 - `PLG086E` Generate JavaScript: translating one program failed; it is left
   out, the others are generated, and the summary has the stack trace.
+- `PLG087W` Generate JavaScript found no IMS transaction: the repo has no
+  `TRANSACT` of a system definition, and no MFS input message names a PL/I
+  program. The warning lists the codes the input messages do start with.
+  Without a system definition, a screen whose input message's first `MFLD`
+  is `'AEK00400'` makes `AEK00400` a transaction, run by the PL/I program
+  `AEK00400`, or else by the one program that differs from it only in the
+  third character, the member type, such as `AES00400`.
+- `PLG088W` Generate JavaScript: an MFS input message sends a transaction
+  code, but no PL/I program is named like it or differs from it only in the
+  third character; the transaction is left out.
 
 The graph page's own codes: `VIZ-101` the id in the URL is not in the graph,
 `VIZ-102` a view could not be drawn, `VIZ-103` the details, `VIZ-104` the

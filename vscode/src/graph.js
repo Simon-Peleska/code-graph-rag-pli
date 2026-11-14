@@ -2338,11 +2338,11 @@ export class Graph {
   textSearch(text) {
     return /** @type {{ what: string, name: string | null, kind: string | null, detail: string | null, target: string | null, text: string, caller: string | null, path: string, line: number }[]} */ (
       this.all(
-        `SELECT 'procedure' AS what, s.name, NULL AS kind, NULL AS detail, NULL AS target, s.comment AS text, NULL AS caller, f.path, s.line
-         FROM symbols s JOIN files f ON f.id = s.file WHERE s.comment LIKE '%' || ? || '%'
+        `SELECT 'procedure' AS what, s.name, NULL AS kind, NULL AS detail, NULL AS target, replace(s.comment, char(10), ' ') AS text, NULL AS caller, f.path, s.line
+         FROM symbols s JOIN files f ON f.id = s.file WHERE replace(s.comment, char(10), ' ') LIKE '%' || ? || '%'
          UNION ALL
-         SELECT 'variable', v.qualified, NULL, NULL, NULL, v.comment, NULL, f.path, v.line
-         FROM variables v JOIN files f ON f.id = v.file WHERE v.comment LIKE '%' || ? || '%'
+         SELECT 'variable', v.qualified, NULL, NULL, NULL, replace(v.comment, char(10), ' '), NULL, f.path, v.line
+         FROM variables v JOIN files f ON f.id = v.file WHERE replace(v.comment, char(10), ' ') LIKE '%' || ? || '%'
          UNION ALL
          SELECT 'literal', NULL, s.kind, s.detail,
            (SELECT a.name FROM accesses a WHERE a.statement = s.id AND a.mode = 'write' LIMIT 1), l.text, p.name, f.path, s.line

@@ -308,7 +308,7 @@ import { mfsFields } from "./mfs.js";
  */
 
 // Raise it whenever the indexer reads something new; graphs of an older one are read again.
-const INDEXER_VERSION = 27;
+const INDEXER_VERSION = 28;
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -1638,7 +1638,7 @@ function readPli(root, file, db2) {
           .split("\n")
           .map((line) => line.replace(/^[\s*=-]+|[\s*=-]+$/g, ""))
           .filter((line) => line)
-          .join(" ");
+          .join("\n");
         // A box line has no text but still joins the block.
         comments.push({ line: node.startPosition.row + 1, endLine: node.endPosition.row + 1, text: body, trailing: text.source.slice(lineStart, start).trim() !== "" });
         continue;
@@ -1690,19 +1690,19 @@ function readPli(root, file, db2) {
   const trailingAt = new Map();
   for (const c of comments) {
     if (c.trailing && !c.text) continue;
-    if (c.trailing) trailingAt.set(c.line, [trailingAt.get(c.line), c.text].filter(Boolean).join(" "));
+    if (c.trailing) trailingAt.set(c.line, [trailingAt.get(c.line), c.text].filter(Boolean).join("\n"));
     else aboveByEnd.set(c.endLine, c);
   }
   /** @param {number} line */
   const above = (line) => {
     const block = [];
     for (let c = aboveByEnd.get(line - 1); c; c = aboveByEnd.get(c.line - 1)) if (c.text) block.unshift(c.text);
-    return block.length ? block.join(" ") : null;
+    return block.length ? block.join("\n") : null;
   };
   for (const symbol of file.symbols) symbol.comment = above(symbol.line);
   for (const v of file.variables) {
     if (v.storage === "PARAMETER" && !v.attributes) continue;
-    v.comment = [above(v.line), trailingAt.get(v.line)].filter(Boolean).join(" ") || null;
+    v.comment = [above(v.line), trailingAt.get(v.line)].filter(Boolean).join("\n") || null;
   }
 }
 

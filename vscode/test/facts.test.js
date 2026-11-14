@@ -533,7 +533,7 @@ test("accesses resolve to the variable they name, by scope, include, qualificati
 
 test("comments describe procedures and declarations, literals are kept with their statement", () => {
   assert.deepEqual(rows(`SELECT name, comment, line FROM symbols WHERE comment IS NOT NULL ORDER BY id`), [
-    { name: "KDP00009", comment: "KDP00009: SPERRPRUEFUNG PRUEFT, OB EIN KUNDE GESPERRT IST", line: 5 },
+    { name: "KDP00009", comment: "KDP00009: SPERRPRUEFUNG\nPRUEFT, OB EIN KUNDE GESPERRT IST", line: 5 },
     { name: "PROTO", comment: "PROTOKOLL", line: 19 },
     { name: "KDP00010", comment: "KDP00010: MONATSABSCHLUSS MIT ALTLASTEN", line: 2 },
     { name: "KDP00011", comment: "KDP00011: KUNDE ANLEGEN", line: 2 },

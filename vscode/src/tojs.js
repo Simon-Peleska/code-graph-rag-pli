@@ -226,6 +226,16 @@ function constant(text) {
 }
 
 /**
+ * A JSDoc comment, on as many lines as the text has.
+ * @param {string} text @param {number} depth the indentation of the lines after the first
+ */
+function jsdoc(text, depth) {
+  if (!text.includes("\n")) return `/** ${text} */`;
+  const indent = "  ".repeat(depth);
+  return ["/**", ...text.split("\n").map((line) => `${indent} * ${line}`), `${indent} */`].join("\n");
+}
+
+/**
  * Where an SQL statement's host variables are: each `:name`, with its
  * indicator variable, outside string literals.
  * @param {string} text
@@ -762,7 +772,10 @@ function programToJs(db, root, indexer, path) {
       const inner = [];
       for (const field of children.get(v.id) ?? []) {
         if (NOT_DATA.has(field.type ?? "")) continue;
-        if (!bare) inner.push(`${"  ".repeat(depth + 1)}/** ${field.type === "STRUCTURE" ? "" : `@type {${jsdocType(field)}} `}${field.attributes}${field.comment ? ` ${field.comment}` : ""} */`);
+        if (!bare) {
+          const doc = `${field.type === "STRUCTURE" ? "" : `@type {${jsdocType(field)}} `}${field.attributes}${field.comment ? ` ${field.comment}` : ""}`;
+          inner.push(`${"  ".repeat(depth + 1)}${jsdoc(doc, depth + 1)}`);
+        }
         inner.push(`${"  ".repeat(depth + 1)}${keys.get(field.id)}: ${initial(field, depth + 1, at, bare, index)},`);
       }
       value = `{\n${inner.join("\n")}\n${"  ".repeat(depth)}}`;
@@ -808,7 +821,7 @@ function programToJs(db, root, indexer, path) {
     const value = initial(v, 0, at);
     factories.set(
       js(v.name),
-      `/** ${kindOf(v) === "structure" ? "" : `@returns {${jsdocType(v)}} `}${doc} */\nexport const ${js(v.name)} = () => ${value.startsWith("{") ? `(${value})` : value};`,
+      `${jsdoc(`${kindOf(v) === "structure" ? "" : `@returns {${jsdocType(v)}} `}${doc}`, 0)}\nexport const ${js(v.name)} = () => ${value.startsWith("{") ? `(${value})` : value};`,
     );
     return `${js(member)}.${js(v.name)}()`;
   };
@@ -851,8 +864,8 @@ function programToJs(db, root, indexer, path) {
       return;
     }
     const doc = [v.storage === "IMPLICIT" ? "implicitly declared" : v.attributes, v.comment].filter(Boolean).join(" ");
-    if (kindOf(v) !== "structure") emit(depth, `/** @type {${jsdocType(v)}} ${doc} */`);
-    else if (doc) emit(depth, `/** ${doc} */`);
+    if (kindOf(v) !== "structure") emit(depth, jsdoc(`@type {${jsdocType(v)}} ${doc}`, depth));
+    else if (doc) emit(depth, jsdoc(doc, depth));
     const base = v.storage === "BASED" && v.base ? parameters.get(v.base.toUpperCase()) : undefined;
     if (base && pcbDbds.has(v.name.toUpperCase())) {
       emit(depth, `let ${js(v.name)} = ${js(base.name)} ?? ${initialOf(v, depth, at)};`);
@@ -1720,7 +1733,8 @@ function programToJs(db, root, indexer, path) {
       // while they run, but not the one they are in.
       for (const [entry, names] of [[name, parameters], ...entries.map((e) => [e.name, e.parameters])]) {
         const list = /** @type {string[]} */ (names).map(js).join(", ");
-        emit(depth, `/** ${entry === name ? (comment ?? name).split("\n").map((t) => t.trim()).join(" ") : `ENTRY of ${name}`}`);
+        emit(depth, "/**");
+        for (const text of entry === name ? (comment ?? name).split("\n") : [`ENTRY of ${name}`]) emit(depth, ` * ${text.trim()}`);
         jsdocParams(/** @type {string[]} */ (names));
         emit(depth, " */");
         emit(depth, `${exported}async function ${js(/** @type {string} */ (entry))}(${list}) {`);
@@ -1865,14 +1879,25 @@ function programToJs(db, root, indexer, path) {
       case "assignment_statement":
         return assignment(node, depth, at);
       case "if_statement": {
-        emit(depth, `if (${expr(/** @type {Node} */ (node.childForFieldName("condition")), at).code}) {`);
-        body(/** @type {Node} */ (node.childForFieldName("consequence")), depth + 1, at);
+        const consequence = /** @type {Node} */ (node.childForFieldName("consequence"));
         const alternative = node.childForFieldName("alternative");
+        // A comment between THEN, ELSE and their statements goes with the statement after it.
+        const comments = node.namedChildren.filter((c) => c?.type === "comment");
+        /** @param {number} from @param {number} to @param {number} at */
+        const commentsBetween = (from, to, at) => {
+          for (const c of comments) if (c && c.startIndex >= from && c.startIndex < to) translate(c, at, outer);
+        };
+        emit(depth, `if (${expr(/** @type {Node} */ (node.childForFieldName("condition")), at).code}) {`);
+        commentsBetween(node.startIndex, consequence.startIndex, depth + 1);
+        body(consequence, depth + 1, at);
         if (alternative) {
           emit(depth, "} else {");
+          commentsBetween(consequence.endIndex, alternative.startIndex, depth + 1);
           body(alternative, depth + 1, at);
         }
-        return emit(depth, "}");
+        emit(depth, "}");
+        commentsBetween((alternative ?? consequence).endIndex, node.endIndex, depth);
+        return;
       }
       case "do_statement":
         return doLoop(node, depth, at, null);
@@ -2599,19 +2624,63 @@ function sqliteDdl(db, root, databases) {
  *   progress: told each step, what is skipped and what failed
  */
 export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join(templates, "tn3270"), paths, jobs, progress = () => {} }) {
-  const transactions = /** @type {{ code: string, program: string }[]} */ (
+  /** The files named like the program, else those whose outermost procedure is; several when the repo keeps copies. @param {string} member */
+  const copiesOf = (member) => {
+    const named = /** @type {{ path: string }[]} */ (db.prepare(`SELECT path FROM files WHERE member = ? AND language = 'pli' ORDER BY path`).all(member));
+    const copies = named.length
+      ? named
+      : /** @type {{ path: string }[]} */ (
+          db
+            .prepare(`SELECT f.path FROM symbols s JOIN files f ON f.id = s.file WHERE s.name = ? AND s.kind = 'procedure' AND s.parent IS NULL AND f.language = 'pli' ORDER BY f.path`)
+            .all(member)
+        );
+    return copies.map((c) => c.path);
+  };
+  /** @param {string} member */
+  const pathOfMember = (member) => copiesOf(member)[0];
+
+  const fromSysdef = /** @type {{ code: string, program: string }[]} */ (
     db
       .prepare(`SELECT t.name AS code, r.name AS program FROM symbols t JOIN refs r ON r.caller = t.id AND r.kind = 'program' WHERE t.kind = 'transaction' ORDER BY t.name`)
       .all()
   );
-  /** The file named like the program, else the one whose outermost procedure is. @param {string} member */
-  const pathOfMember = (member) =>
-    /** @type {{ path: string } | undefined} */ (
-      db.prepare(`SELECT path FROM files WHERE member = ? AND language = 'pli' ORDER BY path LIMIT 1`).get(member) ??
-        db
-          .prepare(`SELECT f.path FROM symbols s JOIN files f ON f.id = s.file WHERE s.name = ? AND s.kind = 'procedure' AND s.parent IS NULL AND f.language = 'pli' ORDER BY f.path LIMIT 1`)
-          .get(member)
-    )?.path;
+  // The input message of a transaction starts with its code, an MFLD literal.
+  const inputs = /** @type {{ message: string, path: string, literal: string }[]} */ (
+    db
+      .prepare(
+        `SELECT m.name AS message, f.path, d.literal FROM mfs_fields d JOIN symbols m ON m.id = d.screen JOIN files f ON f.id = m.file
+         WHERE d.kind = 'MFLD' AND d.literal IS NOT NULL AND m.kind = 'message' AND m.detail = 'INPUT' AND d.id = (SELECT min(id) FROM mfs_fields WHERE screen = m.id)
+         ORDER BY f.path, m.line`,
+      )
+      .all()
+  ).map((i) => ({ ...i, code: i.literal.trim().split(/\s+/)[0].toUpperCase() }));
+  /**
+   * The program of a transaction an input screen sends: the member named like
+   * its code, else the one only its third character, the type letter of
+   * member names, tells apart, as AES00400 of AEK00400.
+   * @param {string} code
+   */
+  const programOf = (code) => {
+    if (pathOfMember(code)) return code;
+    if (code.length < 4) return undefined;
+    const alike = /** @type {{ member: string }[]} */ (
+      db.prepare(`SELECT DISTINCT member FROM files WHERE language = 'pli' AND member LIKE ? AND member <> ?`).all(`${code.slice(0, 2)}_${code.slice(3)}`, code)
+    );
+    if (alike.length > 1) progress(`transaction ${code}: several programs differ from it only in the third character, ${alike.map((a) => a.member).join(", ")}; it is left out`);
+    return alike.length === 1 ? alike[0].member : undefined;
+  };
+  // Without a system definition in the repo, the code an input screen sends is the transaction.
+  const codesOnScreens = [...new Set(inputs.map((i) => i.code))];
+  const known = new Set(fromSysdef.map((t) => t.code));
+  /** @type {string[]} */
+  const unmatched = [];
+  const fromScreens = codesOnScreens.flatMap((code) => {
+    if (known.has(code)) return [];
+    const program = programOf(code);
+    if (!program) unmatched.push(code);
+    return program ? [{ code, program }] : [];
+  });
+  const transactions = [...fromSysdef, ...fromScreens].sort((a, b) => a.code.localeCompare(b.code));
   const jobIds = /** @type {{ id: number }[]} */ (
     jobs
       ? db.prepare(`SELECT s.id FROM symbols s JOIN files f ON f.id = s.file WHERE s.kind = 'job' AND f.path IN (SELECT value FROM json_each(?)) ORDER BY s.name`).all(JSON.stringify(jobs))
@@ -2620,17 +2689,31 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
         : db.prepare(`SELECT id FROM symbols WHERE kind = 'job' ORDER BY name`).all()
   ).map((j) => jobToJs(db, root, j.id, pathOfMember));
   const batch = jobs ? jobIds : jobIds.filter((j) => j.programs.length);
-  progress(`${transactions.length} transactions and ${batch.length} batch jobs with PL/I programs in the graph`);
+  progress(
+    `${fromSysdef.length} transactions from the IMS system definition, ${fromScreens.length} more named by the ${inputs.length} MFS input messages, and ${batch.length} batch jobs with PL/I programs in the graph`,
+  );
+  for (const code of jobs || paths || !transactions.length ? [] : unmatched) {
+    const screens = [...new Set(inputs.filter((i) => i.code === code).map((i) => `${i.path} ${i.message}`))];
+    progress(`[PLG088W] the input screen ${screens.join(", ")} sends ${code}, but no PL/I program is named like it or differs from it only in the third character; it is left out`);
+  }
+  if (!transactions.length && !jobs && !paths) {
+    const named = codesOnScreens.length ? `, they name ${codesOnScreens.slice(0, 20).join(", ")}${codesOnScreens.length > 20 ? ", ..." : ""}` : "";
+    progress(
+      `[PLG087W] no IMS transactions: no TRANSACT in a system definition, and no MFS input message starts with a literal naming a PL/I program, or one differing from it only in the third character${named}`,
+    );
+  }
   /** @type {{ code: string, program: string, why: string }[]} */
   const skipped = [];
   /** @type {string[]} */
   const transactionPaths = [];
   for (const t of jobs || paths ? [] : transactions) {
-    const path = pathOfMember(t.program);
-    if (path) transactionPaths.push(path);
+    const copies = copiesOf(t.program);
+    if (copies.length > 1) progress(`transaction ${t.code}: ${t.program} is in ${copies.length} files, ${copies.join(", ")}; using ${copies[0]}`);
+    if (copies.length) transactionPaths.push(copies[0]);
     else skipped.push({ code: t.code, program: t.program, why: `no PL/I member ${t.program}` });
   }
   for (const s of skipped) progress(`[PLG085W] transaction ${s.code} is skipped: ${s.why}`);
+  for (const code of jobs || paths ? [] : unmatched) skipped.push({ code, program: "?", why: "no PL/I program named like it or differing from it only in the third character" });
   const programPaths = [...new Set([...(paths ?? transactionPaths), ...batch.flatMap((j) => j.programs)])];
 
   mkdirSync(join(outDir, "programs"), { recursive: true });
@@ -2643,11 +2726,17 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
   const includeModules = new Map();
   const queue = [...programPaths];
   const done = new Set(queue);
-  /** @type {{ path: string, error: string }[]} */
+  /** @type {{ path: string, member: string, error: string }[]} */
   const failures = [];
   while (queue.length) {
     const path = /** @type {string} */ (queue.shift());
     const member = /** @type {{ member: string }} */ (db.prepare(`SELECT member FROM files WHERE path = ?`).get(path)).member;
+    // Copies of a member in several folders would all write programs/<member>.js.
+    const twin = programs.find((p) => p.member === member) ?? failures.find((f) => f.member === member);
+    if (twin) {
+      progress(`skipping ${path}: ${member} is already translated from ${twin.path}`);
+      continue;
+    }
     const started = Date.now();
     progress(`translating ${path} (${programs.length + failures.length + 1} of ${done.size})`);
     let translated;
@@ -2655,7 +2744,7 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
       translated = programToJs(db, root, indexer, path);
     } catch (error) {
       const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
-      failures.push({ path, error: text });
+      failures.push({ path, member, error: text });
       progress(`[PLG086E] translating ${path} failed, the program is left out: ${text}`);
       continue;
     }
@@ -2701,17 +2790,14 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
     ].join("\n"),
   );
 
-  // The input message of a transaction starts with its code, an MFLD literal.
-  const inputs = /** @type {{ message: string, path: string, literal: string }[]} */ (
-    db
-      .prepare(
-        `SELECT m.name AS message, f.path, d.literal FROM mfs_fields d JOIN symbols m ON m.id = d.screen JOIN files f ON f.id = m.file
-         WHERE d.kind = 'MFLD' AND d.literal IS NOT NULL AND m.kind = 'message' AND m.detail = 'INPUT' AND d.id = (SELECT min(id) FROM mfs_fields WHERE screen = m.id)`,
-      )
-      .all()
-  );
-  /** @type {Set<string>} */
-  const screenFiles = new Set();
+  /** @param {string} a @param {string} b */
+  const sharedPrefix = (a, b) => {
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i++;
+    return i;
+  };
+  /** @type {Map<string, string>} the MFS file of each screen module, one per name when the repo keeps copies */
+  const screenFiles = new Map();
   const generated = [];
   for (const transaction of transactions) {
     const path = pathOfMember(transaction.program);
@@ -2721,14 +2807,15 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
       if (failed) skipped.push({ code: transaction.code, program: transaction.program, why: `translating ${failed.path} failed` });
       continue;
     }
-    const input = inputs.find((i) => i.literal.trim().split(/\s+/)[0] === transaction.code);
-    if (input) screenFiles.add(input.path);
-    generated.push({ ...transaction, entry: transaction.program, program, input });
+    // Of copies of the screen in several folders, the one beside the program.
+    const input = inputs.filter((i) => i.code === transaction.code).sort((a, b) => sharedPrefix(b.path, path) - sharedPrefix(a.path, path))[0];
+    const screen = input && (input.path.split("/").pop() ?? input.path);
+    if (screen && !screenFiles.has(screen)) screenFiles.set(screen, input.path);
+    progress(`transaction ${transaction.code} runs ${path}${input ? ` from the screen ${screenFiles.get(/** @type {string} */ (screen))} ${input.message}` : ", no input screen starts with its code"}`);
+    generated.push({ ...transaction, entry: transaction.program, program, input, screen });
   }
 
-  /** @type {Map<string, string>} the module name of each MFS file */
-  const screenModules = new Map();
-  for (const path of screenFiles) {
+  for (const [name, path] of screenFiles) {
     const text = readFileSync(join(root, path), "utf-8");
     const formats = mfsFormats(text);
     const fields = mfsFields(text);
@@ -2752,8 +2839,6 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
         fields: fields.filter((f) => f.kind === "MFLD" && f.screen === m.name).map((f) => ({ dfld: f.dfld, length: f.length, literal: f.literal })),
       };
     }
-    const name = path.split("/").pop() ?? path;
-    screenModules.set(path, name);
     writeFileSync(
       join(outDir, "screens", `${name}.js`),
       [
@@ -2773,13 +2858,13 @@ export function generateJs(db, root, indexer, outDir, { templates, tn3270 = join
     join(outDir, "transactions.js"),
     [
       "// The IMS transactions: the program each runs and its input screen, generated by PL/I Graph.",
-      ...[...screenModules.values()].map((name) => `import * as ${js(name)} from "./screens/${name}.js";`),
+      ...[...screenFiles.keys()].map((name) => `import * as ${js(name)} from "./screens/${name}.js";`),
       "",
       "export const transactions = {",
       ...generated.map(
         (t) =>
           `  ${t.code}: { program: () => import("./${t.program.module}"), entry: ${JSON.stringify(t.entry)}, screens: ${
-            t.input ? js(/** @type {string} */ (screenModules.get(t.input.path))) : "null"
+            t.screen ? js(t.screen) : "null"
           }, input: ${JSON.stringify(t.input?.message ?? null)} },`,
       ),
       "};",

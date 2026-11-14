@@ -309,6 +309,41 @@ test("the procedures of an include are the includer's, seeing its variables", as
   assert.ok(said.some((s) => s.includes("SRC/ZZMAIN")), said.join("\n"));
 });
 
+test("comments keep their lines, on procedures, fields and inside an IF", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "SRC"));
+  writeFileSync(
+    join(root, "SRC/ZZCMT"),
+    ` /* PROGRAMM ZZCMT
+    ZWEITE ZEILE */
+ ZZCMT: PROC(OUT) OPTIONS(MAIN);
+   DCL OUT FIXED BIN(31);
+   DCL 1 S,
+         2 A FIXED BIN(31), /* FELD A
+                               ZEILE ZWEI */
+         2 B CHAR(2);
+   DCL Z FIXED BIN(31) INIT(0); /* ZAEHLER
+                                   FUER ALLES */
+   IF Z = 0 THEN /* IM THEN
+      ZWEI */
+     OUT = 2;
+   ELSE /* IM ELSE */
+     OUT = 3;
+ END ZZCMT;
+`,
+  );
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, paths: ["SRC/ZZCMT"] });
+  assert.deepEqual(summary.programs[0].todos, []);
+  const code = readFileSync(join(out, "programs/ZZCMT.js"), "utf-8");
+  assert.match(code, /\/\*\*\n \* PROGRAMM ZZCMT\n \* ZWEITE ZEILE\n/);
+  assert.match(code, /\/\*\*\n {5}\* @type \{number\} FIXED BIN\(31\) FELD A\n {5}\* ZEILE ZWEI\n {5}\*\/\n {4}A: 0,/);
+  assert.match(code, /\/\*\*\n {3}\* @type \{number\} FIXED BIN\(31\) INIT\(0\) ZAEHLER\n {3}\* FUER ALLES\n {3}\*\/\n {2}let Z/);
+  assert.match(code, /if \(Z === 0\) \{\n\s+\/\/ IM THEN\n\s+\/\/ ZWEI\n\s+OUT = 2;\n\s+\} else \{\n\s+\/\/ IM ELSE\n\s+OUT = 3;/);
+  const { ZZCMT } = await import(pathToFileURL(join(out, "programs/ZZCMT.js")).href);
+  assert.deepEqual(await ZZCMT(0), { OUT: 2 });
+});
+
 test("a transaction whose program is not found is reported with why", async () => {
   const root = mkdtempSync(join(tmpdir(), "pli-src-"));
   mkdirSync(join(root, "SYSDEF"));
@@ -319,6 +354,108 @@ test("a transaction whose program is not found is reported with why", async () =
   const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, progress: (/** @type {string} */ text) => said.push(text) });
   assert.deepEqual(summary.skipped, [{ code: "ZZTX", program: "NIRGENDS", why: "no PL/I member NIRGENDS" }]);
   assert.ok(said.some((s) => s.includes("ZZTX")), said.join("\n"));
+});
+
+test("without a system definition a transaction is the program its input screen names, once for copies in several folders", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  for (const tree of ["prd", "dev"]) {
+    mkdirSync(join(root, tree, "pli"), { recursive: true });
+    mkdirSync(join(root, tree, "mfs"), { recursive: true });
+    writeFileSync(join(root, tree, "pli/ZZS00001"), ` ZZS00001: PROC(IOPCB) OPTIONS(MAIN);\n   DCL IOPCB PTR;\n   CALL ZZS00009;\n END ZZS00001;\n`);
+    writeFileSync(join(root, tree, "pli/ZZS00009"), ` ZZS00009: PROC;\n END ZZS00009;\n`);
+    writeFileSync(
+      join(root, tree, "mfs/ZZF001"),
+      `ZZF001   FMT
+         DEV   TYPE=(3270,2),FEAT=IGNORE
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((3,20))
+KDNR     DFLD  POS=(3,20),LTH=8
+         FMTEND
+ZZF001I  MSG   TYPE=INPUT,SOR=(ZZF001,IGNORE),NXT=ZZF001O
+         SEG
+         MFLD  'ZZS00001 ',LTH=9
+         MFLD  KDNR,LTH=8
+         MSGEND
+ZZF001O  MSG   TYPE=OUTPUT,SOR=(ZZF001,IGNORE)
+         SEG
+         MFLD  KDNR,LTH=8
+         MSGEND
+         END
+`,
+    );
+  }
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  /** @type {string[]} */
+  const said = [];
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, progress: (/** @type {string} */ text) => said.push(text) });
+  assert.deepEqual(summary.transactions, ["ZZS00001"]);
+  assert.deepEqual(
+    summary.programs.map((p) => p.member),
+    ["ZZS00001", "ZZS00009"],
+  );
+  assert.equal(summary.programs[0].path, "dev/pli/ZZS00001");
+  assert.ok(said.some((s) => s.includes("ZZS00001 runs dev/pli/ZZS00001 from the screen dev/mfs/ZZF001")), said.join("\n"));
+  const transactions = readFileSync(join(out, "transactions.js"), "utf-8");
+  assert.match(transactions, /import \* as ZZF001 from "\.\/screens\/ZZF001\.js";/);
+  assert.match(transactions, /ZZS00001: \{ program: \(\) => import\("\.\/programs\/ZZS00001\.js"\), entry: "ZZS00001", screens: ZZF001, input: "ZZF001I" \}/);
+  assert.ok(said.some((s) => s.includes("prd/pli/ZZS00001") && s.includes("dev/pli/ZZS00001")), said.join("\n"));
+});
+
+test("a transaction code runs the program only its third character, the member type, tells apart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "pli"));
+  mkdirSync(join(root, "mfs"));
+  writeFileSync(join(root, "pli/ZZS00400"), ` ZZS00400: PROC(IOPCB) OPTIONS(MAIN);\n   DCL IOPCB PTR;\n END ZZS00400;\n`);
+  mkdirSync(join(root, "dev"));
+  writeFileSync(join(root, "dev/ZZS00400"), ` ZZS00400: PROC(IOPCB) OPTIONS(MAIN);\n   DCL IOPCB PTR;\n END ZZS00400;\n`);
+  writeFileSync(
+    join(root, "mfs/ZZF004"),
+    `         ALPHA 'abcdefghijklmnopqrstuvwxyzßäöüÖ'
+         TITLE 'TEST2'
+         PRINT NOGEN
+ZZF004   FMT
+         DEV   TYPE=(3270,2),FEAT=IGNORE,SYSMSG=WAIT
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((07,05))
+         DFLD  'HR, Firmenbuch',POS=(1,2)
+         DFLD  'ZZF004',POS=(1,47)
+         DFLD  'ZZS00100',POS=(1,54)
+         DFLD  'Firma',POS=(05,10)
+SUCH     DFLD  POS=(04,16),LTH=42,ATTR=(PROT,HI)
+         FMTEND
+ZZF004I  MSG   TYPE=INPUT,SOR=(ZZF004,IGNORE),NXT=ZZF004O
+         SEG
+         MFLD  'ZZK00400 ',LTH=9
+         MFLD  SUCH,LTH=42
+         MSGEND
+ZZF004O  MSG   TYPE=OUTPUT,SOR=(ZZF004,IGNORE)
+         SEG
+         MFLD  SUCH,LTH=42
+         MSGEND
+         END
+`,
+  );
+  writeFileSync(join(root, "mfs/ZZF005"), `ZZF005   FMT\nKDNR     DFLD  POS=(3,20),LTH=8\n         FMTEND\nZZF005I  MSG   TYPE=INPUT,SOR=(ZZF005,IGNORE)\n         SEG\n         MFLD  'ZZK00500',LTH=8\n         MSGEND\n         END\n`);
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  /** @type {string[]} */
+  const said = [];
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, progress: (/** @type {string} */ text) => said.push(text) });
+  assert.deepEqual(summary.transactions, ["ZZK00400"]);
+  assert.deepEqual(summary.skipped.map((s) => s.code), ["ZZK00500"]);
+  assert.ok(said.some((s) => s.startsWith("[PLG088W] the input screen mfs/ZZF005 ZZF005I sends ZZK00500")), said.join("\n"));
+  assert.match(readFileSync(join(out, "transactions.js"), "utf-8"), /ZZK00400: \{ program: \(\) => import\("\.\/programs\/ZZS00400\.js"\), entry: "ZZS00400", screens: ZZF004, input: "ZZF004I" \}/);
+});
+
+test("a graph without any transaction says why", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pli-src-"));
+  mkdirSync(join(root, "mfs"));
+  writeFileSync(join(root, "mfs/ZZF002"), `ZZF002   FMT\nKDNR     DFLD  POS=(3,20),LTH=8\n         FMTEND\nZZF002I  MSG   TYPE=INPUT,SOR=(ZZF002,IGNORE)\n         SEG\n         MFLD  'NIRGENDS',LTH=8\n         MSGEND\n         END\n`);
+  const out = mkdtempSync(join(tmpdir(), "pli-js-"));
+  /** @type {string[]} */
+  const said = [];
+  const summary = generateJs(await indexed(root), root, indexer, out, { ...TEMPLATES, progress: (/** @type {string} */ text) => said.push(text) });
+  assert.deepEqual(summary.transactions, []);
+  assert.ok(said.some((s) => s.startsWith("[PLG087W]") && s.includes("NIRGENDS")), said.join("\n"));
 });
 
 test("the INIT of a field of an array of structures gives each element its own value", async () => {
